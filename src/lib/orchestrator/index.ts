@@ -3,8 +3,8 @@ import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMP
 import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
 
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'llm' })
-  await adapter.connect({ platform: 'llm' })
+  const adapter = createAdapter({ platform: 'claude-code' })
+  await adapter.connect({ platform: 'claude-code' })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: userPrompt, systemPrompt })) {
@@ -112,8 +112,8 @@ export async function runDiscussion(
     for (const agent of agents) {
       const prompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
 
-      const adapter = createAdapter({ platform: 'llm' })
-      await adapter.connect({ platform: 'llm' })
+      const adapter = createAdapter({ platform: 'claude-code' })
+      await adapter.connect({ platform: 'claude-code' })
 
       let result = ''
       for await (const chunk of adapter.send({ prompt, systemPrompt: agent.systemPrompt })) {
