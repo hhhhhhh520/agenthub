@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Session {
+  id        String    @id @default(uuid())
+  title     String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  agents    Agent[]
+  tasks     Task[]
+  messages  Message[]
+}
+
+model Agent {
+  id           String  @id @default(uuid())
+  name         String
+  expertise    String
+  systemPrompt String
+  platform     String  @default("llm")
+  sessionId    String?
+  workDir      String?
+  status       String  @default("idle")
+  session      Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+}
+
+model Task {
+  id              String   @id @default(uuid())
+  description     String
+  status          String   @default("pending")
+  assignedAgentId String?
+  assignedAgent   Agent?   @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  sessionId       String
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  dependencies    String   @default("[]")
+  subtasks        String   @default("[]")
+  createdAt       DateTime @default(now())
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  role      String
+  content   String
+  agentId   String?
+  taskId    String?
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
