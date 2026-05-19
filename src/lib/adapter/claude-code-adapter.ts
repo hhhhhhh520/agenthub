@@ -16,16 +16,21 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   }
 
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
-    const args = ['-p', task.prompt, '--output-format', 'stream-json']
-    if (task.systemPrompt) {
-      args.push('--system-prompt', task.systemPrompt)
-    }
+    // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
+    const args = ['--output-format', 'stream-json', '--verbose', '--bare']
 
     this.process = spawn('claude', args, {
       cwd: this.workDir,
       env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: true,
     })
+
+    // Write prompt to stdin then close
+    if (this.process.stdin) {
+      this.process.stdin.write(task.prompt)
+      this.process.stdin.end()
+    }
 
     const timeout = setTimeout(() => {
       this.process?.kill('SIGTERM')
@@ -57,13 +62,21 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (!line.trim()) continue
         try {
           const event = JSON.parse(line)
-          if (event.type === 'text' || event.type === 'content_block_delta') {
-            yield { type: 'text', content: event.text || event.delta?.text || '' }
-          } else if (event.type === 'result') {
-            yield { type: 'text', content: event.result || '' }
+
+          // Assistant message with content array
+          if (event.type === 'assistant' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'text' && block.text) {
+                yield { type: 'text', content: block.text }
+              }
+            }
+          }
+          // Final result
+          else if (event.type === 'result' && event.result) {
+            yield { type: 'text', content: event.result }
           }
         } catch {
-          yield { type: 'text', content: line }
+          // Non-JSON output, skip
         }
       }
     }

@@ -6,8 +6,11 @@ async function callLLM(systemPrompt: string, userPrompt: string): Promise<string
   const adapter = createAdapter({ platform: 'claude-code' })
   await adapter.connect({ platform: 'claude-code' })
 
+  // Combine system prompt into user prompt since Claude Code CLI ignores --system-prompt
+  const combinedPrompt = `${systemPrompt}\n\n---\n\n用户输入：${userPrompt}\n\n你必须严格按照上述指令返回结果，不要说其他话。`
+
   let result = ''
-  for await (const chunk of adapter.send({ prompt: userPrompt, systemPrompt })) {
+  for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
     if (chunk.type === 'text') result += chunk.content
   }
   await adapter.close()
@@ -18,19 +21,39 @@ function parseJSON<T>(text: string): T {
   // Try direct parse first
   try {
     return JSON.parse(text)
-  } catch {
-    // Try extracting from markdown code fences
-    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenceMatch) {
+  } catch {}
+
+  // Try extracting from markdown code fences
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (fenceMatch) {
+    try {
       return JSON.parse(fenceMatch[1].trim())
-    }
-    // Try extracting JSON object/array from text
-    const jsonMatch = text.match(/[\[{][\s\S]*[\]}]/)
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0])
-    }
-    throw new Error(`Failed to parse JSON from: ${text}`)
+    } catch {}
   }
+
+  // Try extracting JSON object/array by finding balanced braces/brackets
+  const startObj = text.indexOf('{')
+  const startArr = text.indexOf('[')
+  const start = startObj === -1 ? startArr : startArr === -1 ? startObj : Math.min(startObj, startArr)
+
+  if (start !== -1) {
+    // Find matching closing brace/bracket
+    const opener = text[start]
+    const closer = opener === '{' ? '}' : ']'
+    let depth = 0
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === opener) depth++
+      if (text[i] === closer) depth--
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.substring(start, i + 1))
+        } catch {}
+        break
+      }
+    }
+  }
+
+  throw new Error(`Failed to parse JSON from: ${text.slice(0, 200)}`)
 }
 
 export async function analyzeScene(userMessage: string): Promise<{ type: string; complexity: string; description: string }> {
@@ -49,11 +72,15 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
   const response = await callLLM(TASK_DECOMPOSITION_PROMPT, `任务描述：${taskDescription}\n可用角色：${agentList}`)
   const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[] }> }>(response)
 
+  // Generate unique IDs to avoid conflicts with existing tasks
+  const idMap = new Map<number, string>()
+  parsed.tasks.forEach(t => idMap.set(t.id, crypto.randomUUID()))
+
   const tasks: ScheduledTask[] = parsed.tasks.map(t => ({
-    id: String(t.id),
+    id: idMap.get(t.id)!,
     description: t.description,
     assignedAgent: t.assignedAgent,
-    dependencies: t.dependencies.map(d => String(d)),
+    dependencies: t.dependencies.map(d => idMap.get(d)!).filter(Boolean),
     batch: 0,
   }))
 
@@ -73,8 +100,9 @@ export async function executeTaskBatch(
     const agent = agentMap.get(task.assignedAgent)
     if (!agent) return
 
-    const adapter = createAdapter({ platform: agent.platform as 'llm' | 'claude-code' | 'codex' })
-    await adapter.connect({ platform: agent.platform as 'llm' | 'claude-code' | 'codex' })
+    // Always use claude-code platform (no API key needed)
+    const adapter = createAdapter({ platform: 'claude-code' })
+    await adapter.connect({ platform: 'claude-code' })
 
     const depContext = task.dependencies
       .map(depId => results.get(depId))
@@ -110,13 +138,14 @@ export async function runDiscussion(
 
   for (let round = 1; round <= maxRounds; round++) {
     for (const agent of agents) {
-      const prompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
+      const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
+      const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
       const adapter = createAdapter({ platform: 'claude-code' })
       await adapter.connect({ platform: 'claude-code' })
 
       let result = ''
-      for await (const chunk of adapter.send({ prompt, systemPrompt: agent.systemPrompt })) {
+      for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
         result += chunk.content
         onChunk(agent.name, chunk)
       }
