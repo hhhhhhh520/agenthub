@@ -96,9 +96,12 @@ export async function POST(
 
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent, controller)
-          } else if (session.phase === 'idle') {
-            // Start alignment: PM confirmation
+          } else if (session.phase === 'idle' && isTaskIntent(message)) {
+            // Task detected: start alignment
             await handlePMConfirmation(message, sessionId, existingAgents, sendEvent)
+          } else if (session.phase === 'idle' || (session.phase === 'alignment' && session.phaseStep === '')) {
+            // Normal chat with Orchestrator
+            await handleOrchestratorChat(message, sessionId, sendEvent)
           } else if (session.phase === 'alignment') {
             if (session.phaseStep === 'pm_confirm') {
               await handleArchitectPlan(message, sessionId, existingAgents, sendEvent)
@@ -134,6 +137,32 @@ export async function POST(
       'Connection': 'keep-alive',
     },
   })
+}
+
+// ─── Task Intent Detection ─────────────────────────────
+function isTaskIntent(message: string): boolean {
+  return /开发|实现|做一?个|写一?个|帮我做|帮我写|帮我实现|搭建|重构|修复|优化|创建项目|implement|build|create/i.test(message)
+}
+
+// ─── Normal Orchestrator Chat ──────────────────────────
+async function handleOrchestratorChat(
+  message: string,
+  sessionId: string,
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void
+) {
+  sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
+
+  const result = await executeSingleAgent(
+    { name: 'Orchestrator', systemPrompt: '你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。你可以和用户闲聊、回答问题、解释功能。当用户下达开发任务时，你会启动对齐流程（PM确认→架构师方案→Agent Q&A→执行）。现在请友好地回复用户。', platform: 'llm' },
+    message,
+    '',
+    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+  )
+
+  await prisma.message.create({
+    data: { role: 'orchestrator', rawContent: result, sessionId },
+  })
+  sendEvent({ agentId: 'orchestrator', type: 'done', content: result })
 }
 
 // ─── Agent Creation ───────────────────────────────────
