@@ -21,11 +21,11 @@ export function useSessions() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  const create = async (title?: string) => {
+  const create = async (title?: string, type?: string) => {
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, type }),
     })
     const session = await res.json()
     setSessions(prev => [session, ...prev])
