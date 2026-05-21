@@ -7,16 +7,19 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
-  const { message, mentionAll, targetAgent, replyToId } = await request.json()
+  const { message, mentionAll, targetAgent, replyToId, regenerate } = await request.json()
 
-  await prisma.message.create({
-    data: { role: 'user', rawContent: message, sessionId, replyToId },
-  })
+  // If regenerate, don't create a new user message
+  if (!regenerate) {
+    await prisma.message.create({
+      data: { role: 'user', rawContent: message, sessionId, replyToId },
+    })
+  }
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
-      function sendEvent(data: { agentId: string; type: string; content: string }) {
+      function sendEvent(data: { agentId: string; type: string; content: string; messageId?: string }) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
       }
 
@@ -27,7 +30,29 @@ export async function POST(
         })
         const existingAgents = existingMembers.map(m => m.agent)
 
-        if (mentionAll && existingAgents.length > 0) {
+        if (regenerate) {
+          const original = await prisma.message.findUnique({ where: { id: regenerate } })
+          if (!original || original.sessionId !== sessionId) {
+            sendEvent({ agentId: 'orchestrator', type: 'error', content: '原消息不存在' })
+          } else {
+            const agent = original.agentId ? existingAgents.find(a => a.name === original.agentId) : null
+            const agentName = agent?.name || 'orchestrator'
+            sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
+
+            const result = await executeSingleAgent(
+              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm' },
+              original.rawContent,
+              '',
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+            )
+
+            await prisma.message.update({
+              where: { id: regenerate },
+              data: { rawContent: result },
+            })
+            sendEvent({ agentId: agentName, type: 'done', content: result, messageId: regenerate })
+          }
+        } else if (mentionAll && existingAgents.length > 0) {
           sendEvent({ agentId: 'orchestrator', type: 'status', content: '开始多轮讨论...' })
 
           const opinions = await runDiscussion(

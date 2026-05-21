@@ -6,7 +6,11 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle } from '@/lib/agent-colors'
-import { parseMessage } from '@/lib/message-parser'
+import { parseMessage, type ParsedMessage } from '@/lib/message-parser'
+import { MessageActionMenu } from '@/components/message-action-menu'
+import { WebPreview } from '@/components/web-preview'
+import { CodeDiff } from '@/components/code-diff'
+import { FileCard } from '@/components/file-card'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
   user: { bg: 'bg-blue-500 text-white ml-auto', label: 'You' },
@@ -63,6 +67,18 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
     setReplyTo(null)
   }
 
+  const handleCopy = (content: string) => {
+    navigator.clipboard.writeText(content)
+  }
+
+  const handleQuote = (content: string) => {
+    setInput(content)
+  }
+
+  const handleRegenerate = (messageId: string) => {
+    send('', undefined, undefined, undefined, messageId)
+  }
+
   return (
     <div className="flex-1 flex flex-col">
       <ScrollArea className="flex-1 p-4">
@@ -80,14 +96,23 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
               const style = getAgentStyle(msg.agentId, agentColorMap[msg.agentId])
               const parsed = parseMessage(msg.rawContent)
               return (
-                <div key={msg.id} className="flex gap-2 max-w-[80%]">
+                <div key={msg.id} className="flex gap-2 max-w-[80%] group">
                   <Avatar size="sm">
                     <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                   </Avatar>
-                  <div className={`rounded-lg p-3 ${style.bg}`}>
-                    <div className="text-xs font-medium mb-1 opacity-70">{msg.agentId}</div>
+                  <div className={`rounded-lg p-3 ${style.bg} flex-1`}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium opacity-70">{msg.agentId}</span>
+                      <MessageActionMenu
+                        role="agent"
+                        onReply={() => setReplyTo({ id: msg.id, rawContent: msg.rawContent, role: msg.agentId || 'agent' })}
+                        onCopy={() => handleCopy(msg.rawContent)}
+                        onQuote={() => handleQuote(msg.rawContent)}
+                        onRegenerate={() => handleRegenerate(msg.id)}
+                      />
+                    </div>
                     {replyPreview}
-                    <MessageContent parsed={parsed} />
+                    <MessageContent parsed={parsed} sessionId={sessionId} />
                   </div>
                 </div>
               )
@@ -95,10 +120,19 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
             const style = ROLE_STYLES[msg.role] || ROLE_STYLES.orchestrator
             const parsed = parseMessage(msg.rawContent)
             return (
-              <div key={msg.id} className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? style.bg + ' ml-auto' : style.bg}`}>
-                <div className="text-xs font-medium mb-1 opacity-70">{style.label}</div>
+              <div key={msg.id} className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? style.bg + ' ml-auto' : style.bg} group`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium opacity-70">{style.label}</span>
+                  <MessageActionMenu
+                    role={msg.role}
+                    onReply={() => setReplyTo({ id: msg.id, rawContent: msg.rawContent, role: msg.role })}
+                    onCopy={() => handleCopy(msg.rawContent)}
+                    onQuote={() => handleQuote(msg.rawContent)}
+                    onRegenerate={msg.role !== 'user' ? () => handleRegenerate(msg.id) : undefined}
+                  />
+                </div>
                 {replyPreview}
-                <MessageContent parsed={parsed} />
+                <MessageContent parsed={parsed} sessionId={sessionId} />
               </div>
             )
           })}
@@ -143,8 +177,9 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
   )
 }
 
-function MessageContent({ parsed }: { parsed: ReturnType<typeof parseMessage> }) {
+function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionId: string }) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
+  const [diffStatus, setDiffStatus] = useState<Record<number, 'accepted' | 'rejected'>>({})
 
   const handleCopy = (code: string, idx: number) => {
     navigator.clipboard.writeText(code)
@@ -152,24 +187,86 @@ function MessageContent({ parsed }: { parsed: ReturnType<typeof parseMessage> })
     setTimeout(() => setCopiedIdx(null), 2000)
   }
 
-  const parts = parsed.text.split(/__CODE_BLOCK_(\d+)__/)
+  const handleAccept = async (idx: number, filePath: string, content: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/files/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, content }),
+      })
+      if (res.ok) {
+        setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
+      }
+    } catch (e) {
+      console.error('Accept failed:', e)
+    }
+  }
+
+  const handleReject = (idx: number) => {
+    setDiffStatus(prev => ({ ...prev, [idx]: 'rejected' }))
+  }
+
+  const parts = parsed.text.split(/__(?:CODE_BLOCK|ARTIFACT)_(\d+)__/)
   return (
     <div className="text-sm">
       {parts.map((part, i) => {
         if (i % 2 === 1) {
-          const block = parsed.codeBlocks[parseInt(part)]
-          if (!block) return null
-          return (
-            <div key={i} className="relative my-2 rounded bg-gray-900 text-gray-100">
-              <div className="flex items-center justify-between px-3 py-1 text-xs text-gray-400 border-b border-gray-700">
-                <span>{block.language}</span>
-                <button onClick={() => handleCopy(block.code, i)} className="hover:text-white">
-                  {copiedIdx === i ? '已复制' : '复制'}
-                </button>
+          const codeBlock = parsed.codeBlocks[parseInt(part)]
+          if (codeBlock) {
+            return (
+              <div key={i} className="relative my-2 rounded bg-gray-900 text-gray-100">
+                <div className="flex items-center justify-between px-3 py-1 text-xs text-gray-400 border-b border-gray-700">
+                  <span>{codeBlock.language}</span>
+                  <button onClick={() => handleCopy(codeBlock.code, i)} className="hover:text-white">
+                    {copiedIdx === i ? '已复制' : '复制'}
+                  </button>
+                </div>
+                <pre className="p-3 overflow-x-auto"><code>{codeBlock.code}</code></pre>
               </div>
-              <pre className="p-3 overflow-x-auto"><code>{block.code}</code></pre>
-            </div>
-          )
+            )
+          }
+
+          const artifact = parsed.artifacts[parseInt(part)]
+          if (artifact) {
+            if (artifact.type === 'web-preview') {
+              return <div key={i} className="my-2"><WebPreview html={artifact.content} /></div>
+            }
+            if (artifact.type === 'diff') {
+              const status = diffStatus[i]
+              if (status === 'accepted') {
+                return <div key={i} className="my-2 text-green-600 text-xs">✓ 已接受</div>
+              }
+              if (status === 'rejected') {
+                return <div key={i} className="my-2 text-gray-500 text-xs">✗ 已拒绝</div>
+              }
+              const data = artifact.meta
+              return (
+                <div key={i} className="my-2">
+                  <CodeDiff
+                    original={data.original || ''}
+                    modified={data.modified || artifact.content}
+                    language={data.language || 'javascript'}
+                    onAccept={() => handleAccept(i, data.filePath || 'output.txt', data.modified || artifact.content)}
+                    onReject={() => handleReject(i)}
+                  />
+                </div>
+              )
+            }
+            if (artifact.type === 'file') {
+              return (
+                <div key={i} className="my-2">
+                  <FileCard
+                    fileName={artifact.meta.fileName || 'file'}
+                    fileSize={artifact.meta.fileSize ? parseInt(artifact.meta.fileSize) : undefined}
+                    downloadUrl={artifact.meta.downloadUrl}
+                  />
+                </div>
+              )
+            }
+            return <div key={i} className="my-2 text-xs text-gray-500">[{artifact.type}]</div>
+          }
+
+          return null
         }
         return part ? <span key={i} className="whitespace-pre-wrap">{part}</span> : null
       })}

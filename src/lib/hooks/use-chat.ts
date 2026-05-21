@@ -15,6 +15,7 @@ interface SSEEvent {
   agentId: string
   type: 'text' | 'code' | 'status' | 'done' | 'error'
   content: string
+  messageId?: string
 }
 
 export function useChat(sessionId: string | null) {
@@ -30,17 +31,19 @@ export function useChat(sessionId: string | null) {
     setMessages(data)
   }, [sessionId])
 
-  const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string) => {
-    if (!sessionId || !content.trim()) return
+  const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string, regenerate?: string) => {
+    if (!sessionId || (!content.trim() && !regenerate)) return
 
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      rawContent: content,
-      replyToId,
-      createdAt: new Date().toISOString(),
+    if (!regenerate) {
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        rawContent: content,
+        replyToId,
+        createdAt: new Date().toISOString(),
+      }
+      setMessages(prev => [...prev, userMsg])
     }
-    setMessages(prev => [...prev, userMsg])
     setLoading(true)
     setStreaming({})
 
@@ -51,7 +54,7 @@ export function useChat(sessionId: string | null) {
       const res = await fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, mentionAll, targetAgent, replyToId }),
+        body: JSON.stringify({ message: content, mentionAll, targetAgent, replyToId, regenerate }),
         signal: controller.signal,
       })
 
@@ -74,13 +77,20 @@ export function useChat(sessionId: string | null) {
           const event: SSEEvent = JSON.parse(line.slice(6))
 
           if (event.type === 'done') {
-            setMessages(prev => [...prev, {
-              id: crypto.randomUUID(),
-              role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
-              rawContent: event.content,
-              agentId: event.agentId,
-              createdAt: new Date().toISOString(),
-            }])
+            if (event.messageId) {
+              // Regenerate: replace existing message
+              setMessages(prev => prev.map(m =>
+                m.id === event.messageId ? { ...m, rawContent: event.content } : m
+              ))
+            } else {
+              setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
+                rawContent: event.content,
+                agentId: event.agentId,
+                createdAt: new Date().toISOString(),
+              }])
+            }
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
           } else if (event.type === 'error') {
             setMessages(prev => [...prev, {
