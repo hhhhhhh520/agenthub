@@ -13,7 +13,7 @@ interface Message {
 
 interface SSEEvent {
   agentId: string
-  type: 'text' | 'code' | 'status' | 'done' | 'error'
+  type: string
   content: string
   messageId?: string
 }
@@ -22,6 +22,8 @@ export function useChat(sessionId: string | null) {
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
+  const [phase, setPhase] = useState<string>('idle')
+  const [awaitingInput, setAwaitingInput] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const loadMessages = useCallback(async () => {
@@ -78,7 +80,6 @@ export function useChat(sessionId: string | null) {
 
           if (event.type === 'done') {
             if (event.messageId) {
-              // Regenerate: replace existing message
               setMessages(prev => prev.map(m =>
                 m.id === event.messageId ? { ...m, rawContent: event.content } : m
               ))
@@ -99,6 +100,15 @@ export function useChat(sessionId: string | null) {
               rawContent: `Error: ${event.content}`,
               createdAt: new Date().toISOString(),
             }])
+          } else if (event.type === 'awaiting_user_input') {
+            setAwaitingInput(event.content)
+            setStreaming({})
+            setLoading(false)
+          } else if (event.type === 'phase_transition') {
+            setPhase(event.content)
+            setAwaitingInput(null)
+          } else if (event.type === 'task_status') {
+            // Task status updates are handled by the agent panel polling
           } else {
             setStreaming(prev => ({
               ...prev,
@@ -121,5 +131,5 @@ export function useChat(sessionId: string | null) {
     abortRef.current?.abort()
   }, [])
 
-  return { messages, streaming, loading, send, stop, loadMessages }
+  return { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput }
 }

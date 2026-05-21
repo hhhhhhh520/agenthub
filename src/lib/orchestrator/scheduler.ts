@@ -3,6 +3,7 @@ export interface ScheduledTask {
   description: string
   assignedAgent: string
   dependencies: string[]
+  declaredFiles: string[]
   batch: number
 }
 

@@ -82,7 +82,7 @@ export async function generateRoles(taskType: string, taskDescription: string): 
 export async function decomposeTasks(taskDescription: string, agents: Array<{ name: string; expertise: string }>): Promise<ScheduledTask[]> {
   const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
   const response = await callLLM(TASK_DECOMPOSITION_PROMPT, `任务描述：${taskDescription}\n可用角色：${agentList}`)
-  const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[] }> }>(response)
+  const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[] }> }>(response)
 
   // Generate unique IDs to avoid conflicts with existing tasks
   const idMap = new Map<number, string>()
@@ -93,6 +93,7 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
     description: t.description,
     assignedAgent: t.assignedAgent,
     dependencies: t.dependencies.map(d => idMap.get(d)!).filter(Boolean),
+    declaredFiles: t.declared_files || [],
     batch: 0,
   }))
 
