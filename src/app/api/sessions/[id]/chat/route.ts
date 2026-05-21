@@ -153,7 +153,7 @@ async function handleOrchestratorChat(
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
   const result = await executeSingleAgent(
-    { name: 'Orchestrator', systemPrompt: '你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。你可以和用户闲聊、回答问题、解释功能。当用户下达开发任务时，你会启动对齐流程（PM确认→架构师方案→Agent Q&A→执行）。现在请友好地回复用户。', platform: 'llm' },
+    { name: 'Orchestrator', systemPrompt: '你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。你可以和用户闲聊、回答问题、解释功能。当用户下达开发任务时，你会启动对齐流程（PM确认→架构师方案→Agent Q&A→执行）。现在请友好地回复用户。', platform: 'claude-code' },
     message,
     '',
     (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
