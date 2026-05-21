@@ -24,7 +24,7 @@ interface MemberAgent {
 }
 
 export function ChatArea({ sessionId }: { sessionId: string | null }) {
-  const { messages, streaming, loading, send, stop, loadMessages } = useChat(sessionId)
+  const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput } = useChat(sessionId)
   const [input, setInput] = useState('')
   const [agentNames, setAgentNames] = useState<string[]>([])
   const [agentColorMap, setAgentColorMap] = useState<Record<string, string>>({})
@@ -157,6 +157,22 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
         <div className="border-t px-3 py-2 flex items-center gap-2 text-sm text-gray-500 bg-gray-50">
           <span className="truncate flex-1">回复 {replyTo.role}: {replyTo.rawContent.slice(0, 60)}...</span>
           <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+      )}
+      {awaitingInput && (
+        <div className="border-t px-3 py-2 text-sm text-blue-600 bg-blue-50">
+          {awaitingInput === 'pm_confirm' && '产品经理已确认需求，请查看并回复'}
+          {awaitingInput === 'architect_plan' && '架构师已出方案，请查看并确认'}
+          {awaitingInput === 'agent_qa' && 'Agent 有问题需要你回答'}
+          {!['pm_confirm', 'architect_plan', 'agent_qa'].includes(awaitingInput) && '等待你的输入...'}
+        </div>
+      )}
+      {phase !== 'idle' && (
+        <div className="border-t px-3 py-1 text-xs text-gray-400 bg-gray-50 flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
+          {phase === 'alignment' && '对齐中'}
+          {phase === 'execution' && '执行中'}
+          {phase === 'done' && '已完成'}
         </div>
       )}
       <div className="border-t p-3 flex gap-2">
