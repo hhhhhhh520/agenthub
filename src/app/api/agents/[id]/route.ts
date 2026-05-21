@@ -25,7 +25,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  const { name, expertise, systemPrompt, model, tools, capabilities, accentColor, status } = body
+  const { name, expertise, systemPrompt, platform, model, tools, capabilities, accentColor, status } = body
 
   const updated = await prisma.agent.update({
     where: { id },
@@ -33,6 +33,7 @@ export async function PUT(
       ...(name !== undefined && { name }),
       ...(expertise !== undefined && { expertise }),
       ...(systemPrompt !== undefined && { systemPrompt }),
+      ...(platform !== undefined && { platform }),
       ...(model !== undefined && { model }),
       ...(tools !== undefined && { tools: JSON.stringify(tools) }),
       ...(capabilities !== undefined && { capabilities: JSON.stringify(capabilities) }),
