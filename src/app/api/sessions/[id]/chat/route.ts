@@ -1,6 +1,8 @@
 import { prisma } from '@/lib/db'
 import { executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis } from '@/lib/orchestrator'
-import { PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt } from '@/lib/orchestrator/prompts'
+import { PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt, buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
+import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
+import { ensureWorkspaceRoot, createTaskWorkspace, takeSnapshot, auditTaskWorkspace, cleanupTaskWorkspaces } from '@/lib/workspace'
 
 export async function POST(
   request: Request,
@@ -439,7 +441,6 @@ async function handleExecution(
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string }>,
   sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
-  // Get all tasks for this session
   const tasks = await prisma.task.findMany({
     where: { sessionId },
     orderBy: { createdAt: 'asc' },
@@ -450,23 +451,51 @@ async function handleExecution(
     return
   }
 
-  // Get the original user message for context
-  const firstMsg = await prisma.message.findFirst({
-    where: { sessionId, role: 'user' },
+  // 6.1: Full chat history as context
+  const allMessages = await prisma.message.findMany({
+    where: { sessionId },
     orderBy: { createdAt: 'asc' },
   })
-  const context = firstMsg?.rawContent || message
+  const context = allMessages
+    .map(m => {
+      const speaker = m.role === 'user' ? '用户' : m.role === 'orchestrator' ? 'Orchestrator' : m.agentId || 'Agent'
+      return `[${speaker}]: ${m.rawContent.slice(0, 500)}`
+    })
+    .join('\n\n')
 
-  const agentMap = new Map(agents.map(a => [a.name, a]))
+  // 6.5c: Prepare workspaces
+  ensureWorkspaceRoot()
+  takeSnapshot(sessionId)
 
-  // Execute tasks with dependency gating
+  // 6.3a: Enforce file overlap (inject serial dependencies)
+  const scheduledTasks = tasks.map(t => ({
+    id: t.id,
+    description: t.description,
+    assignedAgent: agents.find(a => a.id === t.assignedAgentId)?.name || '',
+    dependencies: JSON.parse(t.dependencies || '[]') as string[],
+    declaredFiles: JSON.parse(t.declaredFiles || '[]') as string[],
+    batch: 0,
+  }))
+  enforceFileOverlap(scheduledTasks)
+
+  // Update dependencies in DB if changed
+  for (const st of scheduledTasks) {
+    const task = tasks.find(t => t.id === st.id)
+    if (task) {
+      const currentDeps = JSON.stringify(st.dependencies)
+      if (currentDeps !== task.dependencies) {
+        await prisma.task.update({ where: { id: st.id }, data: { dependencies: currentDeps } })
+        task.dependencies = currentDeps
+      }
+    }
+  }
+
   const allResults = new Map<string, string>()
   let hasProgress = true
 
   while (hasProgress) {
     hasProgress = false
 
-    // Find tasks that are pending and have all dependencies completed
     const readyTasks = tasks.filter(t => {
       if (t.status !== 'pending') return false
       const deps: string[] = JSON.parse(t.dependencies || '[]')
@@ -478,9 +507,17 @@ async function handleExecution(
 
     if (readyTasks.length === 0) break
 
-    // Mark ready tasks as in_progress
+    // 6.5c: Create workspaces for ready tasks
+    const workspacePaths = new Map<string, string>()
     for (const task of readyTasks) {
-      await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress' } })
+      try {
+        const wsPath = createTaskWorkspace(sessionId, task.id)
+        workspacePaths.set(task.id, wsPath)
+        await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress', workspacePath: wsPath } })
+      } catch (e) {
+        await prisma.task.update({ where: { id: task.id }, data: { status: 'failed' } })
+        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
+      }
       task.status = 'in_progress'
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
@@ -495,6 +532,7 @@ async function handleExecution(
           assignedAgent: agents.find(a => a.id === t.assignedAgentId)?.name || '',
           dependencies: JSON.parse(t.dependencies || '[]'),
           declaredFiles: JSON.parse(t.declaredFiles || '[]'),
+          workspacePath: workspacePaths.get(t.id),
           batch: 0,
         })),
         agents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform })),
@@ -502,7 +540,6 @@ async function handleExecution(
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content })
       )
     } catch {
-      // Mark all ready tasks as failed
       for (const task of readyTasks) {
         await prisma.task.update({ where: { id: task.id }, data: { status: 'failed' } })
         task.status = 'failed'
@@ -511,7 +548,7 @@ async function handleExecution(
       results = new Map()
     }
 
-    // Update task statuses
+    // Update task statuses + audit
     for (const [taskId, result] of results) {
       allResults.set(taskId, result)
       await prisma.task.update({ where: { id: taskId }, data: { status: 'completed' } })
@@ -519,9 +556,44 @@ async function handleExecution(
       if (task) task.status = 'completed'
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })
       hasProgress = true
+
+      // 6.4b: Merge audit
+      const declaredFiles: string[] = JSON.parse(task?.declaredFiles || '[]')
+      const audit = auditTaskWorkspace(sessionId, taskId, declaredFiles)
+      if (audit.undeclared.length > 0) {
+        for (const filePath of audit.undeclared) {
+          const diffContent = `<!-- artifact:diff filePath=${filePath} -->
+${filePath}
+<!-- /artifact -->`
+          const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${filePath}:\n${diffContent}`
+          await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
+        }
+      } else {
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成，所有修改均在声明范围内` })
+      }
+
+      // 6.2b: Orchestrator monitoring (only for CLI agents)
+      const agent = agents.find(a => a.id === task?.assignedAgentId)
+      if (agent?.platform !== 'llm') {
+        try {
+          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, audit)
+          const reviewResult = await callLLMForAnalysis(monitoringPrompt)
+          const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
+          const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            const review = JSON.parse(jsonMatch[0])
+            if (review.needsCorrection && review.correctionNote) {
+              const correctionMsg = `Orchestrator 纠偏：任务 "${task?.description}" ${review.correctionNote}`
+              await prisma.message.create({ data: { role: 'orchestrator', rawContent: correctionMsg, sessionId } })
+              sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg })
+            }
+          }
+        } catch { /* monitoring failed, continue */ }
+      }
     }
 
-    // Check for blocked tasks (pending with failed dependencies)
+    // Check for blocked tasks
     for (const task of tasks) {
       if (task.status !== 'pending') continue
       const deps: string[] = JSON.parse(task.dependencies || '[]')
@@ -541,15 +613,15 @@ async function handleExecution(
   const allDone = tasks.every(t => t.status === 'completed' || t.status === 'blocked')
   if (allDone) {
     await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
+    // 6.5e: Cleanup workspaces
+    cleanupTaskWorkspaces(sessionId)
   }
 
   const summary = Array.from(allResults.entries())
     .map(([taskId, result]) => `任务完成：${result.slice(0, 100)}...`)
     .join('\n')
   if (summary) {
-    await prisma.message.create({
-      data: { role: 'orchestrator', rawContent: summary, sessionId },
-    })
+    await prisma.message.create({ data: { role: 'orchestrator', rawContent: summary, sessionId } })
     sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
   } else {
     sendEvent({ agentId: 'orchestrator', type: 'done', content: '所有任务已完成' })

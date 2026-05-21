@@ -1,24 +1,50 @@
 import { NextResponse } from 'next/server'
 import { writeFile, mkdir } from 'fs/promises'
-import { join, dirname } from 'path'
+import { join, dirname, resolve } from 'path'
+
+const SENSITIVE_PATHS = ['.env', '.git', 'node_modules', '.next']
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
-  const { filePath, content } = await request.json()
+  const { filePath, content, target } = await request.json()
 
   if (!filePath || content === undefined) {
     return NextResponse.json({ error: 'filePath and content are required' }, { status: 400 })
   }
 
-  // Path traversal protection
-  if (filePath.includes('..') || filePath.includes('/') || filePath.includes('\\')) {
+  // Normalize path
+  const normalizedPath = filePath.replace(/\\/g, '/')
+
+  // Prevent path traversal
+  if (normalizedPath.includes('..')) {
     return NextResponse.json({ error: 'Invalid file path' }, { status: 400 })
   }
 
-  const fullPath = join(process.cwd(), 'workspaces', sessionId, filePath)
+  // Determine base directory
+  const isProjectTarget = target === 'project'
+  const baseDir = isProjectTarget
+    ? process.cwd()
+    : join(process.cwd(), 'workspaces', sessionId)
+
+  const fullPath = resolve(baseDir, normalizedPath)
+
+  // Ensure resolved path is within base directory
+  if (!fullPath.startsWith(resolve(baseDir))) {
+    return NextResponse.json({ error: 'Path traversal detected' }, { status: 400 })
+  }
+
+  // Block sensitive paths for project target
+  if (isProjectTarget) {
+    const parts = normalizedPath.split('/')
+    for (const part of parts) {
+      if (SENSITIVE_PATHS.includes(part)) {
+        return NextResponse.json({ error: 'Cannot write to sensitive path' }, { status: 403 })
+      }
+    }
+  }
 
   try {
     await mkdir(dirname(fullPath), { recursive: true })

@@ -116,7 +116,7 @@ export async function executeTaskBatch(
 
     const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
     const adapter = createAdapter({ platform })
-    await adapter.connect({ platform })
+    await adapter.connect({ platform, workDir: task.workspacePath })
 
     const depContext = task.dependencies
       .map(depId => results.get(depId))
