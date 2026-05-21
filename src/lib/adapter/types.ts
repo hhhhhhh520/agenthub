@@ -3,6 +3,7 @@ export interface AdapterConfig {
   apiKey?: string
   workDir?: string
   model?: string
+  baseUrl?: string
   sessionId?: string
 }
 

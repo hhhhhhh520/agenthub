@@ -32,6 +32,8 @@ model Agent {
   systemPrompt String                    // Agent 行为规范
   platform     String  @default("llm")   // claude-code | opencode | llm
   model        String  @default("")      // 模型标识，如 claude-opus-4-7
+  baseUrl      String  @default("")      // 服务商 base_url（CC-Switch 导入）
+  apiKey       String  @default("")      // 服务商 API Key（加密存储）
   tools        String  @default("[]")    // JSON 数组，工具集标识
   isPreset     Boolean @default(false)   // 预设 vs 用户自建
   accentColor  String  @default("#6366f1") // 主题色 hex
