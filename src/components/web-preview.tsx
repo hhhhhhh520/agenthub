@@ -34,7 +34,7 @@ export function WebPreview({ html, css = '', js = '' }: WebPreviewProps) {
       <iframe
         srcDoc={srcdoc}
         className="w-full h-[400px] border-0"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
         title="Preview"
       />
     </div>
