@@ -25,7 +25,7 @@ model Session {
 // 全局共享，通过 SessionMember 与 Session 建立多对多关系
 model Agent {
   id           String  @id @default(uuid())
-  name         String                    // 中文角色名，如"前端工程师"
+  name         String  @unique            // 中文角色名，如"前端工程师"
   expertise    String                    // 专长描述
   systemPrompt String                    // Agent 行为规范
   platform     String  @default("llm")   // claude-code | opencode | llm
