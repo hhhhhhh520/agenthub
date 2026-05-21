@@ -102,7 +102,7 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
 
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
-  agents: Array<{ name: string; systemPrompt: string; platform: string }>,
+  agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string }>,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
 ): Promise<Map<string, string>> {
@@ -110,13 +110,12 @@ export async function executeTaskBatch(
   const agentMap = new Map(agents.map(a => [a.name, a]))
 
   await Promise.all(tasks.map(async (task, index) => {
-    // Match agent by name, fallback to index for encoding-garbled names
     const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
     if (!agent) return
 
     const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
     const adapter = createAdapter({ platform })
-    await adapter.connect({ platform, workDir: task.workspacePath })
+    await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
 
     const depContext = task.dependencies
       .map(depId => results.get(depId))
@@ -143,14 +142,14 @@ export async function executeTaskBatch(
 }
 
 export async function executeSingleAgent(
-  agent: { name: string; systemPrompt: string; platform: string },
+  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string },
   prompt: string,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
 ): Promise<string> {
   const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
   const adapter = createAdapter({ platform })
-  await adapter.connect({ platform })
+  await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
 
   let result = ''
   for await (const chunk of adapter.send({

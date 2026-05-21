@@ -1,21 +1,26 @@
 import { NextResponse } from 'next/server'
-import { appendFileSync } from 'fs'
-import { join } from 'path'
+import { prisma } from '@/lib/db'
 
 export async function POST(request: Request) {
-  const { provider, agentType, baseUrl, model, apiKey } = await request.json()
+  const { provider, agentType, baseUrl, model, apiKey, agentId } = await request.json()
 
   if (!provider || !apiKey || !baseUrl) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
 
-  try {
-    const envPath = join(process.cwd(), '.env')
-    const envLine = `\n# Imported from CC-Switch: ${provider} (${agentType})\nPROVIDER_BASE_URL=${baseUrl}\nPROVIDER_MODEL=${model}\nPROVIDER_API_KEY=${apiKey}\n`
-    appendFileSync(envPath, envLine, 'utf-8')
-
-    return NextResponse.json({ success: true, provider, baseUrl, model })
-  } catch {
-    return NextResponse.json({ error: 'Failed to save config' }, { status: 500 })
+  // If agentId provided, update that agent's provider config
+  if (agentId) {
+    try {
+      await prisma.agent.update({
+        where: { id: agentId },
+        data: { baseUrl, model, apiKey },
+      })
+      return NextResponse.json({ success: true, message: `Agent updated with ${provider} config` })
+    } catch {
+      return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+    }
   }
+
+  // Otherwise, return the config for the caller to use
+  return NextResponse.json({ success: true, provider, baseUrl, model, apiKey })
 }

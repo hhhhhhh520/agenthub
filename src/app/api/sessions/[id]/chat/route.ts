@@ -48,7 +48,7 @@ export async function POST(
             sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
 
             const result = await executeSingleAgent(
-              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm' },
+              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey },
               original.rawContent,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -82,7 +82,7 @@ export async function POST(
           } else {
             sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
             const result = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform },
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey },
               message,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -97,7 +97,7 @@ export async function POST(
           const agent = existingAgents[0]
           sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
           const result = await executeSingleAgent(
-            { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform },
+            { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey },
             message,
             '',
             (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -247,7 +247,7 @@ async function handleCreateAgent(
 async function handlePMConfirmation(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string }>,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
   sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
   const pmAgent = agents.find(a => a.name.includes('产品') || a.name.includes('PM'))
@@ -283,7 +283,7 @@ async function handlePMConfirmation(
 async function handleArchitectPlan(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string }>,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
   sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
   const architect = agents.find(a => a.name.includes('架构'))
@@ -384,7 +384,7 @@ async function handleArchitectPlan(
 async function handleAgentQA(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string }>,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
   sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
   // Get the original user message and architect plan
@@ -452,7 +452,7 @@ async function handleAgentQA(
 async function handleExecution(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string }>,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
   sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
   const tasks = await prisma.task.findMany({
@@ -552,7 +552,7 @@ async function handleExecution(
           workspacePath: workspacePaths.get(t.id),
           batch: 0,
         })),
-        agents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform })),
+        agents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model, baseUrl: a.baseUrl, apiKey: a.apiKey })),
         context,
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content })
       )
