@@ -2,6 +2,18 @@ import { createAdapter, type StreamChunk } from '../adapter'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt } from './prompts'
 import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
 
+export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
+  const adapter = createAdapter({ platform: 'claude-code' })
+  await adapter.connect({ platform: 'claude-code' })
+
+  let result = ''
+  for await (const chunk of adapter.send({ prompt: userPrompt })) {
+    if (chunk.type === 'text') result += chunk.content
+  }
+  await adapter.close()
+  return result
+}
+
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
   const adapter = createAdapter({ platform: 'claude-code' })
   await adapter.connect({ platform: 'claude-code' })
