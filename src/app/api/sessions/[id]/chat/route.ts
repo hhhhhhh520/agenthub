@@ -101,7 +101,7 @@ export async function POST(
             await handlePMConfirmation(message, sessionId, existingAgents, sendEvent)
           } else if (session.phase === 'idle' || (session.phase === 'alignment' && session.phaseStep === '')) {
             // Normal chat with Orchestrator
-            await handleOrchestratorChat(message, sessionId, sendEvent)
+            await handleOrchestratorChat(message, sessionId, sendEvent, existingAgents)
           } else if (session.phase === 'alignment') {
             if (session.phaseStep === 'pm_confirm') {
               await handleArchitectPlan(message, sessionId, existingAgents, sendEvent)
@@ -148,12 +148,25 @@ function isTaskIntent(message: string): boolean {
 async function handleOrchestratorChat(
   message: string,
   sessionId: string,
-  sendEvent: (data: { agentId: string; type: string; content: string }) => void
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void,
+  agents?: Array<{ name: string; expertise: string; platform: string }>
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
+  const agentList = (agents || []).map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
+  const systemPrompt = `你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。
+
+当前会话中的 Agent：
+${agentList || '（无）'}
+
+你的职责：
+- 和用户闲聊、回答问题、解释功能
+- 当用户下达开发任务（包含"开发/实现/做/写/搭建"等关键词）时，启动对齐流程
+- 当用户 @某个 Agent 时，告诉用户该 Agent 的能力和状态
+- 回复简洁，不要用 emoji，控制在 200 字以内`
+
   const result = await executeSingleAgent(
-    { name: 'Orchestrator', systemPrompt: '你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。你可以和用户闲聊、回答问题、解释功能。当用户下达开发任务时，你会启动对齐流程（PM确认→架构师方案→Agent Q&A→执行）。现在请友好地回复用户。', platform: 'claude-code' },
+    { name: 'Orchestrator', systemPrompt, platform: 'claude-code' },
     message,
     '',
     (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })

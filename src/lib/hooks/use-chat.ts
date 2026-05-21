@@ -80,18 +80,12 @@ export function useChat(sessionId: string | null) {
 
           if (event.type === 'done') {
             if (event.messageId) {
+              // Regenerate: replace existing message
               setMessages(prev => prev.map(m =>
                 m.id === event.messageId ? { ...m, rawContent: event.content } : m
               ))
-            } else {
-              setMessages(prev => [...prev, {
-                id: crypto.randomUUID(),
-                role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
-                rawContent: event.content,
-                agentId: event.agentId,
-                createdAt: new Date().toISOString(),
-              }])
             }
+            // Clear streaming; message is persisted in DB, loaded on next loadMessages
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
           } else if (event.type === 'error') {
             setMessages(prev => [...prev, {
