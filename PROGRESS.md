@@ -14,6 +14,7 @@
 | 实现计划 | 8 阶段 37 项任务拆分 | docs/implementation-plan.md | 2026-05-21 |
 | 阶段1 | 基础层 API（11项子任务） | members/agents/messages routes + parser + 前端适配 | 2026-05-21 |
 | 阶段2 | Agent管理+展示（6项子任务） | 种子数据 + Dialog + 创建表单 + Panel重构 + 对话式创建 | 2026-05-21 |
+| 阶段3 | 消息操作+产物内联（11项子任务） | 操作菜单 + 重新生成 + 文件卡片 + Diff/Accept + artifact渲染 | 2026-05-21 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |
