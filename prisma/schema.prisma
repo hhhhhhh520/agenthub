@@ -7,49 +7,86 @@ datasource db {
   provider = "sqlite"
 }
 
+// ─── 会话 ────────────────────────────────────────────
+// type: orchestrator=主会话, group=群聊, private=私聊
 model Session {
   id        String    @id @default(uuid())
   title     String
+  type      String    @default("group") // orchestrator | group | private
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
-  agents    Agent[]
-  tasks     Task[]
-  messages  Message[]
+
+  members  SessionMember[]
+  tasks    Task[]
+  messages Message[]
 }
 
+// ─── Agent 全局池 ─────────────────────────────────────
+// 全局共享，通过 SessionMember 与 Session 建立多对多关系
 model Agent {
   id           String  @id @default(uuid())
-  name         String
-  expertise    String
-  systemPrompt String
-  platform     String  @default("llm")
-  sessionId    String?
-  workDir      String?
-  status       String  @default("idle")
-  session      Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  tasks        Task[]
+  name         String                    // 中文角色名，如"前端工程师"
+  expertise    String                    // 专长描述
+  systemPrompt String                    // Agent 行为规范
+  platform     String  @default("llm")   // claude-code | opencode | llm
+  model        String  @default("")      // 模型标识，如 claude-opus-4-7
+  tools        String  @default("[]")    // JSON 数组，工具集标识
+  isPreset     Boolean @default(false)   // 预设 vs 用户自建
+  accentColor  String  @default("#6366f1") // 主题色 hex
+  capabilities String  @default("[]")    // JSON 数组，能力标签
+  status       String  @default("idle")  // idle | working | done | error
+
+  memberships SessionMember[]
+  tasks       Task[]
 }
 
+// ─── 会话成员中间表 ───────────────────────────────────
+model SessionMember {
+  id        String   @id @default(uuid())
+  sessionId String
+  agentId   String
+  joinedAt  DateTime @default(now())
+  role      String   @default("member") // member | orchestrator
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  agent   Agent   @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, agentId])
+}
+
+// ─── 任务 ─────────────────────────────────────────────
+// 依赖关系通过 dependencies JSON 数组表达
 model Task {
   id              String   @id @default(uuid())
   description     String
-  status          String   @default("pending")
+  status          String   @default("pending") // pending | in_progress | completed | failed | blocked
   assignedAgentId String?
-  assignedAgent   Agent?   @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
   sessionId       String
-  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  dependencies    String   @default("[]")
-  subtasks        String   @default("[]")
+  dependencies    String   @default("[]")      // JSON 数组，依赖的 taskId 列表
+  declaredFiles   String   @default("[]")      // JSON 数组，声明修改的文件列表（冲突预防）
+  workspacePath   String?                      // CLI Agent 隔离工作区路径
   createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  assignedAgent Agent?   @relation(fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  session       Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messages      Message[]
 }
 
+// ─── 消息 ─────────────────────────────────────────────
+// 只存 rawContent，读取时解析为结构化 JSON（决策 #16）
 model Message {
-  id        String   @id @default(uuid())
-  role      String
-  content   String
-  agentId   String?
-  taskId    String?
-  sessionId String
-  session   Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  role        String                       // user | assistant | system
+  rawContent  String                       // Agent 原始纯文本输出
+  agentId     String?
+  taskId      String?
+  replyToId   String?                      // 回复引用（决策 #15）
+  sessionId   String
+  createdAt   DateTime @default(now())
+
+  session  Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  task     Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  replyTo  Message? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies  Message[] @relation("MessageReplies")
 }

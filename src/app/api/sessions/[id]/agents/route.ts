@@ -6,6 +6,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const agents = await prisma.agent.findMany({ where: { sessionId: id } })
-  return NextResponse.json(agents)
+  const members = await prisma.sessionMember.findMany({
+    where: { sessionId: id },
+    include: { agent: true },
+  })
+  return NextResponse.json(members.map(m => m.agent))
 }

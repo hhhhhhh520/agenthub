@@ -4,8 +4,10 @@ import { useState, useCallback, useRef } from 'react'
 interface Message {
   id: string
   role: 'user' | 'agent' | 'orchestrator'
-  content: string
+  rawContent: string
   agentId?: string
+  replyToId?: string
+  replyTo?: { id: string; rawContent: string; role: string } | null
   createdAt: string
 }
 
@@ -28,13 +30,14 @@ export function useChat(sessionId: string | null) {
     setMessages(data)
   }, [sessionId])
 
-  const send = useCallback(async (content: string, mentionAll?: boolean) => {
+  const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string) => {
     if (!sessionId || !content.trim()) return
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: 'user',
-      content,
+      rawContent: content,
+      replyToId,
       createdAt: new Date().toISOString(),
     }
     setMessages(prev => [...prev, userMsg])
@@ -48,7 +51,7 @@ export function useChat(sessionId: string | null) {
       const res = await fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, mentionAll }),
+        body: JSON.stringify({ message: content, mentionAll, targetAgent, replyToId }),
         signal: controller.signal,
       })
 
@@ -74,7 +77,7 @@ export function useChat(sessionId: string | null) {
             setMessages(prev => [...prev, {
               id: crypto.randomUUID(),
               role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
-              content: event.content,
+              rawContent: event.content,
               agentId: event.agentId,
               createdAt: new Date().toISOString(),
             }])
@@ -83,7 +86,7 @@ export function useChat(sessionId: string | null) {
             setMessages(prev => [...prev, {
               id: crypto.randomUUID(),
               role: 'orchestrator',
-              content: `Error: ${event.content}`,
+              rawContent: `Error: ${event.content}`,
               createdAt: new Date().toISOString(),
             }])
           } else {

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { analyzeScene, generateRoles, decomposeTasks, executeTaskBatch, runDiscussion } from '@/lib/orchestrator'
+import { analyzeScene, generateRoles, decomposeTasks, executeTaskBatch, runDiscussion, executeSingleAgent } from '@/lib/orchestrator'
 import { groupByBatch } from '@/lib/orchestrator/scheduler'
 
 export async function POST(
@@ -7,10 +7,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
-  const { message, mentionAll } = await request.json()
+  const { message, mentionAll, targetAgent, replyToId } = await request.json()
 
   await prisma.message.create({
-    data: { role: 'user', content: message, sessionId },
+    data: { role: 'user', rawContent: message, sessionId, replyToId },
   })
 
   const encoder = new TextEncoder()
@@ -21,7 +21,11 @@ export async function POST(
       }
 
       try {
-        const existingAgents = await prisma.agent.findMany({ where: { sessionId } })
+        const existingMembers = await prisma.sessionMember.findMany({
+          where: { sessionId },
+          include: { agent: true },
+        })
+        const existingAgents = existingMembers.map(m => m.agent)
 
         if (mentionAll && existingAgents.length > 0) {
           sendEvent({ agentId: 'orchestrator', type: 'status', content: '开始多轮讨论...' })
@@ -35,9 +39,26 @@ export async function POST(
 
           const summary = opinions.join('\n\n')
           await prisma.message.create({
-            data: { role: 'orchestrator', content: summary, sessionId },
+            data: { role: 'orchestrator', rawContent: summary, sessionId },
           })
           sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
+        } else if (targetAgent) {
+          const agent = existingAgents.find(a => a.name === targetAgent)
+          if (!agent) {
+            sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
+          } else {
+            sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
+            const result = await executeSingleAgent(
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform },
+              message,
+              '',
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+            )
+            await prisma.message.create({
+              data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
+            })
+            sendEvent({ agentId: agent.name, type: 'done', content: result })
+          }
         } else {
           // Step 1: Scene analysis
           sendEvent({ agentId: 'orchestrator', type: 'status', content: '分析任务中...' })
@@ -50,8 +71,11 @@ export async function POST(
           sendEvent({ agentId: 'orchestrator', type: 'text', content: `已生成 ${roles.length} 个角色：${roles.map(r => r.name).join('、')}` })
 
           for (const role of roles) {
-            await prisma.agent.create({
-              data: { ...role, sessionId, status: 'idle' },
+            const agent = await prisma.agent.create({
+              data: { ...role, status: 'idle' },
+            })
+            await prisma.sessionMember.create({
+              data: { sessionId, agentId: agent.id },
             })
           }
 
@@ -90,7 +114,7 @@ export async function POST(
             .map(([taskId, result]) => `任务 ${taskId} 完成：${result.slice(0, 100)}...`)
             .join('\n')
           await prisma.message.create({
-            data: { role: 'orchestrator', content: summary, sessionId },
+            data: { role: 'orchestrator', rawContent: summary, sessionId },
           })
           sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
         }
