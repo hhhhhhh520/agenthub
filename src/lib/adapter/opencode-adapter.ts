@@ -4,11 +4,13 @@ import { join } from 'path'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 
 export class OpenCodeAdapter implements AgentAdapter {
+  private config: AdapterConfig = { platform: 'opencode' }
   private workDir: string = ''
   private process: ChildProcess | null = null
   private sessionId: string | null = null
 
   async connect(config: AdapterConfig): Promise<void> {
+    this.config = config
     this.workDir = config.workDir || join(process.cwd(), 'workspaces', `opencode-${Date.now()}`)
     if (!existsSync(this.workDir)) {
       mkdirSync(this.workDir, { recursive: true })
@@ -21,6 +23,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const args = ['run', '--format', 'json', '--dir', this.workDir]
 
+    if (this.config.model) {
+      args.push('--model', this.config.model)
+    }
     if (task.systemPrompt) {
       args.push('--prompt', task.systemPrompt)
     }
@@ -28,20 +33,26 @@ export class OpenCodeAdapter implements AgentAdapter {
       args.push('--session', this.sessionId)
     }
 
-    // Combine context + prompt
     const fullPrompt = task.context
       ? `Context:\n${task.context}\n\n---\n\n${task.prompt}`
       : task.prompt
 
-    const isWin = process.platform === 'win32'
-    const cmd = isWin ? 'opencode' : 'opencode'
+    const cmd = 'opencode'
+
+    // Build env with provider config
+    const env = { ...process.env, OPENCODE_PERMISSION: '{"*":"allow"}' } as NodeJS.ProcessEnv
+    if (this.config.apiKey) {
+      env.ANTHROPIC_API_KEY = this.config.apiKey
+      env.OPENAI_API_KEY = this.config.apiKey
+    }
+    if (this.config.baseUrl) {
+      env.ANTHROPIC_BASE_URL = this.config.baseUrl
+      env.OPENAI_BASE_URL = this.config.baseUrl
+    }
 
     this.process = spawn(cmd, args, {
       cwd: this.workDir,
-      env: {
-        ...process.env,
-        OPENCODE_PERMISSION: '{"*":"allow"}',
-      },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: true,
     })
@@ -55,11 +66,9 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     // Capture stderr
     const stderrChunks: string[] = []
-    if (this.process.stderr) {
-      this.process.stderr.on('data', (chunk: Buffer) => {
-        stderrChunks.push(chunk.toString())
-      })
-    }
+    this.process.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk.toString())
+    })
 
     // Timeout: 20 minutes
     const timeout = setTimeout(() => {
