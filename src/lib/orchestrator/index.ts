@@ -96,8 +96,9 @@ export async function executeTaskBatch(
   const results = new Map<string, string>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
 
-  await Promise.all(tasks.map(async (task) => {
-    const agent = agentMap.get(task.assignedAgent)
+  await Promise.all(tasks.map(async (task, index) => {
+    // Match agent by name, fallback to index for encoding-garbled names
+    const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
     if (!agent) return
 
     // Always use claude-code platform (no API key needed)
@@ -126,6 +127,29 @@ export async function executeTaskBatch(
   }))
 
   return results
+}
+
+export async function executeSingleAgent(
+  agent: { name: string; systemPrompt: string; platform: string },
+  prompt: string,
+  context: string,
+  onChunk: (agentId: string, chunk: StreamChunk) => void
+): Promise<string> {
+  const adapter = createAdapter({ platform: 'claude-code' })
+  await adapter.connect({ platform: 'claude-code' })
+
+  let result = ''
+  for await (const chunk of adapter.send({
+    prompt,
+    context,
+    systemPrompt: agent.systemPrompt,
+  })) {
+    result += chunk.content
+    onChunk(agent.name, chunk)
+  }
+
+  await adapter.close()
+  return result
 }
 
 export async function runDiscussion(
