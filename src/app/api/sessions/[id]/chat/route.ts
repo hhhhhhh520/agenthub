@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { analyzeScene, generateRoles, decomposeTasks, executeTaskBatch, runDiscussion, executeSingleAgent } from '@/lib/orchestrator'
+import { analyzeScene, decomposeTasks, executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis } from '@/lib/orchestrator'
 import { groupByBatch } from '@/lib/orchestrator/scheduler'
 
 export async function POST(
@@ -60,63 +60,103 @@ export async function POST(
             sendEvent({ agentId: agent.name, type: 'done', content: result })
           }
         } else {
-          // Step 1: Scene analysis
-          sendEvent({ agentId: 'orchestrator', type: 'status', content: '分析任务中...' })
-          const scene = await analyzeScene(message)
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务类型：${scene.type}，复杂度：${scene.complexity}` })
+          // Check for agent creation intent
+          const isCreateIntent = /创建|新建|添加|帮我建|create\s*agent/i.test(message)
 
-          // Step 2: Generate roles
-          sendEvent({ agentId: 'orchestrator', type: 'status', content: '组建团队中...' })
-          const roles = await generateRoles(scene.type, scene.description)
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: `已生成 ${roles.length} 个角色：${roles.map(r => r.name).join('、')}` })
+          if (isCreateIntent) {
+            sendEvent({ agentId: 'orchestrator', type: 'status', content: '正在生成 Agent 配置...' })
 
-          for (const role of roles) {
+            const configPrompt = `从用户消息中提取 Agent 配置，返回 JSON（不要其他话）：
+{"name":"角色名","expertise":"专长描述","systemPrompt":"系统提示词","platform":"llm或claude-code","capabilities":["标签1","标签2"],"accentColor":"#hex色"}
+
+用户消息：${message}`
+
+            const configText = await callLLMForAnalysis(configPrompt)
+            const cleaned = configText.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
+            let config: { name: string; expertise: string; systemPrompt: string; platform?: string; capabilities?: string[]; accentColor?: string }
+            try {
+              config = JSON.parse(cleaned)
+            } catch {
+              sendEvent({ agentId: 'orchestrator', type: 'error', content: 'Agent 配置解析失败，请重试' })
+              controller.close()
+              return
+            }
+
             const agent = await prisma.agent.create({
-              data: { ...role, status: 'idle' },
+              data: {
+                name: config.name,
+                expertise: config.expertise,
+                systemPrompt: config.systemPrompt,
+                platform: config.platform || 'llm',
+                capabilities: JSON.stringify(config.capabilities || []),
+                accentColor: config.accentColor || '#6366f1',
+                isPreset: false,
+              },
             })
+
             await prisma.sessionMember.create({
               data: { sessionId, agentId: agent.id },
             })
-          }
 
-          // Step 3: Decompose tasks
-          sendEvent({ agentId: 'orchestrator', type: 'status', content: '拆解任务中...' })
-          const tasks = await decomposeTasks(scene.description, roles)
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: `已拆解为 ${tasks.length} 个子任务` })
-
-          for (const task of tasks) {
-            await prisma.task.create({
-              data: {
-                id: task.id,
-                description: task.description,
-                sessionId,
-                dependencies: JSON.stringify(task.dependencies),
-              },
+            const result = `已创建 Agent「${agent.name}」\n专长：${agent.expertise}\n平台：${agent.platform}`
+            await prisma.message.create({
+              data: { role: 'orchestrator', rawContent: result, sessionId },
             })
+            sendEvent({ agentId: 'orchestrator', type: 'text', content: result })
+            sendEvent({ agentId: 'orchestrator', type: 'done', content: result })
+          } else {
+            // Default: use existing session agents for task decomposition
+            sendEvent({ agentId: 'orchestrator', type: 'status', content: '分析任务中...' })
+            const scene = await analyzeScene(message)
+            sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务类型：${scene.type}，复杂度：${scene.complexity}` })
+
+            if (existingAgents.length === 0) {
+              const tip = '当前会话没有 Agent，请先通过对话创建或从 Agent 面板添加。'
+              await prisma.message.create({ data: { role: 'orchestrator', rawContent: tip, sessionId } })
+              sendEvent({ agentId: 'orchestrator', type: 'done', content: tip })
+            } else {
+              sendEvent({ agentId: 'orchestrator', type: 'status', content: '拆解任务中...' })
+              const tasks = await decomposeTasks(
+                scene.description,
+                existingAgents.map(a => ({ name: a.name, expertise: a.expertise }))
+              )
+              sendEvent({ agentId: 'orchestrator', type: 'text', content: `已拆解为 ${tasks.length} 个子任务` })
+
+              for (const task of tasks) {
+                await prisma.task.create({
+                  data: {
+                    id: task.id,
+                    description: task.description,
+                    sessionId,
+                    assignedAgentId: existingAgents.find(a => a.name === task.assignedAgent)?.id,
+                    dependencies: JSON.stringify(task.dependencies),
+                  },
+                })
+              }
+
+              const batches = groupByBatch(tasks)
+              const allResults = new Map<string, string>()
+
+              for (let i = 0; i < batches.length; i++) {
+                sendEvent({ agentId: 'orchestrator', type: 'status', content: `执行第 ${i + 1}/${batches.length} 批任务...` })
+                const batchResults = await executeTaskBatch(
+                  batches[i],
+                  existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform })),
+                  message,
+                  (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content })
+                )
+                for (const [taskId, result] of batchResults) allResults.set(taskId, result)
+              }
+
+              const summary = Array.from(allResults.entries())
+                .map(([taskId, result]) => `任务 ${taskId} 完成：${result.slice(0, 100)}...`)
+                .join('\n')
+              await prisma.message.create({
+                data: { role: 'orchestrator', rawContent: summary, sessionId },
+              })
+              sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
+            }
           }
-
-          // Step 4: Execute tasks batch by batch
-          const batches = groupByBatch(tasks)
-          const allResults = new Map<string, string>()
-
-          for (let i = 0; i < batches.length; i++) {
-            sendEvent({ agentId: 'orchestrator', type: 'status', content: `执行第 ${i + 1}/${batches.length} 批任务...` })
-            const batchResults = await executeTaskBatch(
-              batches[i],
-              roles.map(r => ({ name: r.name, systemPrompt: r.systemPrompt, platform: r.platform })),
-              message,
-              (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content })
-            )
-            for (const [taskId, result] of batchResults) allResults.set(taskId, result)
-          }
-
-          const summary = Array.from(allResults.entries())
-            .map(([taskId, result]) => `任务 ${taskId} 完成：${result.slice(0, 100)}...`)
-            .join('\n')
-          await prisma.message.create({
-            data: { role: 'orchestrator', rawContent: summary, sessionId },
-          })
-          sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
         }
       } catch (error) {
         sendEvent({ agentId: 'orchestrator', type: 'error', content: String(error) })

@@ -34,6 +34,13 @@ function hexToHsl(hex: string): [number, number, number] {
   return [h * 360, s * 100, l * 100]
 }
 
+export const STATUS_COLORS: Record<string, string> = {
+  idle: 'bg-gray-400',
+  working: 'bg-green-500 animate-pulse',
+  done: 'bg-blue-500',
+  error: 'bg-red-500',
+}
+
 export function getAgentStyle(agentId: string, accentColor?: string) {
   if (accentColor) {
     const [h, s] = hexToHsl(accentColor)
