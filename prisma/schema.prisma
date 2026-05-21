@@ -67,6 +67,7 @@ model Task {
   dependencies    String   @default("[]")      // JSON 数组，依赖的 taskId 列表
   declaredFiles   String   @default("[]")      // JSON 数组，声明修改的文件列表（冲突预防）
   workspacePath   String?                      // CLI Agent 隔离工作区路径
+  cliSessionId    String?                      // CLI Agent sessionID，用于会话恢复
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
