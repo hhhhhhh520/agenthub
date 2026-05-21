@@ -509,17 +509,20 @@ async function handleExecution(
 
     // 6.5c: Create workspaces for ready tasks
     const workspacePaths = new Map<string, string>()
+    const failedTaskIds = new Set<string>()
     for (const task of readyTasks) {
       try {
         const wsPath = createTaskWorkspace(sessionId, task.id)
         workspacePaths.set(task.id, wsPath)
         await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress', workspacePath: wsPath } })
-      } catch (e) {
+        task.status = 'in_progress'
+        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
+      } catch {
         await prisma.task.update({ where: { id: task.id }, data: { status: 'failed' } })
+        task.status = 'failed'
+        failedTaskIds.add(task.id)
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
       }
-      task.status = 'in_progress'
-      sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
 
     // Execute ready tasks in parallel
