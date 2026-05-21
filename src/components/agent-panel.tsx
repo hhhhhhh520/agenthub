@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
+import { ProviderImportDialog } from '@/components/provider-import-dialog'
 
 interface Agent {
   id: string
@@ -34,11 +35,12 @@ const TASK_STATUS_ICONS: Record<string, string> = {
   blocked: '⏸',
 }
 
-export function AgentPanel({ sessionId }: { sessionId: string | null }) {
+export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | null; onPrivateChat?: (agentId: string, agentName: string) => void }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [tab, setTab] = useState<'agents' | 'tasks'>('agents')
   const [showCreate, setShowCreate] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   const loadAgents = async () => {
     const res = await fetch('/api/agents')
@@ -82,9 +84,14 @@ export function AgentPanel({ sessionId }: { sessionId: string | null }) {
         <div className="p-3 space-y-2">
           {tab === 'agents' && (
             <>
-              <Button variant="outline" size="sm" className="w-full" onClick={() => setShowCreate(true)}>
-                + 创建 Agent
-              </Button>
+              <div className="flex gap-1">
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowCreate(true)}>
+                  + 创建 Agent
+                </Button>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowImport(true)}>
+                  导入服务商
+                </Button>
+              </div>
               {agents.map(agent => {
                 const style = getAgentStyle(agent.name, agent.accentColor)
                 const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
@@ -95,6 +102,15 @@ export function AgentPanel({ sessionId }: { sessionId: string | null }) {
                         <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                       </Avatar>
                       <span className="font-medium flex-1">{agent.name}</span>
+                      {onPrivateChat && (
+                        <button
+                          onClick={() => onPrivateChat(agent.id, agent.name)}
+                          className="text-xs text-blue-500 hover:underline opacity-0 group-hover:opacity-100"
+                          title={`和 ${agent.name} 私聊`}
+                        >
+                          私聊
+                        </button>
+                      )}
                       <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[agent.status] || 'bg-gray-400'}`} />
                     </div>
                     <div className="text-xs text-gray-500 mt-1 ml-9">{agent.expertise}</div>
@@ -122,6 +138,18 @@ export function AgentPanel({ sessionId }: { sessionId: string | null }) {
         </div>
       </ScrollArea>
       <CreateAgentDialog open={showCreate} onOpenChange={setShowCreate} onCreated={loadAgents} />
+      <ProviderImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        onImport={async (config) => {
+          // Save provider config to .env via API
+          await fetch('/api/providers/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config),
+          })
+        }}
+      />
     </div>
   )
 }

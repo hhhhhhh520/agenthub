@@ -18,7 +18,18 @@ export default function Home() {
       />
       <div className="flex-1 flex">
         <ChatArea sessionId={activeId} />
-        <AgentPanel sessionId={activeId} />
+        <AgentPanel
+          sessionId={activeId}
+          onPrivateChat={async (agentId, agentName) => {
+            const session = await create(`私聊: ${agentName}`, 'private')
+            // Add the agent to the session
+            await fetch(`/api/sessions/${session.id}/members`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agentId }),
+            })
+          }}
+        />
       </div>
     </div>
   )

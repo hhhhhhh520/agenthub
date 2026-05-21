@@ -92,6 +92,20 @@ export async function POST(
             })
             sendEvent({ agentId: agent.name, type: 'done', content: result })
           }
+        } else if (session.type === 'private' && existingAgents.length > 0) {
+          // Private chat: direct 1v1 with the agent
+          const agent = existingAgents[0]
+          sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
+          const result = await executeSingleAgent(
+            { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform },
+            message,
+            '',
+            (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+          )
+          await prisma.message.create({
+            data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
+          })
+          sendEvent({ agentId: agent.name, type: 'done', content: result })
         } else {
           // Check for agent creation intent
           const isCreateIntent = /创建|新建|添加|帮我建|create\s*agent/i.test(message)
