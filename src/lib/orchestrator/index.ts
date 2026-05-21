@@ -1,10 +1,10 @@
-import { createAdapter, type StreamChunk } from '../adapter'
+import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt } from './prompts'
 import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
 
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'claude-code' })
-  await adapter.connect({ platform: 'claude-code' })
+  const adapter = createAdapter({ platform: 'llm' })
+  await adapter.connect({ platform: 'llm' })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: userPrompt })) {
@@ -15,8 +15,8 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
 }
 
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'claude-code' })
-  await adapter.connect({ platform: 'claude-code' })
+  const adapter = createAdapter({ platform: 'llm' })
+  await adapter.connect({ platform: 'llm' })
 
   // Combine system prompt into user prompt since Claude Code CLI ignores --system-prompt
   const combinedPrompt = `${systemPrompt}\n\n---\n\n用户输入：${userPrompt}\n\n你必须严格按照上述指令返回结果，不要说其他话。`
@@ -114,9 +114,9 @@ export async function executeTaskBatch(
     const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
     if (!agent) return
 
-    // Always use claude-code platform (no API key needed)
-    const adapter = createAdapter({ platform: 'claude-code' })
-    await adapter.connect({ platform: 'claude-code' })
+    const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
+    const adapter = createAdapter({ platform })
+    await adapter.connect({ platform })
 
     const depContext = task.dependencies
       .map(depId => results.get(depId))
@@ -148,8 +148,9 @@ export async function executeSingleAgent(
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
 ): Promise<string> {
-  const adapter = createAdapter({ platform: 'claude-code' })
-  await adapter.connect({ platform: 'claude-code' })
+  const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
+  const adapter = createAdapter({ platform })
+  await adapter.connect({ platform })
 
   let result = ''
   for await (const chunk of adapter.send({
@@ -178,8 +179,8 @@ export async function runDiscussion(
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
-      const adapter = createAdapter({ platform: 'claude-code' })
-      await adapter.connect({ platform: 'claude-code' })
+      const adapter = createAdapter({ platform: 'llm' })
+      await adapter.connect({ platform: 'llm' })
 
       let result = ''
       for await (const chunk of adapter.send({ prompt: combinedPrompt })) {

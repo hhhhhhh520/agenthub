@@ -1,8 +1,9 @@
 export interface AdapterConfig {
-  platform: 'llm' | 'claude-code' | 'codex'
+  platform: 'llm' | 'claude-code' | 'opencode'
   apiKey?: string
   workDir?: string
   model?: string
+  sessionId?: string
 }
 
 export interface AgentTask {

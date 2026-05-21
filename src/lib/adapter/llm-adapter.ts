@@ -13,9 +13,8 @@ export class LLMAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const model = this.config.model || 'claude-sonnet-4-20250514'
 
-    const llm = model.startsWith('gpt')
-      ? openai(model)
-      : anthropic(model)
+    const isOpenAI = /^(gpt-|o1-|o3-)/.test(model)
+    const llm = isOpenAI ? openai(model) : anthropic(model)
 
     const prompt = task.context
       ? `Context:\n${task.context}\n\n---\n\n${task.prompt}`
