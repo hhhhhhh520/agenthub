@@ -12,7 +12,7 @@
 | 数据模型 | Prisma schema 对齐 v2 设计 | prisma/schema.prisma | 2026-05-21 |
 | 数据库迁移 | 重置并迁移数据库 | prisma/migrations/20260521093512_v2_schema | 2026-05-21 |
 | 实现计划 | 8 阶段 37 项任务拆分 | docs/implementation-plan.md | 2026-05-21 |
-| 阶段1 | 基础层 API（12项子任务） | members/agents/messages routes + parser + 前端适配 | 2026-05-21 |
+| 阶段1 | 基础层 API（11项子任务） | members/agents/messages routes + parser + 前端适配 | 2026-05-21 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |

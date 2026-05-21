@@ -19,30 +19,57 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
     const args = ['--output-format', 'stream-json', '--verbose', '--bare']
 
-    this.process = spawn('claude', args, {
+    const isWin = process.platform === 'win32'
+    const cmd = isWin ? 'chcp 65001 >nul && claude' : 'claude'
+    this.process = spawn(cmd, args, {
       cwd: this.workDir,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8',
+        LANG: 'en_US.UTF-8',
+        LC_ALL: 'en_US.UTF-8',
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: true,
     })
 
-    // Write prompt to stdin then close
+    // Capture stderr for debugging
+    const stderrChunks: string[] = []
+    if (this.process.stderr) {
+      this.process.stderr.on('data', (chunk: Buffer) => {
+        stderrChunks.push(chunk.toString())
+      })
+    }
+
+    // Combine systemPrompt + context + prompt into a single prompt for CLI
+    const parts: string[] = []
+    if (task.systemPrompt) parts.push(task.systemPrompt)
+    if (task.context) parts.push(`背景信息：\n${task.context}`)
+    parts.push(task.prompt)
+    const fullPrompt = parts.join('\n\n---\n\n')
+
+    // Write combined prompt to stdin then close
     if (this.process.stdin) {
-      this.process.stdin.write(task.prompt)
+      const buffer = Buffer.from(fullPrompt, 'utf-8')
+      this.process.stdin.write(buffer)
       this.process.stdin.end()
     }
 
+    // Wait for process to exit or timeout
     const timeout = setTimeout(() => {
-      this.process?.kill('SIGTERM')
-    }, 5 * 60 * 1000)
+      this.killProcessTree()
+    }, 3 * 60 * 1000) // 3 minutes timeout
 
     try {
       for await (const chunk of this.readProcess(this.process)) {
         yield chunk
       }
+    } catch (error) {
+      const stderr = stderrChunks.join('')
+      throw new Error(`Claude CLI error: ${error}${stderr ? `\nStderr: ${stderr}` : ''}`)
     } finally {
       clearTimeout(timeout)
-      this.process = null
+      this.killProcessTree()
     }
   }
 
@@ -82,11 +109,35 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
   }
 
-  async close(): Promise<void> {
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      this.process = null
+  private killProcessTree(): void {
+    if (!this.process) return
+
+    const pid = this.process.pid
+    if (!pid) return
+
+    // Kill process tree on Windows
+    if (process.platform === 'win32') {
+      try {
+        // Use taskkill to kill entire process tree
+        spawn('taskkill', ['/pid', pid.toString(), '/T', '/F'], { shell: true })
+      } catch {
+        // Fallback to simple kill
+        this.process.kill('SIGTERM')
+      }
+    } else {
+      // On Unix, kill process group
+      try {
+        process.kill(-pid, 'SIGTERM')
+      } catch {
+        this.process.kill('SIGTERM')
+      }
     }
+
+    this.process = null
+  }
+
+  async close(): Promise<void> {
+    this.killProcessTree()
     if (this.workDir && this.workDir.includes('agenthub-')) {
       try { rmSync(this.workDir, { recursive: true, force: true }) } catch {}
     }
