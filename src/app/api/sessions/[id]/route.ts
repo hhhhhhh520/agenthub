@@ -9,7 +9,7 @@ export async function GET(
   const session = await prisma.session.findUnique({
     where: { id },
     include: {
-      agents: true,
+      members: { include: { agent: true } },
       tasks: true,
       messages: { orderBy: { createdAt: 'asc' } },
     },
