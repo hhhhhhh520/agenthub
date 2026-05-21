@@ -75,6 +75,30 @@ ${architectPlan}
 控制在 200 字以内。`
 }
 
+export function buildMonitoringPrompt(
+  taskDescription: string,
+  taskResult: string,
+  declaredFiles: string[],
+  auditResult: { declared: string[]; undeclared: string[] }
+): string {
+  return `你是 Orchestrator，正在审查任务执行结果。
+
+任务描述：${taskDescription}
+声明修改的文件：${declaredFiles.join(', ') || '无'}
+实际修改的声明文件：${auditResult.declared.join(', ') || '无'}
+越界修改的文件：${auditResult.undeclared.join(', ') || '无'}
+
+任务产出（前 500 字）：
+${taskResult.slice(0, 500)}
+
+请判断：1.任务是否完成？2.产出质量是否合格？3.是否需要纠偏？
+
+返回 JSON：
+{"completed": true/false, "quality": "good/acceptable/poor", "needsCorrection": true/false, "correctionNote": "一句话说明问题"}
+
+如果一切正常，返回 {"completed": true, "quality": "good", "needsCorrection": false, "correctionNote": ""}`
+}
+
 export function buildDiscussionPrompt(round: number, maxRounds: number, previousOpinions: string, agentName: string): string {
   return `你是讨论参与者 ${agentName}。
 当前是第 ${round}/${maxRounds} 轮讨论。
