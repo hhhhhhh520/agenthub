@@ -3,8 +3,8 @@ import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMP
 import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
 
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'llm' })
-  await adapter.connect({ platform: 'llm' })
+  const adapter = createAdapter({ platform: 'claude-code' })
+  await adapter.connect({ platform: 'claude-code' })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: userPrompt })) {
@@ -15,8 +15,8 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
 }
 
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'llm' })
-  await adapter.connect({ platform: 'llm' })
+  const adapter = createAdapter({ platform: 'claude-code' })
+  await adapter.connect({ platform: 'claude-code' })
 
   // Combine system prompt into user prompt since Claude Code CLI ignores --system-prompt
   const combinedPrompt = `${systemPrompt}\n\n---\n\n用户输入：${userPrompt}\n\n你必须严格按照上述指令返回结果，不要说其他话。`
@@ -179,8 +179,8 @@ export async function runDiscussion(
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
-      const adapter = createAdapter({ platform: 'llm' })
-      await adapter.connect({ platform: 'llm' })
+      const adapter = createAdapter({ platform: 'claude-code' })
+      await adapter.connect({ platform: 'claude-code' })
 
       let result = ''
       for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
