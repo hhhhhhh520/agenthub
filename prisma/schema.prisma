@@ -10,13 +10,14 @@ datasource db {
 // ─── 会话 ────────────────────────────────────────────
 // type: orchestrator=主会话, group=群聊, private=私聊
 model Session {
-  id        String    @id @default(uuid())
-  title     String
-  type      String    @default("group") // orchestrator | group | private
-  phase     String    @default("idle")   // idle | alignment | execution | done
-  phaseStep String    @default("")       // "" | "pm_confirm" | "architect_plan" | "agent_qa"
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id         String    @id @default(uuid())
+  title      String
+  type       String    @default("group") // orchestrator | group | private
+  phase      String    @default("idle")   // idle | alignment | execution | done
+  phaseStep  String    @default("")       // "" | "pm_confirm" | "architect_plan" | "agent_qa"
+  projectDir String    @default("")       // 用户指定的项目目录
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   members  SessionMember[]
   tasks    Task[]

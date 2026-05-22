@@ -126,11 +126,59 @@ prisma/
 
 ### 适配器层
 
-- `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式）
-- `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY）
-- `platform: 'codex'` → 待实现
+- `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式，支持 `--resume` 恢复会话）
+- `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
+- `platform: 'opencode'` → OpenCodeAdapter（JSON 事件流）
 - v2 设计：混合执行层，Orchestrator 用 LLM API，代码 Agent 用 CLI
-- 每个 Agent 可独立选择执行平台
+- 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
+
+### 多供应商配置
+
+- Agent 表有 `model`/`baseUrl`/`apiKey` 字段，支持不同 Agent 使用不同供应商
+- **LLM 供应商判断逻辑**：有 `baseUrl` → 默认用 OpenAI SDK（兼容 DeepSeek、Moonshot 等）；无 `baseUrl` + model 匹配 `gpt-/o1-/o3-` → OpenAI；其他 → Anthropic
+- OpenCodeAdapter 通过环境变量传递 API key 和 base URL
+- `/api/providers` 读取 `~/.cc-connect/config.toml` 和 `~/.claude/settings.json`
+
+### Orchestrator 决策模式
+
+Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
+- `action: 'self'` — Orchestrator 自己回答（闲聊、简单问题）
+- `action: 'delegate'` — 委派给指定 Agent（`target` 字段指定）
+- `action: 'discuss'` — 多 Agent 讨论（`targets` 数组指定参与者）
+- `action: 'done'` — 任务完成
+
+决策函数：`src/lib/orchestrator/index.ts` → `getOrchestratorDecision()`
+
+### 消息解析器
+
+- `src/lib/message-parser.ts` → `parseMessage()` 函数
+- `/api/messages` 返回时自动解析 `rawContent`，前端可直接使用 `message.parsed.text`、`message.parsed.codeBlocks`、`message.parsed.artifacts`
+
+### CLI 会话恢复
+
+- ClaudeCodeAdapter 支持 `--resume sessionId` 参数恢复上下文
+- 执行后提取 `session_id` 并保存到 Task 表 `cliSessionId` 字段
+- 类型定义：`StreamChunk.type` 新增 `'session'` 类型
+
+### 工作区隔离
+
+- 执行任务时创建 `workspaces/{sessionId}/task-{taskId}/` 隔离目录
+- `src/lib/workspace.ts`：createTaskWorkspace / takeSnapshot / auditTaskWorkspace
+- 审计：检测 Agent 是否修改了非声明文件（declaredFiles）
+- 跳过：node_modules, .next, .git, workspaces
+
+### Chat API Session Lock
+
+- 同一个 session 的 chat 请求必须串行处理（per-session lock）
+- 原因：并发请求会读到过时的 phaseStep，导致同一 handler 被触发两次
+- 实现：`sessionLocks` Map + Promise chain，请求排队，stream 结束后 release
+- **禁止移除 session lock** — 会导致对齐流程并发 bug
+
+### 会话类型
+
+- `type: 'orchestrator'` — Orchestrator 主会话，走对齐流程
+- `type: 'group'` — 群聊，多 Agent 协作，通过拉群 Dialog 创建（可选 Agent）
+- `type: 'private'` — 私聊，直接与单个 Agent 对话，跳过 Orchestrator
 
 ### 设计文档（必读）
 
@@ -144,13 +192,27 @@ prisma/
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | GET | `/api/sessions` | 会话列表 |
-| POST | `/api/sessions` | 创建会话 |
+| POST | `/api/sessions` | 创建会话（自动添加预设 Agent） |
 | GET | `/api/sessions/[id]` | 会话详情 |
+| PUT | `/api/sessions/[id]` | 更新会话 |
 | DELETE | `/api/sessions/[id]` | 删除会话 |
 | GET | `/api/sessions/[id]/messages` | 消息列表 |
-| GET | `/api/sessions/[id]/agents` | Agent 列表 |
+| POST | `/api/sessions/[id]/messages` | 创建消息 |
+| GET | `/api/sessions/[id]/agents` | 会话 Agent 列表（仅 Agent 对象） |
+| GET | `/api/sessions/[id]/members` | 会话成员列表（含 role/joinedAt） |
+| POST | `/api/sessions/[id]/members` | 添加成员到会话 |
+| DELETE | `/api/sessions/[id]/members` | 移除会话成员 |
 | GET | `/api/sessions/[id]/tasks` | Task 列表 |
-| POST | `/api/sessions/[id]/chat` | SSE 流式聊天 |
+| GET | `/api/sessions/[id]/files/[filename]` | 读取工作区文件 |
+| POST | `/api/sessions/[id]/chat` | SSE 流式聊天（per-session lock） |
+| POST | `/api/sessions/recommend-agents` | 推荐 Agent（LLM 分析任务） |
+| GET | `/api/agents` | 全局 Agent 列表 |
+| POST | `/api/agents` | 创建 Agent |
+| PUT | `/api/agents/[id]` | 更新 Agent |
+| DELETE | `/api/agents/[id]` | 删除 Agent |
+| GET | `/api/providers` | CC-Switch 服务商列表 |
+| POST | `/api/providers/import` | 导入服务商配置到 Agent |
+| POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
 | POST | `/api/deploy` | 模拟部署 |
 
 ## 运行
@@ -160,4 +222,4 @@ npm run dev     # 开发
 npm run build   # 构建
 ```
 
-无需额外 API key，复用 Claude Code CLI 已有认证。
+Claude Code CLI 复用已有认证。LLM Adapter 需配置 `ANTHROPIC_API_KEY`（通过 Agent 或 CC-Switch 导入）。

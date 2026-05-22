@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-21 | 最后更新: 2026-05-21
+> 创建时间: 2026-05-21 | 最后更新: 2026-05-22
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + TypeScript + Prisma 7 + SQLite + shadcn/ui | **目标**: IM 风格多 Agent 协作平台
@@ -19,6 +19,17 @@
 | 阶段5 | 执行层+平台适配（5项子任务） | 平台路由 + LLM增强 + OpenCode适配器 + cliSessionId | 2026-05-21 |
 | 构建修复 | Google Fonts → 系统字体 | 国内网络问题，移除外部字体依赖 | 2026-05-21 |
 | 阶段6 | 群聊协作+代码冲突（14项子任务） | 隔离工作区 + 文件重叠检测 + 合并审计 + 全历史上下文 + 监控纠偏 | 2026-05-21 |
+| 补做 | 单聊模式 + CC-Switch 导入 | private 会话 + 直接对话 Agent + config.toml 解析导入 | 2026-05-21 |
+| 补做 | 拉群流程 + Agent 编辑 | CreateGroupDialog + 推荐 Agent + 内联编辑 + 服务商导入 | 2026-05-21 |
+| Bug修复 | Chat API Session Lock | 并发请求串行化，修复对齐流程重复触发 | 2026-05-21 |
+| Bug修复 | JSON 提取 + @Agent 上下文 | 架构师 JSON 解析健壮化 + @Agent 带历史上下文 | 2026-05-21 |
+| 参考分析 | multica 项目分析 | issues/ISSUE-013，UI 模式和功能参考 | 2026-05-21 |
+| Bug修复 | runDiscussion 多模型支持 | 修复硬编码 platform，支持 Agent 独立配置 | 2026-05-22 |
+| Bug修复 | LLM 供应商判断逻辑 | 根据 baseUrl 判断 SDK，支持 DeepSeek/Moonshot 等 | 2026-05-22 |
+| 功能增强 | 消息解析器集成 | /api/messages 返回 parsed 字段 | 2026-05-22 |
+| 功能增强 | sessionID 持久化 | ClaudeCodeAdapter 提取 session_id，保存到 Task.cliSessionId | 2026-05-22 |
+| 功能增强 | CLI 会话恢复 | 支持 --resume sessionId 参数 | 2026-05-22 |
+| 架构重构 | Orchestrator 自主决策 | 固定流程改为动态决策（self/delegate/discuss/done） | 2026-05-22 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |
@@ -28,19 +39,23 @@
 ### 📋 待办
 | 优先级 | 任务 | 说明 |
 |--------|------|------|
-| P0 | 实现计划拆分 | 将 22 个设计决策拆成可执行的开发任务 |
-| ~~P1~~ | ~~SessionMember CRUD~~ | ~~已完成：会话成员管理 API~~ |
-| ~~P1~~ | ~~全局 Agent 池管理~~ | ~~已完成：Agent 创建/编辑/删除 API~~ |
-| ~~P1~~ | ~~用户自建 Agent~~ | ~~已完成：对话式创建 + 表单创建~~ |
-| P1 | 消息操作 | 回复引用、重新生成、复制代码 |
-| P1 | 产物内联 | 代码块、网页预览、文件附件、Diff 视图 |
-| P1 | Orchestrator 对齐流程 | 选人 + 拆任务 + 阶段控制 |
-| P1 | 会话恢复 | sessionID 持久化 + --resume 恢复 |
-| P1 | 接入 OpenCode | 第二个 CLI 平台 |
+| P1 | 失败处理 | 错误分类重试 + 降级 + 熔断 + 用户操作面板（阶段7） |
+| P1 | 上下文管理 | pin 消息 + 多轮迭代 + Prompt 展示面板（阶段8） |
 | P2 | 一键部署 | 聊天中部署指令 |
 | P2 | 多端支持 | 桌面端 + 移动端 |
 
 ## 修改历史
+### 2026-05-22 Orchestrator 自主决策 + Bug 修复
+**修改文件**: src/lib/adapter/claude-code-adapter.ts, src/lib/adapter/llm-adapter.ts, src/lib/adapter/types.ts, src/lib/orchestrator/index.ts, src/lib/orchestrator/prompts.ts, src/app/api/sessions/[id]/chat/route.ts, src/app/api/sessions/[id]/messages/route.ts
+**修改内容**:
+- 修复 runDiscussion 硬编码 platform，支持 Agent 独立配置
+- 修复 LLM 供应商判断逻辑，根据 baseUrl 选择 SDK
+- 集成消息解析器，/api/messages 返回 parsed 字段
+- 实现 sessionID 持久化，保存到 Task.cliSessionId
+- 实现 CLI 会话恢复，支持 --resume 参数
+- 重构 Orchestrator 为自主决策模式，删除旧固定流程函数
+**修改原因**: 测试验收发现问题 + 架构优化
+
 ### 2026-05-21 数据模型 v2 对齐
 **修改文件**: prisma/schema.prisma, src/app/api/sessions/route.ts, src/app/api/sessions/[id]/route.ts, src/app/api/sessions/[id]/agents/route.ts, src/app/api/sessions/[id]/chat/route.ts, src/components/chat-area.tsx, src/lib/hooks/use-chat.ts
 **修改内容**:

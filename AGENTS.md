@@ -20,5 +20,10 @@
 
 ## 环境变量
 
-当前无需额外环境变量。Claude Code CLI 复用已有认证。
-如需使用 LLM Adapter（`platform: 'llm'`），需设置 `ANTHROPIC_API_KEY`。
+| 变量 | 用途 | 必需 |
+|------|------|------|
+| `ANTHROPIC_API_KEY` | LLM Adapter 调用 Anthropic API | 使用 LLM 平台时 |
+| `OPENAI_API_KEY` | LLM Adapter 调用 OpenAI API | 使用 OpenAI 模型时 |
+
+Claude Code CLI 复用已有认证，无需额外配置。
+可通过 CC-Switch 导入或 Agent 级别配置（`agent.baseUrl`/`agent.apiKey`）。

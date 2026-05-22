@@ -12,15 +12,21 @@ interface Props {
   sessions: Session[]
   activeId: string | null
   onSelect: (id: string) => void
-  onCreate: () => void
+  onCreateGroup: () => void
   onDelete: (id: string) => void
 }
 
-export function SessionSidebar({ sessions, activeId, onSelect, onCreate, onDelete }: Props) {
+export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, onDelete }: Props) {
+  const handleDelete = (id: string, title: string) => {
+    if (window.confirm(`确定删除会话「${title}」吗？`)) {
+      onDelete(id)
+    }
+  }
+
   return (
     <div className="w-64 border-r bg-gray-50 flex flex-col">
       <div className="p-3 border-b">
-        <Button onClick={onCreate} className="w-full" size="sm">
+        <Button onClick={onCreateGroup} className="w-full" size="sm" aria-label="创建新会话">
           + 新会话
         </Button>
       </div>
@@ -36,8 +42,9 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreate, onDelet
             >
               <span className="truncate">{session.title}</span>
               <button
-                onClick={(e) => { e.stopPropagation(); onDelete(session.id) }}
+                onClick={(e) => { e.stopPropagation(); handleDelete(session.id, session.title) }}
                 className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 text-xs"
+                aria-label={`删除会话 ${session.title}`}
               >
                 x
               </button>

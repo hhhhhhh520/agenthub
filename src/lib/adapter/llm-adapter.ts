@@ -15,10 +15,16 @@ export class LLMAdapter implements AgentAdapter {
     const baseUrl = this.config.baseUrl
     const apiKey = this.config.apiKey
 
-    const isOpenAI = /^(gpt-|o1-|o3-)/.test(model)
+    // 判断使用哪个 SDK：
+    // 1. 有 baseUrl → 大多数兼容 API 是 OpenAI 格式（DeepSeek、Moonshot、讯飞等）
+    // 2. 没有 baseUrl + 模型名以 gpt-/o1-/o3- 开头 → OpenAI
+    // 3. 其他情况 → Anthropic（Claude 系列）
+    const useOpenAI = baseUrl
+      ? true  // 自定义 baseUrl 通常是 OpenAI 兼容格式
+      : /^(gpt-|o1-|o3-)/.test(model)
 
     let llm
-    if (isOpenAI) {
+    if (useOpenAI) {
       const provider = createOpenAI({
         ...(baseUrl && { baseURL: baseUrl }),
         ...(apiKey && { apiKey }),
@@ -26,7 +32,6 @@ export class LLMAdapter implements AgentAdapter {
       llm = provider(model)
     } else {
       const provider = createAnthropic({
-        ...(baseUrl && { baseURL: baseUrl }),
         ...(apiKey && { apiKey }),
       })
       llm = provider(model)

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { parseMessage } from '@/lib/message-parser'
 
 export async function GET(
   request: Request,
@@ -13,7 +14,18 @@ export async function GET(
       replyTo: { select: { id: true, rawContent: true, role: true } },
     },
   })
-  return NextResponse.json(messages)
+
+  // 解析每条消息的 rawContent
+  const parsed = messages.map(msg => ({
+    ...msg,
+    parsed: parseMessage(msg.rawContent),
+    replyTo: msg.replyTo ? {
+      ...msg.replyTo,
+      parsed: parseMessage(msg.replyTo.rawContent),
+    } : null,
+  }))
+
+  return NextResponse.json(parsed)
 }
 
 export async function POST(

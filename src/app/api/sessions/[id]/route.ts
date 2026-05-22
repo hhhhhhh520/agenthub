@@ -20,6 +20,19 @@ export async function GET(
   return NextResponse.json(session)
 }
 
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const body = await request.json()
+  const session = await prisma.session.update({
+    where: { id },
+    data: body,
+  })
+  return NextResponse.json(session)
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
