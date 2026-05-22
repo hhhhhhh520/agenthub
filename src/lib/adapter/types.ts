@@ -14,7 +14,7 @@ export interface AgentTask {
 }
 
 export interface StreamChunk {
-  type: 'text' | 'code' | 'file' | 'status' | 'error'
+  type: 'text' | 'code' | 'file' | 'status' | 'error' | 'session'
   content: string
 }
 

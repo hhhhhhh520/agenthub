@@ -1,6 +1,14 @@
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
-import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt } from './prompts'
+import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
+
+export interface OrchestratorDecision {
+  action: 'self' | 'delegate' | 'discuss' | 'done'
+  target?: string | null
+  targets?: string[] | null
+  message: string
+  reason: string
+}
 
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
   const adapter = createAdapter({ platform: 'claude-code' })
@@ -29,7 +37,7 @@ async function callLLM(systemPrompt: string, userPrompt: string): Promise<string
   return result
 }
 
-function parseJSON<T>(text: string): T {
+export function parseJSON<T>(text: string): T {
   // Try direct parse first
   try {
     return JSON.parse(text)
@@ -73,6 +81,25 @@ export async function analyzeScene(userMessage: string): Promise<{ type: string;
   return parseJSON(response)
 }
 
+export async function getOrchestratorDecision(
+  userMessage: string,
+  agents: Array<{ name: string; expertise: string; platform: string }>,
+  context: string
+): Promise<OrchestratorDecision> {
+  const agentList = agents.map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
+  const prompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
+
+  const fullPrompt = `用户消息：${userMessage}
+
+对话历史：
+${context}
+
+请决定下一步该谁发言。`
+
+  const response = await callLLM(prompt, fullPrompt)
+  return parseJSON(response)
+}
+
 export async function generateRoles(taskType: string, taskDescription: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {
   const response = await callLLM(ROLE_GENERATION_PROMPT, `任务类型：${taskType}\n任务描述：${taskDescription}`)
   const parsed = parseJSON<{ agents: Array<{ name: string; expertise: string; systemPrompt: string; platform: string }> }>(response)
@@ -105,8 +132,8 @@ export async function executeTaskBatch(
   agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string }>,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
-): Promise<Map<string, string>> {
-  const results = new Map<string, string>()
+): Promise<Map<string, { result: string; sessionId?: string }>> {
+  const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
 
   await Promise.all(tasks.map(async (task, index) => {
@@ -118,23 +145,28 @@ export async function executeTaskBatch(
     await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
 
     const depContext = task.dependencies
-      .map(depId => results.get(depId))
+      .map(depId => results.get(depId)?.result)
       .filter(Boolean)
       .join('\n\n')
 
     const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
 
     let result = ''
+    let capturedSessionId: string | undefined
     for await (const chunk of adapter.send({
       prompt: task.description,
       context: fullContext,
       systemPrompt: agent.systemPrompt,
     })) {
-      result += chunk.content
+      if (chunk.type === 'session') {
+        capturedSessionId = chunk.content
+      } else {
+        result += chunk.content
+      }
       onChunk(task.id, chunk)
     }
 
-    results.set(task.id, result)
+    results.set(task.id, { result, sessionId: capturedSessionId })
     await adapter.close()
   }))
 
@@ -142,32 +174,37 @@ export async function executeTaskBatch(
 }
 
 export async function executeSingleAgent(
-  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string },
+  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string },
   prompt: string,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
-): Promise<string> {
+): Promise<{ result: string; sessionId?: string }> {
   const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
   const adapter = createAdapter({ platform })
-  await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
+  await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId })
 
   let result = ''
+  let capturedSessionId: string | undefined
   for await (const chunk of adapter.send({
     prompt,
     context,
     systemPrompt: agent.systemPrompt,
   })) {
-    result += chunk.content
+    if (chunk.type === 'session') {
+      capturedSessionId = chunk.content
+    } else {
+      result += chunk.content
+    }
     onChunk(agent.name, chunk)
   }
 
   await adapter.close()
-  return result
+  return { result, sessionId: capturedSessionId }
 }
 
 export async function runDiscussion(
   topic: string,
-  agents: Array<{ name: string; systemPrompt: string }>,
+  agents: Array<{ name: string; systemPrompt: string; platform?: string; model?: string; baseUrl?: string; apiKey?: string }>,
   maxRounds: number = 3,
   onChunk: (agentName: string, chunk: StreamChunk) => void
 ): Promise<string[]> {
@@ -178,8 +215,9 @@ export async function runDiscussion(
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
-      const adapter = createAdapter({ platform: 'claude-code' })
-      await adapter.connect({ platform: 'claude-code' })
+      const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+      const adapter = createAdapter({ platform })
+      await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
 
       let result = ''
       for await (const chunk of adapter.send({ prompt: combinedPrompt })) {

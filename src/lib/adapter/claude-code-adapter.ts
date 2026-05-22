@@ -1,15 +1,19 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
+
+// 默认工作目录：项目的 workspaces 目录（在 Claude Code 允许范围内）
+const DEFAULT_WORK_DIR = join(process.cwd(), 'workspaces', 'default')
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   private workDir: string = ''
   private process: ChildProcess | null = null
+  private sessionId: string | null = null
 
   async connect(config: AdapterConfig): Promise<void> {
-    this.workDir = config.workDir || join(tmpdir(), `agenthub-${Date.now()}`)
+    this.workDir = config.workDir || DEFAULT_WORK_DIR
+    this.sessionId = config.sessionId || null
     if (!existsSync(this.workDir)) {
       mkdirSync(this.workDir, { recursive: true })
     }
@@ -18,6 +22,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
     const args = ['--output-format', 'stream-json', '--verbose', '--bare']
+
+    // 恢复已有会话
+    if (this.sessionId) {
+      args.push('--resume', this.sessionId)
+    }
 
     const isWin = process.platform === 'win32'
     const cmd = isWin ? 'chcp 65001 >nul && claude' : 'claude'
@@ -28,9 +37,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         PYTHONIOENCODING: 'utf-8',
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',
+        // Windows 中文编码修复
+        ...(isWin && {
+          CHCP: '65001',
+          PYTHONUTF8: '1',
+        }),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: true,
+      // Windows 特殊处理
+      ...(isWin && { windowsHide: true }),
     })
 
     // Capture stderr for debugging
@@ -89,6 +105,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         if (!line.trim()) continue
         try {
           const event = JSON.parse(line)
+
+          // 提取 session_id（在 result 或 init 事件中）
+          if (event.session_id && !this.sessionId) {
+            this.sessionId = event.session_id
+            yield { type: 'session', content: event.session_id }
+          }
 
           // Assistant message with content array
           if (event.type === 'assistant' && event.message?.content) {

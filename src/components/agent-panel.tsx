@@ -12,7 +12,11 @@ interface Agent {
   id: string
   name: string
   expertise: string
+  systemPrompt?: string
   platform: string
+  model?: string
+  baseUrl?: string
+  apiKey?: string
   status: string
   accentColor: string
   capabilities: string
@@ -41,15 +45,17 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [tab, setTab] = useState<'agents' | 'tasks'>('agents')
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null)
 
   const loadAgents = async () => {
-    const res = await fetch('/api/agents')
+    if (!sessionId) return
+    const res = await fetch(`/api/sessions/${sessionId}/agents`)
     setAgents(await res.json())
   }
 
   useEffect(() => {
     loadAgents()
-  }, [])
+  }, [sessionId])
 
   useEffect(() => {
     if (!sessionId) return
@@ -96,12 +102,19 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 const style = getAgentStyle(agent.name, agent.accentColor)
                 const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
                 return (
-                  <div key={agent.id} className="p-2 bg-white rounded border text-sm">
+                  <div key={agent.id} className="group p-2 bg-white rounded border text-sm">
                     <div className="flex items-center gap-2">
                       <Avatar size="sm">
                         <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                       </Avatar>
                       <span className="font-medium flex-1">{agent.name}</span>
+                      <button
+                        onClick={() => setEditingAgent(agent)}
+                        className="text-xs text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100"
+                        title="编辑"
+                      >
+                        编辑
+                      </button>
                       {onPrivateChat && (
                         <button
                           onClick={() => onPrivateChat(agent.id, agent.name)}
@@ -137,7 +150,29 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           ))}
         </div>
       </ScrollArea>
-      <CreateAgentDialog open={showCreate} onOpenChange={setShowCreate} onCreated={loadAgents} />
+      <CreateAgentDialog
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        onCreated={async (agentId) => {
+          // Add the new agent to the current session
+          if (sessionId && agentId) {
+            await fetch(`/api/sessions/${sessionId}/members`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agentId }),
+            })
+          }
+          loadAgents()
+        }}
+      />
+      {editingAgent && (
+        <CreateAgentDialog
+          open={!!editingAgent}
+          onOpenChange={(open) => { if (!open) setEditingAgent(null) }}
+          editAgent={editingAgent}
+          onCreated={() => { setEditingAgent(null); loadAgents() }}
+        />
+      )}
       <ProviderImportDialog
         open={showImport}
         onOpenChange={setShowImport}

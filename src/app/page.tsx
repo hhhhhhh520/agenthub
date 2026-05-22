@@ -1,11 +1,14 @@
 'use client'
+import { useState } from 'react'
 import { SessionSidebar } from '@/components/session-sidebar'
 import { ChatArea } from '@/components/chat-area'
 import { AgentPanel } from '@/components/agent-panel'
+import { CreateGroupDialog } from '@/components/create-group-dialog'
 import { useSessions } from '@/lib/hooks/use-sessions'
 
 export default function Home() {
-  const { sessions, activeId, setActiveId, create, remove } = useSessions()
+  const { sessions, activeId, setActiveId, create, remove, refresh } = useSessions()
+  const [showCreateGroup, setShowCreateGroup] = useState(false)
 
   return (
     <div className="flex h-screen">
@@ -13,8 +16,16 @@ export default function Home() {
         sessions={sessions}
         activeId={activeId}
         onSelect={setActiveId}
-        onCreate={() => create()}
+        onCreateGroup={() => setShowCreateGroup(true)}
         onDelete={remove}
+      />
+      <CreateGroupDialog
+        open={showCreateGroup}
+        onOpenChange={setShowCreateGroup}
+        onCreated={async (sessionId) => {
+          await refresh()
+          setActiveId(sessionId)
+        }}
       />
       <div className="flex-1 flex">
         <ChatArea sessionId={activeId} />

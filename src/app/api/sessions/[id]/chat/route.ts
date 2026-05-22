@@ -1,14 +1,25 @@
+import { join } from 'path'
 import { prisma } from '@/lib/db'
-import { executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis } from '@/lib/orchestrator'
+import { executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis, analyzeScene, getOrchestratorDecision, parseJSON } from '@/lib/orchestrator'
 import { PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt, buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { ensureWorkspaceRoot, createTaskWorkspace, takeSnapshot, auditTaskWorkspace, cleanupTaskWorkspaces } from '@/lib/workspace'
+
+// Per-session lock: ensures chat requests for the same session are processed serially
+const sessionLocks = new Map<string, Promise<void>>()
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
+
+  // Wait for any in-flight request for this session to finish
+  const prev = sessionLocks.get(sessionId) || Promise.resolve()
+  let release: () => void
+  const current = new Promise<void>(r => { release = r })
+  sessionLocks.set(sessionId, current)
+  await prev
   const { message, mentionAll, targetAgent, replyToId, regenerate } = await request.json()
 
   // Fetch session with phase info
@@ -47,8 +58,9 @@ export async function POST(
             const agentName = agent?.name || 'orchestrator'
             sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
 
-            const result = await executeSingleAgent(
-              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey },
+            const workDir = join(process.cwd(), 'workspaces', sessionId)
+            const { result, sessionId: cliSessionId } = await executeSingleAgent(
+              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir },
               original.rawContent,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -65,7 +77,7 @@ export async function POST(
 
           const opinions = await runDiscussion(
             message,
-            existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt })),
+            existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model, baseUrl: a.baseUrl, apiKey: a.apiKey })),
             3,
             (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content })
           )
@@ -80,11 +92,23 @@ export async function POST(
           if (!agent) {
             sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
           } else {
+            // Build context from session history
+            const history = await prisma.message.findMany({
+              where: { sessionId },
+              orderBy: { createdAt: 'asc' },
+              take: 20,
+            })
+            const context = history.map(m => {
+              const who = m.role === 'user' ? '用户' : m.role === 'orchestrator' ? 'Orchestrator' : (m.agentId || 'Agent')
+              return `[${who}]: ${m.rawContent.slice(0, 500)}`
+            }).join('\n')
+
             sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
-            const result = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey },
+            const workDir = join(process.cwd(), 'workspaces', sessionId)
+            const { result, sessionId: cliSessionId } = await executeSingleAgent(
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir },
               message,
-              '',
+              context,
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
             )
             await prisma.message.create({
@@ -95,53 +119,40 @@ export async function POST(
         } else if (session.type === 'private' && existingAgents.length > 0) {
           // Private chat: direct 1v1 with the agent
           const agent = existingAgents[0]
-          sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
-          const result = await executeSingleAgent(
-            { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey },
-            message,
-            '',
-            (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
-          )
-          await prisma.message.create({
-            data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
-          })
-          sendEvent({ agentId: agent.name, type: 'done', content: result })
+          try {
+            sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
+            const workDir = join(process.cwd(), 'workspaces', sessionId)
+            const { result, sessionId: cliSessionId } = await executeSingleAgent(
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir },
+              message,
+              '',
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+            )
+            await prisma.message.create({
+              data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
+            })
+            sendEvent({ agentId: agent.name, type: 'done', content: result })
+          } catch (err) {
+            sendEvent({ agentId: agent.name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
+          }
         } else {
-          // Check for agent creation intent
-          const isCreateIntent = /创建|新建|添加|帮我建|create\s*agent/i.test(message)
+          // Check for agent creation intent (must check before Orchestrator decision)
+          const isCreateIntent = /创建|新建|添加|帮我建|create.*agent|建一?个/i.test(message) && /agent|智能体|助手/i.test(message)
 
           if (isCreateIntent) {
-            await handleCreateAgent(message, sessionId, sendEvent, controller)
-          } else if (session.phase === 'idle' && isTaskIntent(message)) {
-            // Task detected: start alignment
-            await handlePMConfirmation(message, sessionId, existingAgents, sendEvent)
-          } else if (session.phase === 'idle' || (session.phase === 'alignment' && session.phaseStep === '')) {
-            // Normal chat with Orchestrator
-            await handleOrchestratorChat(message, sessionId, sendEvent, existingAgents)
-          } else if (session.phase === 'alignment') {
-            if (session.phaseStep === 'pm_confirm') {
-              await handleArchitectPlan(message, sessionId, existingAgents, sendEvent)
-            } else if (session.phaseStep === 'architect_plan') {
-              await handleAgentQA(message, sessionId, existingAgents, sendEvent)
-            } else if (session.phaseStep === 'agent_qa') {
-              // User answered agent questions, transition to execution
-              await prisma.session.update({
-                where: { id: sessionId },
-                data: { phase: 'execution', phaseStep: '' },
-              })
-              sendEvent({ agentId: 'orchestrator', type: 'text', content: '对齐完成，进入执行阶段' })
-              sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
-              await handleExecution(message, sessionId, existingAgents, sendEvent)
-            }
-          } else if (session.phase === 'execution') {
-            // Execute tasks with dependency gating
-            await handleExecution(message, sessionId, existingAgents, sendEvent)
+            await handleCreateAgent(message, sessionId, sendEvent)
+          } else {
+            // Orchestrator 自主决策模式
+            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent)
           }
         }
       } catch (error) {
         sendEvent({ agentId: 'orchestrator', type: 'error', content: String(error) })
       } finally {
         controller.close()
+        release()
+        // Clean up lock if this is still the current holder
+        if (sessionLocks.get(sessionId) === current) sessionLocks.delete(sessionId)
       }
     },
   })
@@ -155,9 +166,142 @@ export async function POST(
   })
 }
 
-// ─── Task Intent Detection ─────────────────────────────
-function isTaskIntent(message: string): boolean {
-  return /开发|实现|做一?个|写一?个|帮我做|帮我写|帮我实现|搭建|重构|修复|优化|创建项目|implement|build|create/i.test(message)
+// ─── Orchestrator Decision Mode ────────────────────────
+async function handleOrchestratorDecision(
+  message: string,
+  sessionId: string,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void
+) {
+  sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
+
+  // 获取对话历史作为上下文
+  const history = await prisma.message.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+  })
+  const context = history.map(m => {
+    const who = m.role === 'user' ? '用户' : m.role === 'orchestrator' ? 'Orchestrator' : (m.agentId || 'Agent')
+    return `[${who}]: ${m.rawContent.slice(0, 500)}`
+  }).join('\n')
+
+  // Orchestrator 自主决策
+  const decision = await getOrchestratorDecision(
+    message,
+    agents.map(a => ({ name: a.name, expertise: a.expertise, platform: a.platform })),
+    context
+  )
+
+  sendEvent({ agentId: 'orchestrator', type: 'text', content: `[决策] ${decision.reason}` })
+
+  switch (decision.action) {
+    case 'self':
+      // Orchestrator 自己回答
+      await handleOrchestratorChat(message, sessionId, sendEvent, agents)
+      break
+
+    case 'delegate':
+      // 委派给指定 Agent
+      if (decision.target) {
+        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent)
+      }
+      break
+
+    case 'discuss':
+      // 多 Agent 讨论
+      if (decision.targets && decision.targets.length > 0) {
+        await runMultiAgentDiscussion(decision.targets, decision.message || message, sessionId, agents, sendEvent)
+      }
+      break
+
+    case 'done':
+      // 任务完成
+      await prisma.session.update({
+        where: { id: sessionId },
+        data: { phase: 'done', phaseStep: '' },
+      })
+      sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
+      sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })
+      break
+  }
+}
+
+// ─── Delegate to Specific Agent ────────────────────────
+async function delegateToAgent(
+  agentName: string,
+  taskMessage: string,
+  sessionId: string,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void
+) {
+  const agent = agents.find(a => a.name === agentName)
+  if (!agent) {
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${agentName} 的 Agent` })
+    return
+  }
+
+  sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
+
+  // 获取对话历史作为上下文
+  const history = await prisma.message.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+  })
+  const context = history.map(m => {
+    const who = m.role === 'user' ? '用户' : m.role === 'orchestrator' ? 'Orchestrator' : (m.agentId || 'Agent')
+    return `[${who}]: ${m.rawContent.slice(0, 500)}`
+  }).join('\n')
+
+  // 使用项目的 workspaces 目录作为工作目录
+  const workDir = join(process.cwd(), 'workspaces', sessionId)
+
+  const { result, sessionId: cliSessionId } = await executeSingleAgent(
+    { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir },
+    taskMessage,
+    context,
+    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+  )
+
+  await prisma.message.create({
+    data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
+  })
+  sendEvent({ agentId: agent.name, type: 'done', content: result })
+}
+
+// ─── Multi-Agent Discussion ────────────────────────────
+async function runMultiAgentDiscussion(
+  agentNames: string[],
+  topic: string,
+  sessionId: string,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void
+) {
+  const discussionAgents = agentNames
+    .map(name => agents.find(a => a.name === name))
+    .filter(Boolean)
+    .map(a => ({ name: a!.name, systemPrompt: a!.systemPrompt, platform: a!.platform, model: a!.model, baseUrl: a!.baseUrl, apiKey: a!.apiKey }))
+
+  if (discussionAgents.length === 0) {
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: '未找到参与讨论的 Agent' })
+    return
+  }
+
+  sendEvent({ agentId: 'orchestrator', type: 'status', content: `${agentNames.join('、')} 讨论中...` })
+
+  const opinions = await runDiscussion(
+    topic,
+    discussionAgents,
+    3,
+    (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content })
+  )
+
+  const summary = opinions.join('\n\n')
+  await prisma.message.create({
+    data: { role: 'orchestrator', rawContent: summary, sessionId },
+  })
+  sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
 }
 
 // ─── Normal Orchestrator Chat ──────────────────────────
@@ -181,8 +325,9 @@ ${agentList || '（无）'}
 - 当用户 @某个 Agent 时，告诉用户该 Agent 的能力和状态
 - 回复简洁，不要用 emoji，控制在 200 字以内`
 
-  const result = await executeSingleAgent(
-    { name: 'Orchestrator', systemPrompt, platform: 'claude-code' },
+  const workDir = join(process.cwd(), 'workspaces', sessionId)
+  const { result } = await executeSingleAgent(
+    { name: 'Orchestrator', systemPrompt, platform: 'claude-code', workDir },
     message,
     '',
     (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -198,8 +343,7 @@ ${agentList || '（无）'}
 async function handleCreateAgent(
   message: string,
   sessionId: string,
-  sendEvent: (data: { agentId: string; type: string; content: string }) => void,
-  controller: ReadableStreamDefaultController
+  sendEvent: (data: { agentId: string; type: string; content: string }) => void
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '正在生成 Agent 配置...' })
 
@@ -209,14 +353,20 @@ async function handleCreateAgent(
 用户消息：${message}`
 
   const configText = await callLLMForAnalysis(configPrompt)
-  const cleaned = configText.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
   let config: { name: string; expertise: string; systemPrompt: string; platform?: string; capabilities?: string[]; accentColor?: string }
   try {
-    config = JSON.parse(cleaned)
+    config = parseJSON(configText)
   } catch {
     sendEvent({ agentId: 'orchestrator', type: 'error', content: 'Agent 配置解析失败，请重试' })
-    controller.close()
     return
+  }
+
+  // 检查名称是否已存在
+  const existing = await prisma.agent.findUnique({ where: { name: config.name } })
+  if (existing) {
+    // 名称冲突，自动加后缀
+    const suffix = Date.now().toString(36).slice(-4)
+    config.name = `${config.name}_${suffix}`
   }
 
   const agent = await prisma.agent.create({
@@ -241,211 +391,6 @@ async function handleCreateAgent(
   })
   sendEvent({ agentId: 'orchestrator', type: 'text', content: result })
   sendEvent({ agentId: 'orchestrator', type: 'done', content: result })
-}
-
-// ─── Phase 1: PM Confirmation ─────────────────────────
-async function handlePMConfirmation(
-  message: string,
-  sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
-  sendEvent: (data: { agentId: string; type: string; content: string }) => void
-) {
-  const pmAgent = agents.find(a => a.name.includes('产品') || a.name.includes('PM'))
-  if (!pmAgent) {
-    sendEvent({ agentId: 'orchestrator', type: 'error', content: '没有产品经理 Agent，请先创建或添加' })
-    return
-  }
-
-  sendEvent({ agentId: 'orchestrator', type: 'status', content: '产品经理确认需求中...' })
-
-  const prompt = PM_CONFIRMATION_PROMPT.replace('{userMessage}', message)
-  const result = await executeSingleAgent(
-    { name: pmAgent.name, systemPrompt: pmAgent.systemPrompt, platform: pmAgent.platform },
-    prompt,
-    '',
-    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
-  )
-
-  await prisma.message.create({
-    data: { role: 'agent', rawContent: result, sessionId, agentId: pmAgent.name },
-  })
-  sendEvent({ agentId: pmAgent.name, type: 'done', content: result })
-
-  // Update session phase
-  await prisma.session.update({
-    where: { id: sessionId },
-    data: { phase: 'alignment', phaseStep: 'pm_confirm' },
-  })
-  sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'pm_confirm' })
-}
-
-// ─── Phase 2: Architect Plan ──────────────────────────
-async function handleArchitectPlan(
-  message: string,
-  sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
-  sendEvent: (data: { agentId: string; type: string; content: string }) => void
-) {
-  const architect = agents.find(a => a.name.includes('架构'))
-  if (!architect) {
-    sendEvent({ agentId: 'orchestrator', type: 'error', content: '没有架构师 Agent，请先创建或添加' })
-    return
-  }
-
-  sendEvent({ agentId: 'orchestrator', type: 'status', content: '架构师出方案中...' })
-
-  // Get the original user message (first message in session)
-  const firstMsg = await prisma.message.findFirst({
-    where: { sessionId, role: 'user' },
-    orderBy: { createdAt: 'asc' },
-  })
-  const userMessage = firstMsg?.rawContent || message
-
-  const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
-  const prompt = `根据以下需求，给出技术方案并拆解任务。
-
-需求：${userMessage}
-用户补充：${message}
-
-可用角色：${agentList}
-
-每个子任务需要：
-- id: 序号（从 1 开始）
-- description: 任务描述（一句话，明确产出物）
-- assignedAgent: 负责的 Agent 名称
-- dependencies: 依赖的任务序号数组
-- declared_files: 预期修改的文件路径列表
-
-规则：
-- 一个任务 = 一个 Agent = 一个明确的产出
-- 无依赖的任务可并行执行
-- 有重叠文件的任务必须设为串行依赖
-
-返回 JSON：
-{
-  "techStack": "技术方案概述",
-  "tasks": [
-    { "id": 1, "description": "...", "assignedAgent": "...", "dependencies": [], "declared_files": ["src/..."] }
-  ]
-}`
-
-  const result = await executeSingleAgent(
-    { name: architect.name, systemPrompt: architect.systemPrompt, platform: architect.platform },
-    prompt,
-    '',
-    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
-  )
-
-  await prisma.message.create({
-    data: { role: 'agent', rawContent: result, sessionId, agentId: architect.name },
-  })
-  sendEvent({ agentId: architect.name, type: 'done', content: result })
-
-  // Parse tasks from architect response
-  try {
-    const cleaned = result.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
-    // Find JSON object in the response
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0])
-      if (parsed.tasks && Array.isArray(parsed.tasks)) {
-        const idMap = new Map<number, string>()
-        parsed.tasks.forEach((t: { id: number }) => idMap.set(t.id, crypto.randomUUID()))
-
-        for (const task of parsed.tasks) {
-          await prisma.task.create({
-            data: {
-              id: idMap.get(task.id)!,
-              description: task.description,
-              sessionId,
-              assignedAgentId: agents.find(a => a.name === task.assignedAgent)?.id,
-              dependencies: JSON.stringify((task.dependencies || []).map((d: number) => idMap.get(d)!).filter(Boolean)),
-              declaredFiles: JSON.stringify(task.declared_files || []),
-            },
-          })
-        }
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `已拆解为 ${parsed.tasks.length} 个子任务` })
-      }
-    }
-  } catch {
-    sendEvent({ agentId: 'orchestrator', type: 'error', content: '任务拆解解析失败，请重试' })
-    return
-  }
-
-  // Update phase step
-  await prisma.session.update({
-    where: { id: sessionId },
-    data: { phaseStep: 'architect_plan' },
-  })
-  sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
-}
-
-// ─── Phase 3: Agent Q&A ───────────────────────────────
-async function handleAgentQA(
-  message: string,
-  sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string }>,
-  sendEvent: (data: { agentId: string; type: string; content: string }) => void
-) {
-  // Get the original user message and architect plan
-  const messages = await prisma.message.findMany({
-    where: { sessionId },
-    orderBy: { createdAt: 'asc' },
-  })
-  const userMessage = messages.find(m => m.role === 'user')?.rawContent || ''
-  const architectPlan = messages.filter(m => m.agentId?.includes('架构')).map(m => m.rawContent).join('\n') || ''
-
-  const otherAgents = agents.filter(a => !a.name.includes('产品') && !a.name.includes('架构') && !a.name.includes('PM'))
-
-  if (otherAgents.length === 0) {
-    // No other agents, transition directly to execution
-    await prisma.session.update({
-      where: { id: sessionId },
-      data: { phase: 'execution', phaseStep: '' },
-    })
-    sendEvent({ agentId: 'orchestrator', type: 'text', content: '对齐完成，进入执行阶段' })
-    sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
-    return
-  }
-
-  sendEvent({ agentId: 'orchestrator', type: 'status', content: '其他 Agent 提问中...' })
-
-  const questions: string[] = []
-  for (const agent of otherAgents) {
-    const prompt = buildAgentQuestionPrompt(agent.name, agent.expertise, userMessage, architectPlan)
-    const result = await executeSingleAgent(
-      { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform },
-      prompt,
-      '',
-      (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
-    )
-
-    await prisma.message.create({
-      data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
-    })
-    sendEvent({ agentId: agent.name, type: 'done', content: result })
-
-    if (result !== '无问题' && !result.includes('无问题')) {
-      questions.push(`${agent.name}：${result}`)
-    }
-  }
-
-  if (questions.length > 0) {
-    // Agents have questions, wait for user response
-    await prisma.session.update({
-      where: { id: sessionId },
-      data: { phaseStep: 'agent_qa' },
-    })
-    sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'agent_qa' })
-  } else {
-    // All agents said "无问题", transition to execution
-    await prisma.session.update({
-      where: { id: sessionId },
-      data: { phase: 'execution', phaseStep: '' },
-    })
-    sendEvent({ agentId: 'orchestrator', type: 'text', content: '对齐完成，进入执行阶段' })
-    sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
-  }
 }
 
 // ─── Phase 4: Execution ───────────────────────────────
@@ -540,7 +485,7 @@ async function handleExecution(
     }
 
     // Execute ready tasks in parallel
-    let results: Map<string, string>
+    let results: Map<string, { result: string; sessionId?: string }>
     try {
       results = await executeTaskBatch(
         readyTasks.map(t => ({
@@ -565,10 +510,14 @@ async function handleExecution(
       results = new Map()
     }
 
-    // Update task statuses + audit
-    for (const [taskId, result] of results) {
+    // Update task statuses + persist sessionId + audit
+    for (const [taskId, { result, sessionId: cliSessionId }] of results) {
       allResults.set(taskId, result)
-      await prisma.task.update({ where: { id: taskId }, data: { status: 'completed' } })
+      // 持久化 CLI sessionId
+      await prisma.task.update({
+        where: { id: taskId },
+        data: { status: 'completed', cliSessionId: cliSessionId || null },
+      })
       const task = tasks.find(t => t.id === taskId)
       if (task) task.status = 'completed'
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })
