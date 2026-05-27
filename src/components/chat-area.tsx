@@ -28,7 +28,7 @@ const COMMANDS = [
   { name: '/permission default', description: '切换到默认模式，需要确认' },
 ]
 
-export function ChatArea({ sessionId }: { sessionId: string | null }) {
+export function ChatArea({ sessionId, sessionType }: { sessionId: string | null; sessionType?: string }) {
   const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput } = useChat(sessionId)
   const [input, setInput] = useState('')
   const [agentNames, setAgentNames] = useState<string[]>([])
@@ -96,8 +96,33 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
     send('', undefined, undefined, undefined, messageId)
   }
 
+  const SESSION_TYPE_LABELS: Record<string, string> = {
+    group: '群聊',
+    private: '私聊',
+    orchestrator: '对话',
+  }
+
+  const PHASE_LABELS: Record<string, string> = {
+    alignment: '对齐中',
+    execution: '执行中',
+    done: '已完成',
+  }
+
   return (
     <div className="flex-1 flex flex-col">
+      {sessionType && (
+        <div className="border-b px-4 py-2 flex items-center gap-2 text-sm bg-white">
+          <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+            {SESSION_TYPE_LABELS[sessionType] || sessionType}
+          </span>
+          {phase !== 'idle' && PHASE_LABELS[phase] && (
+            <span className="flex items-center gap-1.5 text-xs text-gray-400">
+              <span className={`w-1.5 h-1.5 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
+              {PHASE_LABELS[phase]}
+            </span>
+          )}
+        </div>
+      )}
       <ScrollArea className="flex-1 p-4">
         <div className="space-y-3 max-w-3xl mx-auto">
           {messages.map(msg => {

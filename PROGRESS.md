@@ -51,6 +51,10 @@
 | 架构决策 | 移除 LLM fallback | CLI 不可用时直接报错，不静默降级到 LLM API | 2026-05-27 |
 | 功能 | MCP 协作层 | MCP Server(read_artifact/list_files/list_tasks/post_message/read_messages) + --mcp-config 集成 + 依赖文件级上下文注入 + 188 测试通过 | 2026-05-27 |
 | 改进 | 工作区英文目录 | Agent 子目录从中文名改为英文 slug(frontend/backend 等) + close() 不删工作区 + SQLite WAL 模式 | 2026-05-27 |
+| UX修复 | 直接对话入口 | 侧边栏加"开始对话"按钮创建 orchestrator 会话 + "创建群聊"改文案 | 2026-05-27 |
+| UX修复 | 私聊按钮可见性 | Agent 面板私聊按钮从 hover 显示改为始终可见 | 2026-05-27 |
+| UX修复 | 会话类型+阶段 header | ChatArea 顶部显示会话类型 badge(群聊/私聊/对话) + 阶段指示器(对齐中/执行中/已完成) | 2026-05-27 |
+| UX修复 | 手动选择 Agent | CreateGroupDialog 加"手动选择 Agent"链接跳过 LLM 推荐 | 2026-05-27 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |

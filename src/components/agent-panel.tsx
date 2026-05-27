@@ -125,7 +125,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                       {onPrivateChat && (
                         <button
                           onClick={() => onPrivateChat(agent.id, agent.name)}
-                          className="text-xs text-blue-500 hover:underline opacity-0 group-hover:opacity-100"
+                          className="text-xs text-blue-500 hover:underline"
                           title={`和 ${agent.name} 私聊`}
                         >
                           私聊
