@@ -55,6 +55,10 @@
 | UX修复 | 私聊按钮可见性 | Agent 面板私聊按钮从 hover 显示改为始终可见 | 2026-05-27 |
 | UX修复 | 会话类型+阶段 header | ChatArea 顶部显示会话类型 badge(群聊/私聊/对话) + 阶段指示器(对齐中/执行中/已完成) | 2026-05-27 |
 | UX修复 | 手动选择 Agent | CreateGroupDialog 加"手动选择 Agent"链接跳过 LLM 推荐 | 2026-05-27 |
+| 功能 | Dashboard 搜索/置顶/归档 | 最近会话区域加搜索框、置顶标记、归档隐藏，本地 state | 2026-05-27 |
+| 功能 | ChatFab 浮窗聊天卡片 | 右下角浮动按钮 + 聊天卡片（Agent 选择、空状态推荐问题、消息列表、输入框） | 2026-05-27 |
+| 架构重构 | 页面搬家 | Dashboard → `/`（路由组 `(dashboard)`），Chat → `/chat`，侧栏 layout 隔离 | 2026-05-27 |
+| Bug修复 | validateDecision 跳步防护 | execute 前检查 Task 数量，无任务时重定向到 align_decompose | 2026-05-27 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |
@@ -73,6 +77,16 @@
 | P2 | 多端支持 | 桌面端 + 移动端 |
 
 ## 修改历史
+### 2026-05-27 页面搬家 + Dashboard 增强 + 流程修复
+**修改文件**: src/app/page.tsx(删除), src/app/chat/page.tsx(新建), src/app/(dashboard)/*(新建), src/app/dashboard/(删除), src/components/chat-fab.tsx(新建), src/components-v2/app-sidebar.tsx, src/app/api/sessions/[id]/chat/route.ts
+**修改内容**:
+- 页面搬家：Dashboard → `/`（路由组 `(dashboard)` 带侧栏），Chat → `/chat`（全屏无侧栏）
+- Dashboard 增强：搜索框、置顶/归档、会话列表优化
+- ChatFab：右下角浮窗聊天卡片（Agent 选择、推荐问题、消息列表）
+- validateDecision 修复：execute 前检查 Task 数量，无任务重定向到 align_decompose
+- 188 测试通过，QA 100/100
+**修改原因**: 课题要求"类似飞书/微信的自然交互体验"，Dashboard 作为首页管理会话，Chat 作为聊天主界面
+
 ### 2026-05-27 Orchestrator 平台统一改造
 **修改文件**: prisma/schema.prisma, src/lib/cli-detect.ts, src/lib/app-config.ts, src/lib/orchestrator/index.ts, src/app/api/sessions/[id]/chat/route.ts, src/app/api/config/orchestrator/route.ts, src/app/api/config/test-connection/route.ts, src/app/api/config/import-provider/route.ts, src/app/api/config/detect-platform/route.ts, src/app/api/agents/route.ts, src/components/setup-wizard.tsx, prisma/seed.ts, tests/orchestrator-chunk-accumulation.test.ts, tests/orchestrator-agent.test.ts, tests/cli-detect.test.ts, tests/database.test.ts
 **修改内容**:

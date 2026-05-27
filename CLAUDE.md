@@ -69,21 +69,28 @@ Next.js 16 (App Router) · TypeScript · TailwindCSS 4 · shadcn/ui · Prisma 7 
 ```
 src/
 ├── app/
-│   ├── api/sessions/          # Session CRUD + Chat SSE
-│   ├── page.tsx               # 三栏布局主页
-│   └── layout.tsx
+│   ├── (dashboard)/           # 路由组（不影响 URL），带侧栏 layout
+│   │   ├── layout.tsx         # SidebarProvider + AppSidebar
+│   │   ├── page.tsx           # 首页 /（工作区概览 + 会话列表 + ChatFab）
+│   │   ├── agents/            # /agents 智能体管理
+│   │   ├── projects/          # /projects 项目管理
+│   │   └── skills/            # /skills 技能管理
+│   ├── chat/page.tsx          # /chat 聊天界面（SessionSidebar + ChatArea + AgentPanel）
+│   ├── api/                   # API 路由
+│   └── layout.tsx             # 根 layout（字体 + body）
 ├── components/
 │   ├── ui/                    # shadcn/ui 组件
 │   ├── chat-area.tsx          # 聊天区 + SSE 流式
 │   ├── session-sidebar.tsx    # 会话侧边栏
 │   ├── agent-panel.tsx        # Agent 面板 + 任务看板
+│   ├── chat-fab.tsx           # 右下角浮窗聊天卡片
 │   ├── code-diff.tsx          # Monaco DiffEditor
 │   └── web-preview.tsx        # iframe 预览
 ├── lib/
-│   ├── adapter/               # 适配器层（LLM / Claude Code CLI）
+│   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
 │   ├── orchestrator/          # 编排器（prompt + 调度 + 执行）
 │   ├── hooks/                 # use-sessions, use-chat
-│   ├── db.ts                  # Prisma 单例
+│   ├── db.ts                  # Prisma 单例（WAL 模式）
 │   └── utils.ts               # shadcn 工具
 └── generated/prisma/          # Prisma 生成（gitignore）
 prisma/
@@ -182,7 +189,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。
 
-安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。
+安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。**execute 前置检查**：如果数据库中无 Task 记录，强制重定向到 `align_decompose`（架构师拆解），防止跳步。
 
 决策函数：`src/lib/orchestrator/index.ts` → `getOrchestratorDecision()`
 
