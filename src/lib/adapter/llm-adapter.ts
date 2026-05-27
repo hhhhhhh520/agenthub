@@ -5,6 +5,7 @@ import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './type
 
 export class LLMAdapter implements AgentAdapter {
   private config: AdapterConfig = { platform: 'llm' }
+  private abortController = new AbortController()
 
   async connect(config: AdapterConfig): Promise<void> {
     this.config = config
@@ -25,8 +26,15 @@ export class LLMAdapter implements AgentAdapter {
 
     let llm
     if (useOpenAI) {
+      // createOpenAI 的 baseURL 默认是 https://api.openai.com/v1
+      // 路径拼接: baseURL + /chat/completions → 必须包含 /v1
+      // 用户常填 https://api.deepseek.com → 需要补 /v1
+      let normalizedBaseUrl = baseUrl?.replace(/\/+$/, '') || undefined
+      if (normalizedBaseUrl && !/\/v1\/?$/.test(normalizedBaseUrl)) {
+        normalizedBaseUrl = `${normalizedBaseUrl}/v1`
+      }
       const provider = createOpenAI({
-        ...(baseUrl && { baseURL: baseUrl }),
+        ...(normalizedBaseUrl && { baseURL: normalizedBaseUrl }),
         ...(apiKey && { apiKey }),
       })
       llm = provider(model)
@@ -46,6 +54,7 @@ export class LLMAdapter implements AgentAdapter {
         model: llm,
         system: task.systemPrompt,
         prompt,
+        abortSignal: this.abortController.signal,
       })
 
       for await (const chunk of result.textStream) {
@@ -57,6 +66,6 @@ export class LLMAdapter implements AgentAdapter {
   }
 
   async close(): Promise<void> {
-    // HTTP-based API, no persistent connection to close
+    this.abortController.abort()
   }
 }

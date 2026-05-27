@@ -72,6 +72,27 @@ async function main() {
     })
   }
   console.log(`Seeded ${PRESET_AGENTS.length} preset agents`)
+
+  // 创建 Orchestrator 特殊 Agent（如不存在）
+  const existing = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
+  if (!existing) {
+    await prisma.agent.create({
+      data: {
+        name: 'Orchestrator',
+        expertise: '任务协调、智能编排、多Agent协作',
+        systemPrompt: '你是 AgentHub 的 Orchestrator，负责任务协调和智能编排。',
+        platform: 'claude-code',
+        model: '',
+        baseUrl: '',
+        apiKey: '',
+        isPreset: true,
+        isOrchestrator: true,
+        accentColor: '#3b82f6',
+        status: 'idle',
+      },
+    })
+    console.log('Created Orchestrator agent')
+  }
 }
 
 main()

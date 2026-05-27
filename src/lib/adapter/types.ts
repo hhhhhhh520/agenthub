@@ -5,6 +5,7 @@ export interface AdapterConfig {
   model?: string
   baseUrl?: string
   sessionId?: string
+  permissionMode?: 'default' | 'auto'
 }
 
 export interface AgentTask {

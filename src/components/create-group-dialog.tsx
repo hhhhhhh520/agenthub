@@ -1,10 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle } from '@/lib/agent-colors'
+import { FolderOpen, Shield, ShieldCheck } from 'lucide-react'
 
 interface Agent {
   id: string
@@ -12,6 +13,13 @@ interface Agent {
   expertise: string
   accentColor: string
   capabilities: string
+}
+
+interface RecentDir {
+  id: string
+  path: string
+  lastUsed: string
+  useCount: number
 }
 
 interface Props {
@@ -23,19 +31,38 @@ interface Props {
 export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
   const [step, setStep] = useState<'describe' | 'select' | 'creating'>('describe')
   const [taskDesc, setTaskDesc] = useState('')
+  const [projectDir, setProjectDir] = useState('')
+  const [permissionMode, setPermissionMode] = useState<'default' | 'auto'>('default')
+  const [recentDirs, setRecentDirs] = useState<RecentDir[]>([])
   const [allAgents, setAllAgents] = useState<Agent[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [recommendedIds, setRecommendedIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [llmUnavailable, setLlmUnavailable] = useState(false)
+
+  const fetchRecentDirs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/recent-dirs')
+      const data = await res.json()
+      if (res.ok) setRecentDirs(data)
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    if (open) fetchRecentDirs()
+  }, [open, fetchRecentDirs])
 
   useEffect(() => {
     if (!open) {
       setStep('describe')
       setTaskDesc('')
+      setProjectDir('')
+      setPermissionMode('default')
       setSelectedIds(new Set())
       setRecommendedIds(new Set())
       setError('')
+      setLlmUnavailable(false)
     }
   }, [open])
 
@@ -52,6 +79,7 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '推荐失败')
       setAllAgents(data.allAgents || [])
+      setLlmUnavailable(data.llmUnavailable || false)
       const recIds = new Set<string>(data.recommendedIds || [])
       setRecommendedIds(recIds)
       setSelectedIds(new Set(recIds))
@@ -94,6 +122,8 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
           title,
           type: 'group',
           agentIds: Array.from(selectedIds),
+          projectDir: projectDir.trim(),
+          permissionMode,
         }),
       })
       const session = await res.json()
@@ -127,6 +157,72 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
               onChange={e => setTaskDesc(e.target.value)}
               autoFocus
             />
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <FolderOpen className="w-4 h-4" />
+                项目目录
+              </label>
+              <input
+                type="text"
+                className="w-full p-2 border rounded-lg text-sm"
+                placeholder="例如：E:\projects\todo-app"
+                value={projectDir}
+                onChange={e => setProjectDir(e.target.value)}
+              />
+              {recentDirs.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {recentDirs.slice(0, 5).map(dir => (
+                    <button
+                      key={dir.id}
+                      className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded truncate max-w-[200px]"
+                      onClick={() => setProjectDir(dir.path)}
+                      title={dir.path}
+                    >
+                      {dir.path}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <Shield className="w-4 h-4" />
+                权限模式
+              </label>
+              <div className="flex gap-2">
+                <button
+                  className={`flex-1 p-2 text-sm rounded-lg border transition-colors ${
+                    permissionMode === 'default'
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'bg-white hover:bg-gray-50'
+                  }`}
+                  onClick={() => setPermissionMode('default')}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <Shield className="w-4 h-4" />
+                    默认模式
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">需要确认每次操作</div>
+                </button>
+                <button
+                  className={`flex-1 p-2 text-sm rounded-lg border transition-colors ${
+                    permissionMode === 'auto'
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'bg-white hover:bg-gray-50'
+                  }`}
+                  onClick={() => setPermissionMode('auto')}
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <ShieldCheck className="w-4 h-4" />
+                    自动模式
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">自动处理，减少打扰</div>
+                </button>
+              </div>
+            </div>
+
             {error && <p className="text-sm text-red-500">{error}</p>}
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
@@ -139,6 +235,11 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
 
         {step === 'select' && (
           <div className="space-y-4">
+            {llmUnavailable && (
+              <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded">
+                LLM API 未配置，无法智能推荐，已默认选中全部 Agent。配置 ANTHROPIC_API_KEY 后可启用智能推荐。
+              </p>
+            )}
             <div className="flex items-center justify-between">
               <p className="text-sm text-gray-500">
                 已选 {selectedIds.size}/{allAgents.length} 个 Agent

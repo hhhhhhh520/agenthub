@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { maskApiKey } from '@/lib/utils'
 
 interface Provider {
   name: string
@@ -32,7 +33,7 @@ function parseConfigToml(content: string): Provider[] {
         model,
         apiKey,
         agentType: agentTypes?.[0] || 'claudecode',
-        source: 'cc-connect',
+        source: 'cc-switch',
       })
     }
   }
@@ -78,7 +79,7 @@ export async function GET() {
     if (seen.has(p.name)) return false
     seen.add(p.name)
     return true
-  })
+  }).map(p => ({ ...p, apiKey: maskApiKey(p.apiKey) }))
 
   return NextResponse.json(unique)
 }

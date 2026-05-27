@@ -1,84 +1,140 @@
+import { prisma } from '@/lib/db'
+import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
-import { topologicalSort, groupByBatch, type ScheduledTask } from './scheduler'
+import { topologicalSort, type ScheduledTask } from './scheduler'
 
 export interface OrchestratorDecision {
-  action: 'self' | 'delegate' | 'discuss' | 'done'
+  action: 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_decompose' | 'align_qa' | 'execute' | 'done'
   target?: string | null
   targets?: string[] | null
   message: string
   reason: string
 }
 
+const EMPTY_RESPONSE = '[Agent 未返回有效内容]'
+
+/**
+ * 获取 Orchestrator Agent 配置
+ * 优先从 Agent 表读取（isOrchestrator=true），不存在时从 AppConfig 迁移
+ */
+export async function getOrchestratorAgent(): Promise<{
+  platform: string; model: string; baseUrl: string; apiKey: string
+}> {
+  await ensureOrchestratorAgent()
+
+  const agent = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
+  if (agent) {
+    return { platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey }
+  }
+
+  // 极端 fallback：Agent 创建失败，退回 AppConfig
+  const config = await getOrchestratorConfig()
+  return { platform: 'llm', ...config }
+}
+
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'claude-code' })
-  await adapter.connect({ platform: 'claude-code' })
+  const orch = await getOrchestratorAgent()
+  const platform = orch.platform as AdapterConfig['platform']
+  const adapter = createAdapter({ platform })
+  await adapter.connect({
+    platform,
+    apiKey: orch.apiKey || undefined,
+    model: orch.model,
+    baseUrl: orch.baseUrl || undefined,
+  })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: userPrompt })) {
-    if (chunk.type === 'text') result += chunk.content
+    if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
   }
   await adapter.close()
+
+  if (!result.trim()) throw new Error('LLM returned empty response')
   return result
 }
 
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const adapter = createAdapter({ platform: 'claude-code' })
-  await adapter.connect({ platform: 'claude-code' })
-
-  // Combine system prompt into user prompt since Claude Code CLI ignores --system-prompt
   const combinedPrompt = `${systemPrompt}\n\n---\n\n用户输入：${userPrompt}\n\n你必须严格按照上述指令返回结果，不要说其他话。`
+
+  const orch = await getOrchestratorAgent()
+  const platform = orch.platform as AdapterConfig['platform']
+  const adapter = createAdapter({ platform })
+  await adapter.connect({
+    platform,
+    apiKey: orch.apiKey || undefined,
+    model: orch.model,
+    baseUrl: orch.baseUrl || undefined,
+  })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-    if (chunk.type === 'text') result += chunk.content
+    if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
   }
   await adapter.close()
+
+  if (!result.trim()) throw new Error('LLM returned empty response')
   return result
 }
 
-export function parseJSON<T>(text: string): T {
+export function parseJSON<T>(text: string, requiredKeys?: string[]): T {
   // Try direct parse first
+  let parsed: unknown
   try {
-    return JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {}
 
   // Try extracting from markdown code fences
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (fenceMatch) {
-    try {
-      return JSON.parse(fenceMatch[1].trim())
-    } catch {}
+  if (parsed === undefined) {
+    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+    if (fenceMatch) {
+      try {
+        parsed = JSON.parse(fenceMatch[1].trim())
+      } catch {}
+    }
   }
 
   // Try extracting JSON object/array by finding balanced braces/brackets
-  const startObj = text.indexOf('{')
-  const startArr = text.indexOf('[')
-  const start = startObj === -1 ? startArr : startArr === -1 ? startObj : Math.min(startObj, startArr)
+  if (parsed === undefined) {
+    const startObj = text.indexOf('{')
+    const startArr = text.indexOf('[')
+    const start = startObj === -1 ? startArr : startArr === -1 ? startObj : Math.min(startObj, startArr)
 
-  if (start !== -1) {
-    // Find matching closing brace/bracket
-    const opener = text[start]
-    const closer = opener === '{' ? '}' : ']'
-    let depth = 0
-    for (let i = start; i < text.length; i++) {
-      if (text[i] === opener) depth++
-      if (text[i] === closer) depth--
-      if (depth === 0) {
-        try {
-          return JSON.parse(text.substring(start, i + 1))
-        } catch {}
-        break
+    if (start !== -1) {
+      const opener = text[start]
+      const closer = opener === '{' ? '}' : ']'
+      let depth = 0
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === opener) depth++
+        if (text[i] === closer) depth--
+        if (depth === 0) {
+          try {
+            parsed = JSON.parse(text.substring(start, i + 1))
+          } catch {}
+          break
+        }
       }
     }
   }
 
-  throw new Error(`Failed to parse JSON from: ${text.slice(0, 200)}`)
+  if (parsed === undefined) {
+    throw new Error(`Failed to parse JSON from: ${text.slice(0, 200)}`)
+  }
+
+  if (requiredKeys && typeof parsed === 'object' && parsed !== null) {
+    for (const key of requiredKeys) {
+      if (!(key in (parsed as Record<string, unknown>))) {
+        throw new Error(`Missing required field: ${key}`)
+      }
+    }
+  }
+
+  return parsed as T
 }
 
 export async function analyzeScene(userMessage: string): Promise<{ type: string; complexity: string; description: string }> {
   const response = await callLLM(SCENE_ANALYSIS_PROMPT, userMessage)
-  return parseJSON(response)
+  return parseJSON(response, ['type', 'complexity', 'description'])
 }
 
 export async function getOrchestratorDecision(
@@ -97,19 +153,20 @@ ${context}
 请决定下一步该谁发言。`
 
   const response = await callLLM(prompt, fullPrompt)
-  return parseJSON(response)
+  return parseJSON(response, ['action', 'message', 'reason'])
 }
 
 export async function generateRoles(taskType: string, taskDescription: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {
   const response = await callLLM(ROLE_GENERATION_PROMPT, `任务类型：${taskType}\n任务描述：${taskDescription}`)
-  const parsed = parseJSON<{ agents: Array<{ name: string; expertise: string; systemPrompt: string; platform: string }> }>(response)
+  const parsed = parseJSON<{ agents: Array<{ name: string; expertise: string; systemPrompt: string; platform: string }> }>(response, ['agents'])
+  if (!parsed.agents || parsed.agents.length === 0) throw new Error('generateRoles returned empty agents list')
   return parsed.agents
 }
 
 export async function decomposeTasks(taskDescription: string, agents: Array<{ name: string; expertise: string }>): Promise<ScheduledTask[]> {
   const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
   const response = await callLLM(TASK_DECOMPOSITION_PROMPT, `任务描述：${taskDescription}\n可用角色：${agentList}`)
-  const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[] }> }>(response)
+  const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[] }> }>(response, ['tasks'])
 
   // Generate unique IDs to avoid conflicts with existing tasks
   const idMap = new Map<number, string>()
@@ -129,77 +186,165 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
 
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
-  agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string }>,
+  agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
-): Promise<Map<string, { result: string; sessionId?: string }>> {
+): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[] }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
+  const failedTaskIds: string[] = []
 
-  await Promise.all(tasks.map(async (task, index) => {
-    const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
-    if (!agent) return
+  // Group tasks by batch for sequential execution (same batch parallel, different batch sequential)
+  const batches = new Map<number, ScheduledTask[]>()
+  for (const task of tasks) {
+    const batch = batches.get(task.batch) || []
+    batch.push(task)
+    batches.set(task.batch, batch)
+  }
 
-    const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
-    const adapter = createAdapter({ platform })
-    await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
+  for (const [, batchTasks] of batches) {
+    const settled = await Promise.allSettled(batchTasks.map(async (task, index) => {
+      const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
+      if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
-    const depContext = task.dependencies
-      .map(depId => results.get(depId)?.result)
-      .filter(Boolean)
-      .join('\n\n')
+      const depContext = task.dependencies
+        .map(depId => results.get(depId)?.result)
+        .filter(Boolean)
+        .join('\n\n')
 
-    const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
+      const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
 
-    let result = ''
-    let capturedSessionId: string | undefined
-    for await (const chunk of adapter.send({
-      prompt: task.description,
-      context: fullContext,
-      systemPrompt: agent.systemPrompt,
-    })) {
-      if (chunk.type === 'session') {
-        capturedSessionId = chunk.content
-      } else {
-        result += chunk.content
+      let result = ''
+      let capturedSessionId: string | undefined
+
+      // Design decision #20: update Agent status
+      const agentId = (agent as any).id as string | undefined
+      if (agentId) {
+        try { await prisma.agent.update({ where: { id: agentId }, data: { status: 'working' } }) } catch {}
       }
-      onChunk(task.id, chunk)
+
+      try {
+        const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+        const adapter = createAdapter({ platform })
+        await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'] })
+
+        for await (const chunk of adapter.send({
+          prompt: task.description,
+          context: fullContext,
+          systemPrompt: agent.systemPrompt,
+        })) {
+          if (chunk.type === 'session') {
+            capturedSessionId = chunk.content
+          } else if (chunk.type === 'text' || chunk.type === 'error') {
+            result += chunk.content
+          }
+          onChunk(task.id, chunk)
+        }
+
+        await adapter.close()
+      } catch {
+        // Fallback to LLM API when CLI is unavailable
+        result = ''
+        try {
+          const adapter = createAdapter({ platform: 'llm' })
+          await adapter.connect({ platform: 'llm', model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
+          for await (const chunk of adapter.send({
+            prompt: task.description,
+            context: fullContext,
+            systemPrompt: agent.systemPrompt,
+          })) {
+            if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+            onChunk(task.id, chunk)
+          }
+          await adapter.close()
+        } catch {
+          result = `[任务执行失败，CLI 和 LLM 均不可用]`
+        }
+      } finally {
+        if (agentId) {
+          try { await prisma.agent.update({ where: { id: agentId }, data: { status: 'idle' } }) } catch {}
+        }
+      }
+
+      // Guard: empty response
+      if (!result.trim()) result = EMPTY_RESPONSE
+
+      return { taskId: task.id, result, sessionId: capturedSessionId }
+    }))
+
+    // Write current batch results immediately so next batch can read dependencies
+    for (let i = 0; i < settled.length; i++) {
+      const s = settled[i]
+      const taskId = batchTasks[i].id
+      if (s.status === 'fulfilled' && s.value) {
+        results.set(s.value.taskId, { result: s.value.result, sessionId: s.value.sessionId })
+      } else {
+        failedTaskIds.push(taskId)
+      }
     }
+  }
 
-    results.set(task.id, { result, sessionId: capturedSessionId })
-    await adapter.close()
-  }))
-
-  return results
+  return { results, failedTaskIds }
 }
 
 export async function executeSingleAgent(
-  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string },
+  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string; permissionMode?: string; id?: string; tools?: string },
   prompt: string,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void
 ): Promise<{ result: string; sessionId?: string }> {
-  const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
-  const adapter = createAdapter({ platform })
-  await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId })
+  const platform = (agent.platform || 'llm') as AdapterConfig['platform']
 
-  let result = ''
-  let capturedSessionId: string | undefined
-  for await (const chunk of adapter.send({
-    prompt,
-    context,
-    systemPrompt: agent.systemPrompt,
-  })) {
-    if (chunk.type === 'session') {
-      capturedSessionId = chunk.content
-    } else {
-      result += chunk.content
-    }
-    onChunk(agent.name, chunk)
+  // Design decision #19: inject tools hint into prompt
+  let effectivePrompt = prompt
+  if (agent.tools) {
+    try {
+      const toolsList = JSON.parse(agent.tools)
+      if (Array.isArray(toolsList) && toolsList.length > 0) {
+        effectivePrompt = `[可用工具: ${toolsList.join(', ')}]\n\n${prompt}`
+      }
+    } catch {}
   }
 
-  await adapter.close()
-  return { result, sessionId: capturedSessionId }
+  // Design decision #20: update Agent status
+  if (agent.id) {
+    try { await prisma.agent.update({ where: { id: agent.id }, data: { status: 'working' } }) } catch {}
+  }
+
+  try {
+    const adapter = createAdapter({ platform })
+    await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'] })
+
+    let result = ''
+    let capturedSessionId: string | undefined
+    for await (const chunk of adapter.send({
+      prompt: effectivePrompt,
+      context,
+      systemPrompt: agent.systemPrompt,
+    })) {
+      if (chunk.type === 'session') {
+        capturedSessionId = chunk.content
+      } else if (chunk.type === 'text' || chunk.type === 'error') {
+        result += chunk.content
+      }
+      onChunk(agent.name, chunk)
+    }
+
+    await adapter.close()
+
+    // Guard: empty response
+    if (!result.trim()) {
+      onChunk(agent.name, { type: 'text', content: EMPTY_RESPONSE })
+      result = EMPTY_RESPONSE
+    }
+
+    return { result, sessionId: capturedSessionId }
+  } finally {
+    // Design decision #20: reset Agent status
+    if (agent.id) {
+      try { await prisma.agent.update({ where: { id: agent.id }, data: { status: 'idle' } }) } catch {}
+    }
+  }
 }
 
 export async function runDiscussion(
@@ -215,20 +360,49 @@ export async function runDiscussion(
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
-      const platform = (agent.platform || 'llm') as AdapterConfig['platform']
-      const adapter = createAdapter({ platform })
-      await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
+      try {
+        const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+        const adapter = createAdapter({ platform })
+        await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
 
-      let result = ''
-      for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-        result += chunk.content
-        onChunk(agent.name, chunk)
+        let result = ''
+        for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
+          if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+          onChunk(agent.name, chunk)
+        }
+
+        opinions.push(`${agent.name}（第${round}轮）：${result || EMPTY_RESPONSE}`)
+        await adapter.close()
+      } catch {
+        const skipMsg = `[${agent.name} 讨论出错，已跳过]`
+        opinions.push(`${agent.name}（第${round}轮）：${skipMsg}`)
+        onChunk(agent.name, { type: 'error', content: skipMsg })
       }
-
-      opinions.push(`${agent.name}（第${round}轮）：${result}`)
-      await adapter.close()
     }
   }
 
   return opinions
+}
+
+export function formatArchitectPlan(
+  tasks: ScheduledTask[],
+  agents: Array<{ name: string; expertise: string }>
+): string {
+  const lines = ['## 架构师方案\n', '### 任务拆解：\n']
+  const batches = new Map<number, ScheduledTask[]>()
+  for (const t of tasks) {
+    const batch = batches.get(t.batch) || []
+    batch.push(t)
+    batches.set(t.batch, batch)
+  }
+  for (const [batchNum, batchTasks] of batches) {
+    lines.push(`**批次 ${batchNum + 1}（可并行）：**`)
+    for (const t of batchTasks) {
+      const deps = t.dependencies.length > 0 ? `，依赖：${t.dependencies.join(', ')}` : ''
+      const files = t.declaredFiles.length > 0 ? `\n  修改文件：${t.declaredFiles.join(', ')}` : ''
+      lines.push(`- ${t.description} → ${t.assignedAgent}${deps}${files}`)
+    }
+    lines.push('')
+  }
+  return lines.join('\n')
 }

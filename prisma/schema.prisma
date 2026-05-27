@@ -10,14 +10,15 @@ datasource db {
 // ─── 会话 ────────────────────────────────────────────
 // type: orchestrator=主会话, group=群聊, private=私聊
 model Session {
-  id         String    @id @default(uuid())
-  title      String
-  type       String    @default("group") // orchestrator | group | private
-  phase      String    @default("idle")   // idle | alignment | execution | done
-  phaseStep  String    @default("")       // "" | "pm_confirm" | "architect_plan" | "agent_qa"
-  projectDir String    @default("")       // 用户指定的项目目录
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id             String    @id @default(uuid())
+  title          String
+  type           String    @default("group") // orchestrator | group | private
+  phase          String    @default("idle")   // idle | alignment | execution | done
+  phaseStep      String    @default("")       // "" | "pm_confirm" | "architect_plan" | "agent_qa"
+  projectDir     String    @default("")       // 用户指定的项目目录
+  permissionMode String    @default("default") // "default" | "auto"
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   members  SessionMember[]
   tasks    Task[]
@@ -26,17 +27,24 @@ model Session {
 
 // ─── Agent 全局池 ─────────────────────────────────────
 // 全局共享，通过 SessionMember 与 Session 建立多对多关系
+model AppConfig {
+  key       String   @id
+  value     String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
 model Agent {
   id           String  @id @default(uuid())
   name         String  @unique            // 中文角色名，如"前端工程师"
   expertise    String                    // 专长描述
   systemPrompt String                    // Agent 行为规范
-  platform     String  @default("llm")   // claude-code | opencode | llm
+  platform     String  @default("claude-code")   // claude-code | opencode | llm
   model        String  @default("")      // 模型标识，如 claude-opus-4-7
   baseUrl      String  @default("")      // 服务商 base_url（CC-Switch 导入）
   apiKey       String  @default("")      // 服务商 API Key（加密存储）
   tools        String  @default("[]")    // JSON 数组，工具集标识
   isPreset     Boolean @default(false)   // 预设 vs 用户自建
+  isOrchestrator Boolean @default(false)   // Orchestrator 特殊标记
   accentColor  String  @default("#6366f1") // 主题色 hex
   capabilities String  @default("[]")    // JSON 数组，能力标签
   status       String  @default("idle")  // idle | working | done | error
@@ -95,4 +103,12 @@ model Message {
   task     Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
   replyTo  Message? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies  Message[] @relation("MessageReplies")
+}
+
+// ─── 最近打开的目录 ───────────────────────────────────
+model RecentDir {
+  id        String   @id @default(uuid())
+  path      String   @unique          // 目录路径
+  lastUsed  DateTime @default(now())  // 最后使用时间
+  useCount  Int      @default(1)      // 使用次数
 }

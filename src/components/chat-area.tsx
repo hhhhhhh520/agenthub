@@ -23,12 +23,18 @@ interface MemberAgent {
   accentColor?: string
 }
 
+const COMMANDS = [
+  { name: '/permission auto', description: '切换到自动模式，减少打扰' },
+  { name: '/permission default', description: '切换到默认模式，需要确认' },
+]
+
 export function ChatArea({ sessionId }: { sessionId: string | null }) {
   const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput } = useChat(sessionId)
   const [input, setInput] = useState('')
   const [agentNames, setAgentNames] = useState<string[]>([])
   const [agentColorMap, setAgentColorMap] = useState<Record<string, string>>({})
   const [replyTo, setReplyTo] = useState<{ id: string; rawContent: string; role: string } | null>(null)
+  const [showCommands, setShowCommands] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -48,6 +54,17 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
       .catch(() => {})
   }, [sessionId, loadMessages])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streaming])
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setInput(value)
+    setShowCommands(value.startsWith('/'))
+  }
+
+  const handleCommandSelect = (command: string) => {
+    setInput(command)
+    setShowCommands(false)
+  }
 
   if (!sessionId) {
     return <div className="flex-1 flex items-center justify-center text-gray-400">选择或创建一个会话</div>
@@ -175,19 +192,38 @@ export function ChatArea({ sessionId }: { sessionId: string | null }) {
           {phase === 'done' && '已完成'}
         </div>
       )}
-      <div className="border-t p-3 flex gap-2">
-        <Input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-          placeholder="输入消息... (@Agent名 指定执行，@所有人 讨论)"
-          disabled={loading}
-        />
-        {loading ? (
-          <Button onClick={stop} variant="destructive" size="sm">停止</Button>
-        ) : (
-          <Button onClick={handleSend} disabled={!input.trim()} size="sm">发送</Button>
+      <div className="border-t p-3">
+        {showCommands && (
+          <div className="mb-2 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+            {COMMANDS
+              .filter(cmd => cmd.name.startsWith(input))
+              .map(cmd => (
+                <button
+                  key={cmd.name}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+                  onClick={() => handleCommandSelect(cmd.name)}
+                >
+                  <span className="font-mono text-sm text-blue-600">{cmd.name}</span>
+                  <span className="text-xs text-gray-500">{cmd.description}</span>
+                </button>
+              ))
+            }
+          </div>
         )}
+        <div className="flex gap-2">
+          <Input
+            value={input}
+            onChange={handleInputChange}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            placeholder="输入消息... (/ 命令，@Agent名 指定执行，@所有人 讨论)"
+            disabled={loading}
+          />
+          {loading ? (
+            <Button onClick={stop} variant="destructive" size="sm">停止</Button>
+          ) : (
+            <Button onClick={handleSend} disabled={!input.trim()} size="sm">发送</Button>
+          )}
+        </div>
       </div>
     </div>
   )

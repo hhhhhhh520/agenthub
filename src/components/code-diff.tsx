@@ -5,7 +5,9 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 
 const MonacoDiff = dynamic(() => import('@monaco-editor/react').then(mod => {
   const { DiffEditor } = mod
-  return (props: Record<string, unknown>) => <DiffEditor {...props} />
+  const Wrapper = (props: Record<string, unknown>) => <DiffEditor {...props} />
+  Wrapper.displayName = 'MonacoDiff'
+  return Wrapper
 }), { ssr: false })
 
 interface CodeDiffProps {

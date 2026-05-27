@@ -1,0 +1,25 @@
+{
+  "date": "2026-05-27",
+  "url": "http://localhost:3000",
+  "healthScore": 72,
+  "issues": [
+    { "id": "ISSUE-001", "title": "Agent count not updating after wizard", "severity": "high", "category": "functional" },
+    { "id": "ISSUE-002", "title": "Dashboard agents list doesn't match API", "severity": "high", "category": "functional" },
+    { "id": "ISSUE-003", "title": "Session deletion without confirmation", "severity": "high", "category": "ux" },
+    { "id": "ISSUE-004", "title": "Search doesn't filter agent list", "severity": "medium", "category": "functional" },
+    { "id": "ISSUE-005", "title": "Dashboard create agent button doesn't work", "severity": "medium", "category": "functional" },
+    { "id": "ISSUE-006", "title": "Workspace shows wrong agent count", "severity": "medium", "category": "content" },
+    { "id": "ISSUE-007", "title": "Orchestrator execution hangs", "severity": "low", "category": "ux" },
+    { "id": "ISSUE-008", "title": "Mobile viewport sidebar overlap", "severity": "low", "category": "visual" }
+  ],
+  "categoryScores": {
+    "console": 100,
+    "links": 100,
+    "visual": 85,
+    "functional": 50,
+    "ux": 65,
+    "performance": 90,
+    "content": 90,
+    "accessibility": 70
+  }
+}

@@ -9,7 +9,13 @@ export async function GET(
   const session = await prisma.session.findUnique({
     where: { id },
     include: {
-      members: { include: { agent: true } },
+      members: {
+        include: {
+          agent: {
+            select: { id:true, name:true, expertise:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+          },
+        },
+      },
       tasks: true,
       messages: { orderBy: { createdAt: 'asc' } },
     },
@@ -26,9 +32,14 @@ export async function PUT(
 ) {
   const { id } = await params
   const body = await request.json()
+  const { title, projectDir, permissionMode } = body
+  const data: Record<string, unknown> = {}
+  if (title !== undefined) data.title = title
+  if (projectDir !== undefined) data.projectDir = projectDir
+  if (permissionMode !== undefined) data.permissionMode = permissionMode
   const session = await prisma.session.update({
     where: { id },
-    data: body,
+    data,
   })
   return NextResponse.json(session)
 }

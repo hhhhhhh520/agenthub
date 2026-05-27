@@ -35,8 +35,13 @@ export function useSessions() {
 
   const remove = async (id: string) => {
     await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
-    setSessions(prev => prev.filter(s => s.id !== id))
-    if (activeId === id) setActiveId(sessions[0]?.id || null)
+    let nextFirst: string | null = null
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id)
+      nextFirst = filtered[0]?.id || null
+      return filtered
+    })
+    if (activeId === id) setActiveId(nextFirst)
   }
 
   return { sessions, activeId, setActiveId, create, remove, refresh }
