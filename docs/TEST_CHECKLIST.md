@@ -101,18 +101,27 @@
 
 ---
 
-## 九、单元测试（Vitest）
+## 九、单元测试（Vitest）— 17 文件，188 测试通过
 
 | # | 测试项 | 状态 | 备注 |
 |---|--------|------|------|
-| 9.1 | message-parser.test.ts | ✅ | 9 个测试通过，代码块和 artifact 解析 |
-| 9.2 | scheduler.test.ts | ✅ | 16 个测试通过，拓扑排序和文件重叠检测 |
-| 9.3 | parse-json.test.ts | ✅ | 17 个测试通过，JSON 提取和 Markdown 代码块 |
-| 9.4 | adapter.test.ts | ✅ | 7 个测试通过，适配器工厂 |
-| 9.5 | database.test.ts | ✅ | 14 个测试通过，数据模型验证 |
-| 9.6 | utils.test.ts | ✅ | 8 个测试通过，Tailwind 类名合并 |
-| 9.7 | agent-colors.test.ts | ✅ | 21 个测试通过，颜色分配和 HSL 转换 |
-| 9.8 | prompts.test.ts | ✅ | 16 个测试通过，Orchestrator prompt 模板 |
+| 9.1 | message-parser.test.ts | ✅ | 9 个测试，代码块和 artifact 解析 |
+| 9.2 | scheduler.test.ts | ✅ | 16 个测试，拓扑排序和文件重叠检测 |
+| 9.3 | parse-json.test.ts | ✅ | 24 个测试，JSON 提取和 Markdown 代码块 |
+| 9.4 | adapter.test.ts | ✅ | 7 个测试，适配器工厂 |
+| 9.5 | database.test.ts | ✅ | 14 个测试，数据模型验证 |
+| 9.6 | utils.test.ts | ✅ | 8 个测试，Tailwind 类名合并 |
+| 9.7 | agent-colors.test.ts | ✅ | 21 个测试，颜色分配和 HSL 转换 |
+| 9.8 | prompts.test.ts | ✅ | 16 个测试，Orchestrator prompt 模板 |
+| 9.9 | alignment.test.ts | ✅ | 对齐流程测试（validateDecision 等） |
+| 9.10 | api-safety.test.ts | ✅ | API 安全测试 |
+| 9.11 | app-config.test.ts | ✅ | AppConfig + ensureOrchestratorAgent 测试 |
+| 9.12 | cli-detect.test.ts | ✅ | CLI 可用性检测（claude-code/opencode/neither） |
+| 9.13 | mcp-config.test.ts | ✅ | MCP 配置构建（JSON 结构、env 变量、dev/prod） |
+| 9.14 | orchestrator-agent.test.ts | ✅ | Orchestrator Agent 配置读取 + fallback |
+| 9.15 | orchestrator-chunk-accumulation.test.ts | ✅ | chunk 累加 + error chunk 过滤 |
+| 9.16 | garbled-text-detection.test.ts | ✅ | 中文乱码检测（孤立代理） |
+| 9.17 | recommend-agents-visibility.test.ts | ✅ | Agent 可见性（isPreset 过滤移除验证） |
 
 ---
 
@@ -150,8 +159,9 @@
 | 群聊协作 | 5 | 0 | 0 | 100% |
 | UI 功能 | 8 | 0 | 0 | 100% |
 | 数据模型 | 5 | 0 | 0 | 100% |
-| 单元测试 | 8 | 0 | 0 | 100% |
+| 单元测试（Vitest） | 188 | 0 | 0 | 100% |
 | 浏览器测试 | 5 | 0 | 2 | 83% |
-| **总计** | 62 | 0 | 2 | 97% |
+| **总计** | 242 | 0 | 2 | 99% |
 
+**单元测试**: 17 文件，188 测试全部通过
 **健康评分**: 92/100（浏览器测试）

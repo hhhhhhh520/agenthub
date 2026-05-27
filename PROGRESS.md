@@ -46,6 +46,11 @@
 | Bug修复(第四轮) | 创建Agent不显示 + cc-switch标签 + XSS防护 | recommend-agents 移除 isPreset 过滤 + provider source 修正 + Agent名称XSS校验 + systemPrompt排除 + 乱码数据清理，167 测试通过 | 2026-05-26 |
 | 功能 | 首次运行配置向导 | AppConfig表 + 3步向导(欢迎/LLM配置/预设Agent) + callLLM从AppConfig读凭证 + CC-Switch导入 + 连接测试，178 测试通过 | 2026-05-26 |
 | 架构重构 | Orchestrator 平台统一改造 | Orchestrator 做成特殊 Agent 记录(isOrchestrator=true) + CLI 自动检测 + callLLM/callLLMForAnalysis 统一读 Agent 配置 + 向导适配 + 184 测试通过 | 2026-05-27 |
+| Bug修复 | Dashboard mock 数据替换 | dashboard/page.tsx + dashboard/agents/page.tsx 改为调真实 API + 搜索过滤 + CreateAgentDialog 接入 | 2026-05-27 |
+| Bug修复 | AgentPanel fallback | session 无 agent 成员时 fallback 到 /api/agents 全局列表 | 2026-05-27 |
+| 架构决策 | 移除 LLM fallback | CLI 不可用时直接报错，不静默降级到 LLM API | 2026-05-27 |
+| 功能 | MCP 协作层 | MCP Server(read_artifact/list_files/list_tasks/post_message/read_messages) + --mcp-config 集成 + 依赖文件级上下文注入 + 188 测试通过 | 2026-05-27 |
+| 改进 | 工作区英文目录 | Agent 子目录从中文名改为英文 slug(frontend/backend 等) + close() 不删工作区 + SQLite WAL 模式 | 2026-05-27 |
 
 ### ⏳ 进行中
 | 任务 | 状态 | 预计完成 |

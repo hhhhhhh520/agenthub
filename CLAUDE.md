@@ -152,11 +152,13 @@ prisma/
 - `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
   - 支持 abortSignal 取消请求
 - `platform: 'opencode'` → OpenCodeAdapter（JSON 事件流）
-- Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器，回退到 LLM API
+- Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
 - **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
 - **CLI 自动检测**：`detectCLIPlatform()` 按优先级检测 claude-code → opencode，结果持久化到 Orchestrator Agent 记录
 - **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text' || type === 'error'`，不累加 status chunk；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
+- **MCP 协作**：ClaudeCodeAdapter 支持 `--mcp-config` 参数，通过 MCP Server 给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）。MCP Server 独立进程，Prisma 独立初始化
+- **LLM fallback 已移除**：CLI 不可用时直接报错，不静默降级到 LLM API
 
 ### 多供应商配置
 
@@ -212,6 +214,9 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - `src/lib/workspace.ts`：createTaskWorkspace / takeSnapshot / auditTaskWorkspace
 - 审计：检测 Agent 是否修改了非声明文件（declaredFiles）
 - 跳过：node_modules, .next, .git, workspaces
+- **Agent 子目录用英文标识**：`DIR_SLUGS` 映射（前端→frontend，后端→backend 等），不用中文名
+- **close() 不删工作区**：清理由 `cleanupTaskWorkspaces` 统一处理，保证下游 Agent 可读取上游产出
+- **依赖上下文注入**：执行前自动读取上游任务工作区的文件，注入到下游 Agent 的 prompt
 
 ### Chat API Session Lock
 

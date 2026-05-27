@@ -19,14 +19,14 @@
 | [design/agenthub-v2-design-decisions.md](design/agenthub-v2-design-decisions.md) | v2 架构设计决策（当前架构） |
 | [design/implementation-plan.md](design/implementation-plan.md) | v2 实现计划（8阶段37项） |
 | [design/workspace-and-permissions.md](design/workspace-and-permissions.md) | 工作区与权限模式设计 |
-| [orchestrator-platform-refactor.md](orchestrator-platform-refactor.md) | Orchestrator 平台统一改造方案（CLI-first） |
+| [orchestrator-platform-refactor.md](orchestrator-platform-refactor.md) | Orchestrator 平台统一改造方案（CLI-first，✅已实施） |
 
 ## QA 测试报告
 
 | 文件 | 说明 |
 |------|------|
 | [qa-reports/qa-static-2026-05-23.md](qa-reports/qa-static-2026-05-23.md) | 静态代码审查 + ESLint + 构建验证 |
-| [qa-reports/qa-unit-tests-2026-05-23.md](qa-reports/qa-unit-tests-2026-05-23.md) | 单元测试报告（184 测试通过） |
+| [qa-reports/qa-unit-tests-2026-05-23.md](qa-reports/qa-unit-tests-2026-05-23.md) | 单元测试报告（188 测试通过） |
 | [qa-reports/qa-browser-2026-05-22.md](qa-reports/qa-browser-2026-05-22.md) | 浏览器测试 89/100 |
 | [qa-reports/qa-browser-2026-05-23.md](qa-reports/qa-browser-2026-05-23.md) | 浏览器测试 92/100 |
 | [qa-reports/screenshots/](qa-reports/screenshots/) | 浏览器测试截图 |

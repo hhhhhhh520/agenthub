@@ -3,6 +3,16 @@ import { prisma } from '@/lib/db'
 import { mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 
+const DIR_SLUGS: Record<string, string> = {
+  '前端工程师': 'frontend',
+  '后端工程师': 'backend',
+  '测试工程师': 'test',
+  '架构师': 'architect',
+  '产品经理': 'product',
+  'UI 设计师': 'designer',
+  'Orchestrator': 'orchestrator',
+}
+
 function hasLoneSurrogates(str: string): boolean {
   let i = 0
   while (i < str.length) {
@@ -82,7 +92,8 @@ export async function POST(request: Request) {
         mkdirSync(rootDir, { recursive: true })
       }
       for (const agent of agents) {
-        const agentDir = join(rootDir, agent.name)
+        const slug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+const agentDir = join(rootDir, slug)
         try {
           if (!existsSync(agentDir)) {
             mkdirSync(agentDir, { recursive: true })
@@ -112,7 +123,8 @@ export async function POST(request: Request) {
           mkdirSync(rootDir, { recursive: true })
         }
         for (const agent of presetAgents) {
-          const agentDir = join(rootDir, agent.name)
+          const slug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+const agentDir = join(rootDir, slug)
           try {
             if (!existsSync(agentDir)) {
               mkdirSync(agentDir, { recursive: true })

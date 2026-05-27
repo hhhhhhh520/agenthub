@@ -11,11 +11,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private process: ChildProcess | null = null
   private sessionId: string | null = null
   private permissionMode: string = 'default'
+  private mcpConfig: string | undefined
 
   async connect(config: AdapterConfig): Promise<void> {
     this.workDir = config.workDir || DEFAULT_WORK_DIR
     this.sessionId = config.sessionId || null
     this.permissionMode = config.permissionMode || 'default'
+    this.mcpConfig = config.mcpConfig
     if (!existsSync(this.workDir)) {
       mkdirSync(this.workDir, { recursive: true })
     }
@@ -24,6 +26,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
     const args = ['--output-format', 'stream-json', '--verbose', '--bare']
+
+    // MCP 协作工具支持
+    if (this.mcpConfig) {
+      args.push('--mcp-config', this.mcpConfig)
+    }
 
     // 添加权限模式
     if (this.permissionMode) {

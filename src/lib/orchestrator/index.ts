@@ -1,6 +1,8 @@
+import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
+import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
@@ -188,7 +190,9 @@ export async function executeTaskBatch(
   tasks: ScheduledTask[],
   agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
   context: string,
-  onChunk: (agentId: string, chunk: StreamChunk) => void
+  onChunk: (agentId: string, chunk: StreamChunk) => void,
+  chatSessionId?: string,
+  projectDir?: string
 ): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[] }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
@@ -207,12 +211,35 @@ export async function executeTaskBatch(
       const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
       if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
+      // 依赖任务的文本结果
       const depContext = task.dependencies
         .map(depId => results.get(depId)?.result)
         .filter(Boolean)
         .join('\n\n')
 
-      const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
+      // 依赖任务的文件级上下文：读取上游工作区的产出文件
+      let upstreamFiles = ''
+      for (const depId of task.dependencies) {
+        const depTask = tasks.find(t => t.id === depId)
+        if (depTask?.workspacePath) {
+          try {
+            const { readdirSync, readFileSync, statSync } = await import('fs')
+            const entries = readdirSync(depTask.workspacePath, { recursive: true })
+            for (const entry of entries) {
+              if (typeof entry !== 'string') continue
+              const fullPath = join(depTask.workspacePath, entry)
+              try {
+                if (statSync(fullPath).isFile()) {
+                  const content = readFileSync(fullPath, 'utf-8')
+                  upstreamFiles += `\n\n[${depTask.assignedAgent}/${entry}]\n${content}`
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+      }
+
+      const fullContext = [context, depContext, upstreamFiles].filter(Boolean).join('\n\n---\n\n')
 
       let result = ''
       let capturedSessionId: string | undefined
@@ -226,7 +253,10 @@ export async function executeTaskBatch(
       try {
         const platform = (agent.platform || 'llm') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
-        await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'] })
+        const mcpConfig = chatSessionId
+          ? buildMCPConfig(chatSessionId, agent.name, projectDir || task.workspacePath || '')
+          : undefined
+        await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
 
         for await (const chunk of adapter.send({
           prompt: task.description,
@@ -242,24 +272,6 @@ export async function executeTaskBatch(
         }
 
         await adapter.close()
-      } catch {
-        // Fallback to LLM API when CLI is unavailable
-        result = ''
-        try {
-          const adapter = createAdapter({ platform: 'llm' })
-          await adapter.connect({ platform: 'llm', model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
-          for await (const chunk of adapter.send({
-            prompt: task.description,
-            context: fullContext,
-            systemPrompt: agent.systemPrompt,
-          })) {
-            if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
-            onChunk(task.id, chunk)
-          }
-          await adapter.close()
-        } catch {
-          result = `[任务执行失败，CLI 和 LLM 均不可用]`
-        }
       } finally {
         if (agentId) {
           try { await prisma.agent.update({ where: { id: agentId }, data: { status: 'idle' } }) } catch {}
@@ -291,7 +303,9 @@ export async function executeSingleAgent(
   agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string; permissionMode?: string; id?: string; tools?: string },
   prompt: string,
   context: string,
-  onChunk: (agentId: string, chunk: StreamChunk) => void
+  onChunk: (agentId: string, chunk: StreamChunk) => void,
+  chatSessionId?: string,
+  projectDir?: string
 ): Promise<{ result: string; sessionId?: string }> {
   const platform = (agent.platform || 'llm') as AdapterConfig['platform']
 
@@ -313,7 +327,10 @@ export async function executeSingleAgent(
 
   try {
     const adapter = createAdapter({ platform })
-    await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'] })
+    const mcpConfig = chatSessionId
+      ? buildMCPConfig(chatSessionId, agent.name, projectDir || agent.workDir || '')
+      : undefined
+    await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
 
     let result = ''
     let capturedSessionId: string | undefined
@@ -351,7 +368,9 @@ export async function runDiscussion(
   topic: string,
   agents: Array<{ name: string; systemPrompt: string; platform?: string; model?: string; baseUrl?: string; apiKey?: string }>,
   maxRounds: number = 3,
-  onChunk: (agentName: string, chunk: StreamChunk) => void
+  onChunk: (agentName: string, chunk: StreamChunk) => void,
+  chatSessionId?: string,
+  projectDir?: string
 ): Promise<string[]> {
   const opinions: string[] = []
 
@@ -363,7 +382,8 @@ export async function runDiscussion(
       try {
         const platform = (agent.platform || 'llm') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
-        await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey })
+        const mcpCfg = chatSessionId ? buildMCPConfig(chatSessionId, agent.name, projectDir || '') : undefined
+        await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
 
         let result = ''
         for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
