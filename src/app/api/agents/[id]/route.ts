@@ -6,7 +6,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const agent = await prisma.agent.findUnique({ where: { id } })
+  const agent = await prisma.agent.findUnique({
+    where: { id },
+    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+  })
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
@@ -25,7 +28,7 @@ export async function PUT(
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor, status } = body
+  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor } = body
 
   const updated = await prisma.agent.update({
     where: { id },
@@ -40,8 +43,8 @@ export async function PUT(
       ...(tools !== undefined && { tools: JSON.stringify(tools) }),
       ...(capabilities !== undefined && { capabilities: JSON.stringify(capabilities) }),
       ...(accentColor !== undefined && { accentColor }),
-      ...(status !== undefined && { status }),
     },
+    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
   })
   return NextResponse.json(updated)
 }

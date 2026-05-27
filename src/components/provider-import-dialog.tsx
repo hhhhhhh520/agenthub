@@ -17,7 +17,7 @@ interface Provider {
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onImport: (config: { provider: string; agentType: string; baseUrl: string; model: string; apiKey: string; agentId?: string }) => void
+  onImport: (config: { provider: string; agentId?: string }) => void
   agentId?: string
 }
 
@@ -38,14 +38,7 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
   }, [open])
 
   const handleSelect = (provider: Provider) => {
-    onImport({
-      provider: provider.name,
-      agentType: provider.agentType,
-      baseUrl: provider.baseUrl,
-      model: provider.model,
-      apiKey: provider.apiKey,
-      agentId,
-    })
+    onImport({ provider: provider.name, agentId })
     onOpenChange(false)
   }
 
@@ -78,7 +71,7 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
                 <div className="text-xs text-gray-500 mt-1 space-y-0.5">
                   <div>Base URL: {p.baseUrl}</div>
                   <div>Model: {p.model}</div>
-                  <div>API Key: {p.apiKey.slice(0, 6)}...{p.apiKey.slice(-4)}</div>
+                  <div>API Key: {p.apiKey}</div>
                 </div>
               </div>
             ))}

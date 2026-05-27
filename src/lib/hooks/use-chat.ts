@@ -76,7 +76,13 @@ export function useChat(sessionId: string | null) {
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
-          const event: SSEEvent = JSON.parse(line.slice(6))
+          let event: SSEEvent
+          try {
+            event = JSON.parse(line.slice(6))
+          } catch {
+            console.warn('SSE parse failed:', line.slice(6, 100))
+            continue
+          }
 
           if (event.type === 'done') {
             if (event.messageId) {
@@ -84,8 +90,17 @@ export function useChat(sessionId: string | null) {
               setMessages(prev => prev.map(m =>
                 m.id === event.messageId ? { ...m, rawContent: event.content } : m
               ))
+            } else {
+              // New message: add to messages list
+              setMessages(prev => [...prev, {
+                id: crypto.randomUUID(),
+                role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
+                rawContent: event.content,
+                agentId: event.agentId === 'orchestrator' ? undefined : event.agentId,
+                createdAt: new Date().toISOString(),
+              }])
             }
-            // Clear streaming; message is persisted in DB, loaded on next loadMessages
+            // Clear streaming
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
           } else if (event.type === 'error') {
             setMessages(prev => [...prev, {
@@ -103,6 +118,8 @@ export function useChat(sessionId: string | null) {
             setAwaitingInput(null)
           } else if (event.type === 'task_status') {
             // Task status updates are handled by the agent panel polling
+          } else if (event.type === 'session') {
+            // CLI session ID - don't display, just ignore
           } else {
             setStreaming(prev => ({
               ...prev,

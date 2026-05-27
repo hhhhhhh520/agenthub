@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -47,15 +47,22 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [showImport, setShowImport] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null)
 
-  const loadAgents = async () => {
+  const loadAgents = useCallback(async () => {
     if (!sessionId) return
     const res = await fetch(`/api/sessions/${sessionId}/agents`)
-    setAgents(await res.json())
-  }
+    const sessionAgents = await res.json()
+    if (Array.isArray(sessionAgents) && sessionAgents.length > 0) {
+      setAgents(sessionAgents)
+    } else {
+      // Session has no agent members — fall back to global agent list
+      const globalRes = await fetch('/api/agents')
+      setAgents(await globalRes.json())
+    }
+  }, [sessionId])
 
   useEffect(() => {
     loadAgents()
-  }, [sessionId])
+  }, [loadAgents])
 
   useEffect(() => {
     if (!sessionId) return
@@ -177,12 +184,22 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
         open={showImport}
         onOpenChange={setShowImport}
         onImport={async (config) => {
-          // Save provider config to .env via API
-          await fetch('/api/providers/import', {
+          // Server resolves real apiKey from config.toml — browser never sends apiKey
+          const res = await fetch('/api/providers/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config),
           })
+          const data = await res.json()
+          // Add the imported agent to current session
+          if (sessionId && data.agent?.id) {
+            await fetch(`/api/sessions/${sessionId}/members`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agentId: data.agent.id }),
+            })
+          }
+          loadAgents()
         }}
       />
     </div>

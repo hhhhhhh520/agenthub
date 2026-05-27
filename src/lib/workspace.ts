@@ -76,7 +76,6 @@ export function diffFileLists(before: string[], after: string[]): FileDiff {
 
   // Modified: exists in both but different mtime
   const modified: string[] = []
-  const projectRoot = process.cwd()
   for (const f of after) {
     if (!beforeSet.has(f)) continue
     // We can't compare mtime here without the actual files, so we leave modified empty

@@ -8,7 +8,11 @@ export async function GET(
   const { id: sessionId } = await params
   const members = await prisma.sessionMember.findMany({
     where: { sessionId },
-    include: { agent: true },
+    include: {
+      agent: {
+        select: { id:true, name:true, expertise:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+      },
+    },
     orderBy: { joinedAt: 'asc' },
   })
   return NextResponse.json(members)

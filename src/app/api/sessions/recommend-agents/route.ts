@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { callLLMForAnalysis } from '@/lib/orchestrator'
+import { callLLMForAnalysis, parseJSON } from '@/lib/orchestrator'
 
+// Quick recommendation for session creation UI.
+// At runtime, the Orchestrator autonomously selects agents via delegate/discuss actions.
 export async function POST(request: Request) {
   const { taskDescription } = await request.json()
 
@@ -9,8 +11,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'taskDescription is required' }, { status: 400 })
   }
 
+  // Security: exclude apiKey and systemPrompt from response
+  // Include ALL agents (preset + user-created) so custom agents appear in group dialog
   const agents = await prisma.agent.findMany({
-    where: { isPreset: true },
+    select: {
+      id: true, name: true, expertise: true, platform: true, model: true,
+      baseUrl: true, isPreset: true, accentColor: true, capabilities: true, status: true, tools: true,
+    },
     orderBy: { name: 'asc' },
   })
 
@@ -36,26 +43,24 @@ ${agentList}
 ["Agent名称1", "Agent名称2"]`
 
   let recommendedNames: string[] = []
+  let llmFailed = false
   try {
     const result = await callLLMForAnalysis(prompt)
-    // Extract JSON array from response
     const match = result.match(/\[[\s\S]*?\]/)
     if (match) {
       recommendedNames = JSON.parse(match[0])
     }
   } catch {
-    // LLM failed, fall back to all presets
+    llmFailed = true
   }
 
-  // If LLM returned nothing, recommend all
   if (recommendedNames.length === 0) {
     recommendedNames = agents.map(a => a.name)
   }
 
-  // Map names to IDs
   const recommendedIds = agents
     .filter(a => recommendedNames.includes(a.name))
     .map(a => a.id)
 
-  return NextResponse.json({ recommendedIds, allAgents: agents })
+  return NextResponse.json({ recommendedIds, allAgents: agents, llmUnavailable: llmFailed })
 }

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, rmSync, existsSync } from 'fs'
+import { mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 
@@ -10,10 +10,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private workDir: string = ''
   private process: ChildProcess | null = null
   private sessionId: string | null = null
+  private permissionMode: string = 'default'
 
   async connect(config: AdapterConfig): Promise<void> {
     this.workDir = config.workDir || DEFAULT_WORK_DIR
     this.sessionId = config.sessionId || null
+    this.permissionMode = config.permissionMode || 'default'
     if (!existsSync(this.workDir)) {
       mkdirSync(this.workDir, { recursive: true })
     }
@@ -22,6 +24,11 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
     const args = ['--output-format', 'stream-json', '--verbose', '--bare']
+
+    // 添加权限模式
+    if (this.permissionMode) {
+      args.push('--permission-mode', this.permissionMode)
+    }
 
     // 恢复已有会话
     if (this.sessionId) {
@@ -57,6 +64,19 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       })
     }
 
+    // No-output timeout: kill process if it produces nothing on stdout for 120s
+    let noOutputTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      this.killProcessTree()
+    }, 120_000)
+
+    const resetNoOutputTimer = () => {
+      if (noOutputTimer) clearTimeout(noOutputTimer)
+      noOutputTimer = setTimeout(() => {
+        this.killProcessTree()
+      }, 120_000)
+    }
+    this.process.stdout?.on('data', resetNoOutputTimer)
+
     // Combine systemPrompt + context + prompt into a single prompt for CLI
     const parts: string[] = []
     if (task.systemPrompt) parts.push(task.systemPrompt)
@@ -85,6 +105,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       throw new Error(`Claude CLI error: ${error}${stderr ? `\nStderr: ${stderr}` : ''}`)
     } finally {
       clearTimeout(timeout)
+      if (noOutputTimer) clearTimeout(noOutputTimer)
       this.killProcessTree()
     }
   }
@@ -120,9 +141,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
               }
             }
           }
-          // Final result
-          else if (event.type === 'result' && event.result) {
-            yield { type: 'text', content: event.result }
+          // Final result — only emit status marker, not text (assistant events already streamed full content)
+          else if (event.type === 'result') {
+            yield { type: 'status', content: 'completed' }
           }
         } catch {
           // Non-JSON output, skip
@@ -141,7 +162,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (process.platform === 'win32') {
       try {
         // Use taskkill to kill entire process tree
-        spawn('taskkill', ['/pid', pid.toString(), '/T', '/F'], { shell: true })
+        spawn('taskkill', ['/pid', pid.toString(), '/T', '/F'], { shell: false })
       } catch {
         // Fallback to simple kill
         this.process.kill('SIGTERM')
@@ -160,8 +181,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   async close(): Promise<void> {
     this.killProcessTree()
-    if (this.workDir && this.workDir.includes('agenthub-')) {
-      try { rmSync(this.workDir, { recursive: true, force: true }) } catch {}
-    }
+    // 不删除工作区 — 下游 Agent 可能需要读取产出文件
+    // 清理由 handleExecution 结束时的 cleanupTaskWorkspaces 统一处理
   }
 }

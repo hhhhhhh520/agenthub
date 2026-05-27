@@ -15,6 +15,10 @@ export async function POST(
     return NextResponse.json({ error: 'filePath and content are required' }, { status: 400 })
   }
 
+  if (typeof content === 'string' && content.length > 1024 * 1024) {
+    return NextResponse.json({ error: 'File too large (max 1MB)' }, { status: 413 })
+  }
+
   // Normalize path
   const normalizedPath = filePath.replace(/\\/g, '/')
 
@@ -36,13 +40,11 @@ export async function POST(
     return NextResponse.json({ error: 'Path traversal detected' }, { status: 400 })
   }
 
-  // Block sensitive paths for project target
-  if (isProjectTarget) {
-    const parts = normalizedPath.split('/')
-    for (const part of parts) {
-      if (SENSITIVE_PATHS.includes(part)) {
-        return NextResponse.json({ error: 'Cannot write to sensitive path' }, { status: 403 })
-      }
+  // Block sensitive paths for all modes
+  const parts = normalizedPath.split('/')
+  for (const part of parts) {
+    if (SENSITIVE_PATHS.includes(part)) {
+      return NextResponse.json({ error: 'Cannot write to sensitive path' }, { status: 403 })
     }
   }
 

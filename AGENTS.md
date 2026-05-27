@@ -20,10 +20,12 @@
 
 ## 环境变量
 
+CLI 模式（默认）复用已有认证，无需额外配置。LLM API 模式需要以下变量：
+
 | 变量 | 用途 | 必需 |
 |------|------|------|
 | `ANTHROPIC_API_KEY` | LLM Adapter 调用 Anthropic API | 使用 LLM 平台时 |
 | `OPENAI_API_KEY` | LLM Adapter 调用 OpenAI API | 使用 OpenAI 模型时 |
 
-Claude Code CLI 复用已有认证，无需额外配置。
 可通过 CC-Switch 导入或 Agent 级别配置（`agent.baseUrl`/`agent.apiKey`）。
+CLI 可用性由 `detectCLIPlatform()` 自动检测，结果持久化到 Orchestrator Agent 记录。

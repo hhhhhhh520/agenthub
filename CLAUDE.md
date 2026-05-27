@@ -101,6 +101,14 @@ prisma/
 - SQLite 需要 `@prisma/adapter-libsql` + `@libsql/client`
 - 详见 `issues/ISSUE-001` 和 `issues/ISSUE-002`
 
+### 数据模型（v2）
+
+- **Session**：`projectDir`（项目目录）、`permissionMode`（`default` | `auto`）
+- **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
+- **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`
+- **Task**：`cliSessionId` 用于 CLI 会话恢复
+- 详见 `prisma/schema.prisma`
+
 ### Next.js 16
 
 - 动态路由 `params` 是 `Promise`，必须 `await`
@@ -124,28 +132,55 @@ prisma/
 | Windows Chinese encoding | When spawning child processes with `shell: true`, stdin.write must use `Buffer.from(text, 'utf-8')` instead of string, otherwise Chinese characters become garbled (乱码). |
 | Claude Code CLI process cleanup | Use `taskkill /pid <PID> /T /F` to kill entire process tree on Windows, not just `process.kill()` which leaves child processes hanging. |
 
+### 安全红线
+
+- **API Key 不经浏览器**：`/api/providers/import` 从服务端 config.toml 读取真实 apiKey，浏览器只传 provider name
+- **API 响应不泄露 apiKey**：所有 GET 用 Prisma select 排除 apiKey；providers 用 maskApiKey() 返回掩码值
+- **Mass Assignment 防护**：Agent PUT 白名单不含 status（设计决策#20）；Session PUT 白名单不含 phase/type/phaseStep（设计决策#8/#12）
+- **iframe sandbox**：`allow-scripts`（设计决策#17），不含 `allow-same-origin`
+- **成员列表**：agent select 排除 systemPrompt
+- **shell:true 命令注入**：ClaudeCodeAdapter/OpenCodeAdapter 使用 `shell: true`，`permissionMode`/`sessionId`/`model` 等来自用户/数据库输入，必须验证后再传入 args
+- **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
+- **所有 API 无认证**：16 个端点无任何认证/授权检查，公开部署前必须添加
+- **中文乱码检测**：`POST /api/sessions` 检测 `hasLoneSurrogates(title)` 拒绝 GBK 误编 UTF-8 的请求，返回 400
+
 ### 适配器层
 
 - `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式，支持 `--resume` 恢复会话）
+  - 120 秒无输出超时（`noOutputTimer`），超时自动 killProcessTree
+  - 3 分钟总超时（已有）
 - `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
+  - 支持 abortSignal 取消请求
 - `platform: 'opencode'` → OpenCodeAdapter（JSON 事件流）
-- v2 设计：混合执行层，Orchestrator 用 LLM API，代码 Agent 用 CLI
+- Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器，回退到 LLM API
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
+- **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
+- **CLI 自动检测**：`detectCLIPlatform()` 按优先级检测 claude-code → opencode，结果持久化到 Orchestrator Agent 记录
+- **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text' || type === 'error'`，不累加 status chunk；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
 
 ### 多供应商配置
 
 - Agent 表有 `model`/`baseUrl`/`apiKey` 字段，支持不同 Agent 使用不同供应商
 - **LLM 供应商判断逻辑**：有 `baseUrl` → 默认用 OpenAI SDK（兼容 DeepSeek、Moonshot 等）；无 `baseUrl` + model 匹配 `gpt-/o1-/o3-` → OpenAI；其他 → Anthropic
 - OpenCodeAdapter 通过环境变量传递 API key 和 base URL
-- `/api/providers` 读取 `~/.cc-connect/config.toml` 和 `~/.claude/settings.json`
+- `/api/providers` 读取 `~/.cc-connect/config.toml` 和 `~/.claude/settings.json`（apiKey 返回掩码值）
+- `/api/providers/import` 接收 provider name，后端从 config.toml 读取真实 apiKey（浏览器不传 apiKey）
 
-### Orchestrator 决策模式
+### Orchestrator 智能编排模式
 
-Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
-- `action: 'self'` — Orchestrator 自己回答（闲聊、简单问题）
-- `action: 'delegate'` — 委派给指定 Agent（`target` 字段指定）
-- `action: 'discuss'` — 多 Agent 讨论（`targets` 数组指定参与者）
-- `action: 'done'` — 任务完成
+Orchestrator 自主决定流程，支持 8 种 action：
+- `self` — Orchestrator 自己回答（闲聊、简单问题）
+- `delegate` — 委派给指定 Agent（`target` 字段指定）
+- `discuss` — 多 Agent 讨论（`targets` 数组指定参与者）
+- `align_confirm` — PM 复述需求，等用户确认理解
+- `align_decompose` — 架构师拆任务 + 持久化 Task 记录，等用户确认方案
+- `align_qa` — Agent 对方案提问澄清，等用户回答
+- `execute` — 对齐完成，开始执行任务
+- `done` — 任务完成
+
+编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。
+
+安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。
 
 决策函数：`src/lib/orchestrator/index.ts` → `getOrchestratorDecision()`
 
@@ -160,6 +195,17 @@ Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
 - 执行后提取 `session_id` 并保存到 Task 表 `cliSessionId` 字段
 - 类型定义：`StreamChunk.type` 新增 `'session'` 类型
 
+### 工作区与权限模式
+
+- 用户创建群聊时可指定项目目录（如 `E:\projects\todo-app\`）
+- Session 表存储 `projectDir` 和 `permissionMode`（`default` | `auto`）
+- 创建会话时自动为每个 Agent 创建独立子目录（英文标识，如 `frontend/`、`backend/`）
+- 最近打开的目录存储在 `RecentDir` 表，API：`/api/recent-dirs`
+- 聊天命令 `/permission auto` 或 `/permission default` 切换权限模式
+- 输入 `/` 显示可用命令气泡提示
+- ClaudeCodeAdapter 支持 `--permission-mode` 参数
+- 详见 `docs/design/workspace-and-permissions.md`
+
 ### 工作区隔离
 
 - 执行任务时创建 `workspaces/{sessionId}/task-{taskId}/` 隔离目录
@@ -172,6 +218,9 @@ Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
 - 原因：并发请求会读到过时的 phaseStep，导致同一 handler 被触发两次
 - 实现：`sessionLocks` Map + Promise chain，请求排队，stream 结束后 release
+- **超时保护**：等待前一个请求超过 60 秒则跳过等待继续执行
+- **abort 监听**：客户端断开时自动 release 锁
+- **SSE 全局超时**：5 分钟无响应则强制关闭流
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
 
 ### 会话类型
@@ -182,10 +231,18 @@ Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
 
 ### 设计文档（必读）
 
-- **v2 设计决策**：`docs/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
-- 参考资料：`docs/anthropic-scaling-managed-agents.md`、`docs/multi-agent-reference.md`
-- v1 设计差距：`issues/ISSUE-012`（已被 v2 设计取代）
+- **v2 设计决策**：`docs/design/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
+- **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、Agent 子目录
+- **实现计划**：`docs/design/implementation-plan.md` — 8 阶段任务拆分
+- 参考资料：`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
 - 新增功能前必须对照 v2 设计决策文档
+
+### 已知功能差距（开发前必看）
+
+详见 `issues/ISSUE-DESIGN-未实现功能清单.md`，核心缺失：
+- 纠偏范围 — 所有 Agent（CLI + LLM），LLM Agent 做语义核对，CLI Agent 做文件审计+语义核对
+- 失败处理 — 无错误重试、熔断、用户操作面板（已有超时兜底）
+- pin 消息 — Agent 级长期上下文未实现
 
 ## API 路由
 
@@ -211,9 +268,13 @@ Orchestrator 自主决定流程，不再固定 PM→架构师→Agent 顺序：
 | PUT | `/api/agents/[id]` | 更新 Agent |
 | DELETE | `/api/agents/[id]` | 删除 Agent |
 | GET | `/api/providers` | CC-Switch 服务商列表 |
-| POST | `/api/providers/import` | 导入服务商配置到 Agent |
+| POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 config.toml 读 apiKey） |
 | POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
+| POST | `/api/config/detect-platform` | 检测 CLI 可用性 |
 | POST | `/api/deploy` | 模拟部署 |
+| GET | `/api/recent-dirs` | 最近打开的目录列表 |
+| POST | `/api/recent-dirs` | 添加最近目录 |
+| DELETE | `/api/recent-dirs` | 删除最近目录 |
 
 ## 运行
 
@@ -222,4 +283,4 @@ npm run dev     # 开发
 npm run build   # 构建
 ```
 
-Claude Code CLI 复用已有认证。LLM Adapter 需配置 `ANTHROPIC_API_KEY`（通过 Agent 或 CC-Switch 导入）。
+Claude Code CLI 复用已有认证。LLM API 模式需配置 `ANTHROPIC_API_KEY`（通过 Agent 或 CC-Switch 导入）。
