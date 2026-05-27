@@ -1,5 +1,11 @@
 import { join } from 'path'
 import { prisma } from '@/lib/db'
+
+const DIR_SLUGS: Record<string, string> = {
+  '前端工程师': 'frontend', '后端工程师': 'backend', '测试工程师': 'test',
+  '架构师': 'architect', '产品经理': 'product', 'UI 设计师': 'designer',
+  'Orchestrator': 'orchestrator',
+}
 import { executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis, getOrchestratorDecision, parseJSON, analyzeScene, generateRoles, decomposeTasks, formatArchitectPlan, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt, PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap, topologicalSort, type ScheduledTask } from '@/lib/orchestrator/scheduler'
@@ -213,11 +219,15 @@ export async function POST(
             const context = buildContextFromHistory(history)
 
             sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
+            const agentSlug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+            const agentWorkDir = join(workDir, agentSlug)
             const { result } = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode },
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir: agentWorkDir, permissionMode },
               message,
               context,
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content }),
+              sessionId,
+              workDir
             )
             await prisma.message.create({
               data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
@@ -229,8 +239,10 @@ export async function POST(
           const agent = existingAgents[0]
           try {
             sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
+            const agentSlug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+            const agentWorkDir = join(workDir, agentSlug)
             const { result } = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode },
+              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir: agentWorkDir, permissionMode },
               message,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
@@ -383,15 +395,19 @@ async function delegateToAgent(
 
   // 获取 session 的 workDir
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
-  const workDir = session?.projectDir && session.projectDir.trim()
+  const baseDir = session?.projectDir && session.projectDir.trim()
     ? session.projectDir.trim()
     : join(process.cwd(), 'workspaces', sessionId)
+  const agentSlug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+  const workDir = join(baseDir, agentSlug)
 
   const { result } = await executeSingleAgent(
     { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode: session?.permissionMode || 'default' },
     taskMessage,
     context,
-    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content }),
+    sessionId,
+    baseDir
   )
 
   await prisma.message.create({
@@ -420,11 +436,18 @@ async function runMultiAgentDiscussion(
 
   sendEvent({ agentId: 'orchestrator', type: 'status', content: `${agentNames.join('、')} 讨论中...` })
 
+  const session = await prisma.session.findUnique({ where: { id: sessionId } })
+  const baseDir = session?.projectDir && session.projectDir.trim()
+    ? session.projectDir.trim()
+    : join(process.cwd(), 'workspaces', sessionId)
+
   const opinions = await runDiscussion(
     topic,
     discussionAgents,
     3,
-    (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content })
+    (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content }),
+    sessionId,
+    baseDir
   )
 
   const summary = opinions.join('\n\n')
@@ -561,6 +584,12 @@ async function handleExecution(
   })
   const context = buildContextFromHistory(allMessages)
 
+  // 项目根目录（MCP 协作用，Agent 可读取所有子目录）
+  const session = await prisma.session.findUnique({ where: { id: sessionId } })
+  const projectRoot = session?.projectDir && session.projectDir.trim()
+    ? session.projectDir.trim()
+    : join(process.cwd(), 'workspaces', sessionId)
+
   // 6.5c: Prepare workspaces
   ensureWorkspaceRoot()
   takeSnapshot(sessionId)
@@ -642,7 +671,9 @@ async function handleExecution(
         })),
         agents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model, baseUrl: a.baseUrl, apiKey: a.apiKey })),
         context,
-        (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content })
+        (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content }),
+        sessionId,
+        projectRoot
       )
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
@@ -845,16 +876,20 @@ async function handlePMConfirm(
     const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
     const context = buildContextFromHistory(history)
     const session = await prisma.session.findUnique({ where: { id: sessionId } })
-    const workDir = session?.projectDir && session.projectDir.trim()
+    const baseDir = session?.projectDir && session.projectDir.trim()
       ? session.projectDir.trim()
       : join(process.cwd(), 'workspaces', sessionId)
+    const pmSlug = DIR_SLUGS[pmAgent.name] || pmAgent.name.toLowerCase().replace(/\s+/g, '-')
+    const workDir = join(baseDir, pmSlug)
 
     try {
       const { result } = await executeSingleAgent(
         { name: pmAgent.name, systemPrompt: pmAgent.systemPrompt, platform: pmAgent.platform, model: pmAgent.model, baseUrl: pmAgent.baseUrl, apiKey: pmAgent.apiKey, workDir, permissionMode: session?.permissionMode || 'default', id: pmAgent.id, tools: pmAgent.tools },
         pmPrompt,
         context,
-        (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+        (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content }),
+        sessionId,
+        baseDir
       )
       await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: '产品经理' } })
       sendEvent({ agentId: '产品经理', type: 'done', content: result })
@@ -896,9 +931,11 @@ async function handleArchitectPlan(
   if (archAgent) {
     // Design decision #12: architect phase goes through adapter layer
     const session = await prisma.session.findUnique({ where: { id: sessionId } })
-    const workDir = session?.projectDir && session.projectDir.trim()
+    const baseDir = session?.projectDir && session.projectDir.trim()
       ? session.projectDir.trim()
       : join(process.cwd(), 'workspaces', sessionId)
+    const archSlug = DIR_SLUGS[archAgent.name] || archAgent.name.toLowerCase().replace(/\s+/g, '-')
+    const workDir = join(baseDir, archSlug)
     const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
     const archPrompt = `任务描述：${originalRequest}\n可用角色：${agentList}`
 
@@ -908,7 +945,9 @@ async function handleArchitectPlan(
         { name: archAgent.name, systemPrompt: archAgent.systemPrompt, platform: archAgent.platform, model: archAgent.model, baseUrl: archAgent.baseUrl, apiKey: archAgent.apiKey, workDir, permissionMode: session?.permissionMode || 'default', id: archAgent.id, tools: archAgent.tools },
         archPrompt,
         context,
-        (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+        (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content }),
+        sessionId,
+        baseDir
       )
 
       // Parse structured task output from architect's response
@@ -991,12 +1030,16 @@ async function handleAgentQA(
   const results = await Promise.allSettled(
     agents.map(async (agent) => {
       const prompt = buildAgentQuestionPrompt(agent.name, agent.expertise, originalRequest, architectPlan)
+      const agentSlug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
+      const agentWorkDir = join(workDir, agentSlug)
       try {
         const { result } = await executeSingleAgent(
-          { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode: session?.permissionMode || 'default', id: agent.id, tools: agent.tools },
+          { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir: agentWorkDir, permissionMode: session?.permissionMode || 'default', id: agent.id, tools: agent.tools },
           prompt,
           context,
-          (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content })
+          (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content }),
+          sessionId,
+          workDir
         )
         return { agent, response: result }
       } catch {

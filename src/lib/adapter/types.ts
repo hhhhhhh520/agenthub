@@ -6,6 +6,7 @@ export interface AdapterConfig {
   baseUrl?: string
   sessionId?: string
   permissionMode?: 'default' | 'auto'
+  mcpConfig?: string  // --mcp-config JSON string for MCP tool support
 }
 
 export interface AgentTask {

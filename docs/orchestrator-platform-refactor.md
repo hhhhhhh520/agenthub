@@ -84,7 +84,7 @@
 |------|----------|
 | `prisma/schema.prisma` | Agent 表新增 `isOrchestrator Boolean @default(false)` 字段 |
 | `src/lib/orchestrator/index.ts` | `callLLM`/`callLLMForAnalysis` 从 Orchestrator Agent 记录读配置，使用 CLI adapter |
-| `src/lib/app-config.ts` | 移除 `getOrchestratorConfig()`（不再从 AppConfig 读 Orchestrator 配置） |
+| `src/lib/app-config.ts` | 新增 `ensureOrchestratorAgent()`；`getOrchestratorConfig()` 保留作为极端 fallback |
 | `src/app/api/agents/route.ts` | Agent 创建默认 platform 从 `'llm'` 改为 `'claude-code'` |
 | `src/app/api/sessions/[id]/chat/route.ts` | `handleOrchestratorChat` 从 Orchestrator Agent 记录读配置 |
 | `src/components/setup-wizard.tsx` | 3 步向导改为：欢迎 → 导入平台配置（CC-Switch + CLI 检测） → 完成 |

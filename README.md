@@ -46,8 +46,9 @@ src/app/api/         — REST API + SSE
 src/components/      — UI 组件
 src/lib/adapter/     — 适配器层（LLM / Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
+src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（184 个测试）
+tests/               — Vitest 单元测试（188 个测试）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
