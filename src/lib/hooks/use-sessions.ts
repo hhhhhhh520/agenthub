@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 interface Session {
   id: string
   title: string
+  type: string
   createdAt: string
   updatedAt: string
   _count?: { messages: number; agents: number }

@@ -1,17 +1,24 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { FolderKanban, Bot, Sparkles, ArrowRight, MessageSquare, Plus, Play } from "lucide-react"
+import { FolderKanban, Bot, Sparkles, ArrowRight, MessageSquare, Plus, Play, Search, Pin, PinOff, Archive, ArchiveRestore, X } from "lucide-react"
 import { SetupWizard } from "@/components/setup-wizard"
 import { CreateGroupDialog } from "@/components/create-group-dialog"
+import { ChatFab } from "@/components/chat-fab"
 
 interface Session {
   id: string
   title: string
   updatedAt: string
   _count: { messages: number; members: number }
+}
+
+// 本地状态（后续接 API）
+interface SessionMeta {
+  pinned: boolean
+  archived: boolean
 }
 
 export default function WorkspacePage() {
@@ -21,6 +28,10 @@ export default function WorkspacePage() {
   const [showSetup, setShowSetup] = useState(false)
   const [setupChecked, setSetupChecked] = useState(false)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [showArchived, setShowArchived] = useState(false)
+  // 本地置顶/归档状态（后续迁移到 API）
+  const [meta, setMeta] = useState<Record<string, SessionMeta>>({})
 
   useEffect(() => {
     fetch('/api/agents').then(r => r.json()).then(d => setAgentCount(Array.isArray(d) ? d.length : 0))
@@ -42,6 +53,48 @@ export default function WorkspacePage() {
   const refreshSessions = () => {
     fetch('/api/sessions').then(r => r.json()).then(setSessions)
   }
+
+  const togglePin = (id: string) => {
+    setMeta(prev => ({
+      ...prev,
+      [id]: { ...prev[id], pinned: !prev[id]?.pinned, archived: prev[id]?.archived || false },
+    }))
+  }
+
+  const toggleArchive = (id: string) => {
+    setMeta(prev => ({
+      ...prev,
+      [id]: { ...prev[id], archived: !prev[id]?.archived, pinned: prev[id]?.pinned || false },
+    }))
+  }
+
+  // 过滤 + 排序
+  const filteredSessions = useMemo(() => {
+    let result = sessions
+
+    // 搜索过滤
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(s => s.title.toLowerCase().includes(q))
+    }
+
+    // 归档过滤
+    if (!showArchived) {
+      result = result.filter(s => !meta[s.id]?.archived)
+    }
+
+    // 排序：置顶优先，然后按时间
+    result = [...result].sort((a, b) => {
+      const aPin = meta[a.id]?.pinned ? 1 : 0
+      const bPin = meta[b.id]?.pinned ? 1 : 0
+      if (aPin !== bPin) return bPin - aPin
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
+
+    return result
+  }, [sessions, searchQuery, showArchived, meta])
+
+  const archivedCount = sessions.filter(s => meta[s.id]?.archived).length
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6">
@@ -138,40 +191,105 @@ export default function WorkspacePage() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-medium">最近会话</h2>
-          <Link href="/dashboard/projects" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-            查看全部 <ArrowRight className="h-3 w-3" />
-          </Link>
-        </div>
-        <div className="space-y-2">
-          {sessions.slice(0, 10).map((session) => (
-            <div
-              key={session.id}
-              className="flex items-center justify-between rounded-lg border bg-card p-3 hover:bg-accent transition-colors group"
-            >
-              <Link
-                href={`/dashboard/projects/${session.id}`}
-                className="flex-1 min-w-0"
+          <div className="flex items-center gap-2">
+            {archivedCount > 0 && (
+              <button
+                onClick={() => setShowArchived(!showArchived)}
+                className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors ${
+                  showArchived ? 'bg-orange-100 text-orange-700' : 'text-muted-foreground hover:text-foreground'
+                }`}
               >
-                <p className="text-sm font-medium truncate">{session.title}</p>
-                <p className="text-xs text-muted-foreground">
-                  {new Date(session.updatedAt).toLocaleDateString()} · {session._count.messages} 条消息
-                </p>
-              </Link>
-              <div className="flex items-center gap-3 ml-3">
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Bot className="h-3 w-3" />
-                  {session._count.members}
-                </div>
+                <Archive className="h-3 w-3" />
+                {showArchived ? `已归档 (${archivedCount})` : `${archivedCount} 个已归档`}
+              </button>
+            )}
+            <Link href="/dashboard/projects" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+              查看全部 <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+        </div>
+
+        {/* 搜索框 */}
+        <div className="relative mb-3">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="搜索会话..."
+            className="w-full rounded-lg border bg-background pl-9 pr-8 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* 会话列表 */}
+        <div className="space-y-2">
+          {filteredSessions.map((session) => {
+            const isPinned = meta[session.id]?.pinned
+            const isArchived = meta[session.id]?.archived
+            return (
+              <div
+                key={session.id}
+                className={`flex items-center justify-between rounded-lg border bg-card p-3 hover:bg-accent transition-colors group ${
+                  isPinned ? 'border-l-2 border-l-primary' : ''
+                } ${isArchived ? 'opacity-60' : ''}`}
+              >
                 <Link
-                  href={`/?session=${session.id}`}
-                  className="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                  href={`/dashboard/projects/${session.id}`}
+                  className="flex-1 min-w-0"
                 >
-                  <Play className="h-3 w-3" />
-                  进入
+                  <div className="flex items-center gap-2">
+                    {isPinned && <Pin className="h-3 w-3 text-primary shrink-0" />}
+                    <p className="text-sm font-medium truncate">{session.title}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(session.updatedAt).toLocaleDateString()} · {session._count.messages} 条消息
+                  </p>
                 </Link>
+                <div className="flex items-center gap-2 ml-3">
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Bot className="h-3 w-3" />
+                    {session._count.members}
+                  </div>
+                  {/* 操作按钮 */}
+                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); togglePin(session.id) }}
+                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background transition-colors"
+                      title={isPinned ? '取消置顶' : '置顶'}
+                    >
+                      {isPinned ? <PinOff className="h-3 w-3 text-muted-foreground" /> : <Pin className="h-3 w-3 text-muted-foreground" />}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleArchive(session.id) }}
+                      className="flex h-6 w-6 items-center justify-center rounded hover:bg-background transition-colors"
+                      title={isArchived ? '取消归档' : '归档'}
+                    >
+                      {isArchived ? <ArchiveRestore className="h-3 w-3 text-muted-foreground" /> : <Archive className="h-3 w-3 text-muted-foreground" />}
+                    </button>
+                    <Link
+                      href={`/?session=${session.id}`}
+                      className="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Play className="h-3 w-3" />
+                      进入
+                    </Link>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
+          {filteredSessions.length === 0 && sessions.length > 0 && (
+            <p className="text-sm text-muted-foreground py-4 text-center">没有匹配的会话</p>
+          )}
           {sessions.length === 0 && (
             <div className="py-8 text-center">
               <p className="text-sm text-muted-foreground mb-3">暂无会话</p>
@@ -186,6 +304,9 @@ export default function WorkspacePage() {
           )}
         </div>
       </div>
+
+      {/* 右下角聊天卡片 */}
+      <ChatFab />
     </div>
   )
 }

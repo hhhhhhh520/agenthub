@@ -13,10 +13,11 @@ interface Props {
   activeId: string | null
   onSelect: (id: string) => void
   onCreateGroup: () => void
+  onQuickStart: () => void
   onDelete: (id: string) => void
 }
 
-export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, onDelete }: Props) {
+export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, onQuickStart, onDelete }: Props) {
   const handleDelete = (id: string, title: string) => {
     if (window.confirm(`确定删除会话「${title}」吗？`)) {
       onDelete(id)
@@ -25,9 +26,12 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
 
   return (
     <div className="w-64 border-r bg-gray-50 flex flex-col">
-      <div className="p-3 border-b">
-        <Button onClick={onCreateGroup} className="w-full" size="sm" aria-label="创建新会话">
-          + 新会话
+      <div className="p-3 border-b space-y-2">
+        <Button onClick={onQuickStart} variant="outline" className="w-full" size="sm" aria-label="开始对话">
+          开始对话
+        </Button>
+        <Button onClick={onCreateGroup} className="w-full" size="sm" aria-label="创建群聊">
+          创建群聊
         </Button>
       </div>
       <ScrollArea className="flex-1">

@@ -224,12 +224,29 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
             </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
-              <Button onClick={handleNext} disabled={!taskDesc.trim() || loading}>
-                {loading ? '分析中...' : '下一步'}
-              </Button>
-            </DialogFooter>
+            <div className="flex items-center justify-between pt-2">
+              <button
+                className="text-xs text-gray-400 hover:text-gray-600"
+                onClick={async () => {
+                  setLoading(true)
+                  const res = await fetch('/api/agents')
+                  const agents = await res.json()
+                  setAllAgents(agents)
+                  setSelectedIds(new Set())
+                  setRecommendedIds(new Set())
+                  setStep('select')
+                  setLoading(false)
+                }}
+              >
+                手动选择 Agent →
+              </button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+                <Button onClick={handleNext} disabled={!taskDesc.trim() || loading}>
+                  {loading ? '分析中...' : '下一步'}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 

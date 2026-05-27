@@ -31,6 +31,11 @@ export default function Home() {
         activeId={activeId}
         onSelect={setActiveId}
         onCreateGroup={() => setShowCreateGroup(true)}
+        onQuickStart={async () => {
+          const session = await create('与 Orchestrator 对话', 'orchestrator')
+          await refresh()
+          setActiveId(session.id)
+        }}
         onDelete={remove}
       />
       <CreateGroupDialog
@@ -43,7 +48,7 @@ export default function Home() {
       />
       <SetupWizard open={showSetup} onOpenChange={setShowSetup} onComplete={() => { refresh(); setShowSetup(false) }} />
       <div className="flex-1 flex">
-        <ChatArea sessionId={activeId} />
+        <ChatArea sessionId={activeId} sessionType={sessions.find(s => s.id === activeId)?.type} />
         <AgentPanel
           sessionId={activeId}
           onPrivateChat={async (agentId, agentName) => {

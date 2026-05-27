@@ -20,6 +20,7 @@
 | [design/implementation-plan.md](design/implementation-plan.md) | v2 实现计划（8阶段37项） |
 | [design/workspace-and-permissions.md](design/workspace-and-permissions.md) | 工作区与权限模式设计 |
 | [orchestrator-platform-refactor.md](orchestrator-platform-refactor.md) | Orchestrator 平台统一改造方案（CLI-first，✅已实施） |
+| [design/borrowable-patterns.md](design/borrowable-patterns.md) | 从 cc-connect/multica/Anthropic 借鉴的待实施设计模式（7 个，P0-P3） |
 
 ## QA 测试报告
 
