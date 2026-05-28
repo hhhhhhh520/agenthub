@@ -9,8 +9,33 @@ const DIR_SLUGS: Record<string, string> = {
 import { executeTaskBatch, runDiscussion, executeSingleAgent, callLLMForAnalysis, getOrchestratorDecision, parseJSON, analyzeScene, generateRoles, decomposeTasks, formatArchitectPlan, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt, PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap, topologicalSort, type ScheduledTask } from '@/lib/orchestrator/scheduler'
-import { ensureWorkspaceRoot, createTaskWorkspace, takeSnapshot, auditTaskWorkspace, cleanupTaskWorkspaces } from '@/lib/workspace'
+import { execSync } from 'child_process'
 import { parseMessage } from '@/lib/message-parser'
+
+function getChangedFiles(projectDir: string, before: Set<string>): string[] {
+  try {
+    const after = execSync('git diff --name-only HEAD', { cwd: projectDir, encoding: 'utf-8', timeout: 5000 })
+      .trim().split('\n').filter(Boolean)
+    const untracked = execSync('git ls-files --others --exclude-standard', { cwd: projectDir, encoding: 'utf-8', timeout: 5000 })
+      .trim().split('\n').filter(Boolean)
+    const all = new Set([...after, ...untracked])
+    return [...all].filter(f => !before.has(f))
+  } catch {
+    return []
+  }
+}
+
+function getGitSnapshot(projectDir: string): Set<string> {
+  try {
+    const tracked = execSync('git diff --name-only HEAD', { cwd: projectDir, encoding: 'utf-8', timeout: 5000 })
+      .trim().split('\n').filter(Boolean)
+    const untracked = execSync('git ls-files --others --exclude-standard', { cwd: projectDir, encoding: 'utf-8', timeout: 5000 })
+      .trim().split('\n').filter(Boolean)
+    return new Set([...tracked, ...untracked])
+  } catch {
+    return new Set()
+  }
+}
 
 // Design decision #11: structured context with code/artifact markers
 function buildContextFromHistory(history: Array<{ role: string; agentId?: string | null; rawContent: string }>): string {
@@ -322,6 +347,14 @@ async function handleOrchestratorDecision(
 
   decision = validateDecision(decision, sessionPhase, history)
 
+  // 如果决定 execute 但没有任务，强制走架构师拆解
+  if (decision.action === 'execute') {
+    const taskCount = await prisma.task.count({ where: { sessionId } })
+    if (taskCount === 0) {
+      decision = { ...decision, action: 'align_decompose', reason: '尚无任务，需架构师先拆解' }
+    }
+  }
+
   switch (decision.action) {
     case 'self':
       // Orchestrator 自己回答（会发送 done）
@@ -590,9 +623,8 @@ async function handleExecution(
     ? session.projectDir.trim()
     : join(process.cwd(), 'workspaces', sessionId)
 
-  // 6.5c: Prepare workspaces
-  ensureWorkspaceRoot()
-  takeSnapshot(sessionId)
+  // Git snapshot before execution (for change detection)
+  const gitBefore = getGitSnapshot(projectRoot)
 
   // 6.3a: Enforce file overlap (inject serial dependencies)
   const scheduledTasks = tasks.map(t => ({
@@ -637,22 +669,12 @@ async function handleExecution(
 
     if (readyTasks.length === 0) break
 
-    // 6.5c: Create workspaces for ready tasks
-    const workspacePaths = new Map<string, string>()
+    // Mark ready tasks as in_progress
     const failedTaskIds = new Set<string>()
     for (const task of readyTasks) {
-      try {
-        const wsPath = createTaskWorkspace(sessionId, task.id)
-        workspacePaths.set(task.id, wsPath)
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress', workspacePath: wsPath } })
-        task.status = 'in_progress'
-        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
-      } catch {
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'failed' } })
-        task.status = 'failed'
-        failedTaskIds.add(task.id)
-        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
-      }
+      await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress' } })
+      task.status = 'in_progress'
+      sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
 
     // Execute ready tasks in parallel
@@ -666,7 +688,6 @@ async function handleExecution(
           assignedAgent: agents.find(a => a.id === t.assignedAgentId)?.name || '',
           dependencies: JSON.parse(t.dependencies || '[]'),
           declaredFiles: JSON.parse(t.declaredFiles || '[]'),
-          workspacePath: workspacePaths.get(t.id),
           batch: 0,
         })),
         agents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model, baseUrl: a.baseUrl, apiKey: a.apiKey })),
@@ -709,26 +730,24 @@ async function handleExecution(
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })
       hasProgress = true
 
-      // 6.4b: Merge audit
+      // Git-based change detection
       const declaredFiles: string[] = JSON.parse(task?.declaredFiles || '[]')
-      const audit = auditTaskWorkspace(sessionId, taskId, declaredFiles)
-      if (audit.undeclared.length > 0) {
-        for (const filePath of audit.undeclared) {
-          const diffContent = `<!-- artifact:diff filePath=${filePath} -->
-${filePath}
-<!-- /artifact -->`
-          const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${filePath}:\n${diffContent}`
-          await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
-        }
+      const changedFiles = getChangedFiles(projectRoot, gitBefore)
+      const undeclared = changedFiles.filter(f => !declaredFiles.includes(f))
+      if (undeclared.length > 0) {
+        const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${undeclared.join(', ')}`
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
+      } else if (changedFiles.length > 0) {
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成，修改了 ${changedFiles.join(', ')}` })
       } else {
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成，所有修改均在声明范围内` })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成` })
       }
 
       // 6.2b: Orchestrator monitoring (all agents — design decision: quality check applies to all)
       const agent = agents.find(a => a.id === task?.assignedAgentId)
       try {
-        const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, audit)
+        const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
         const reviewResult = await callLLMForAnalysis(monitoringPrompt)
         const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
@@ -778,8 +797,6 @@ ${filePath}
   const allDone = tasks.every(t => t.status === 'completed' || t.status === 'blocked')
   if (allDone) {
     await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
-    // 6.5e: Cleanup workspaces
-    cleanupTaskWorkspaces(sessionId)
   }
 
   const summary = Array.from(allResults.entries())
