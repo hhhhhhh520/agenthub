@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, existsSync } from 'fs'
+import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 
 // 默认工作目录：项目的 workspaces 目录（在 Claude Code 允许范围内）
@@ -27,9 +28,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
     const args = ['--output-format', 'stream-json', '--verbose', '--bare']
 
-    // MCP 协作工具支持
+    // MCP 协作工具支持 — 写入临时文件避免 shell 转义问题
+    let mcpConfigFile: string | null = null
     if (this.mcpConfig) {
-      args.push('--mcp-config', this.mcpConfig)
+      mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
+      writeFileSync(mcpConfigFile, this.mcpConfig, 'utf-8')
+      args.push('--mcp-config', mcpConfigFile)
     }
 
     // 添加权限模式
@@ -42,8 +46,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       args.push('--resume', this.sessionId)
     }
 
-    const isWin = process.platform === 'win32'
-    const cmd = isWin ? 'chcp 65001 >nul && claude' : 'claude'
+    const cmd = 'claude'
     this.process = spawn(cmd, args, {
       cwd: this.workDir,
       env: {
@@ -51,16 +54,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
         PYTHONIOENCODING: 'utf-8',
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',
-        // Windows 中文编码修复
-        ...(isWin && {
-          CHCP: '65001',
-          PYTHONUTF8: '1',
-        }),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: true,
-      // Windows 特殊处理
-      ...(isWin && { windowsHide: true }),
     })
 
     // Capture stderr for debugging
@@ -114,6 +110,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       clearTimeout(timeout)
       if (noOutputTimer) clearTimeout(noOutputTimer)
       this.killProcessTree()
+      if (mcpConfigFile) { try { unlinkSync(mcpConfigFile) } catch {} }
     }
   }
 
@@ -156,6 +153,22 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           // Non-JSON output, skip
         }
       }
+    }
+    // Process remaining buffer
+    if (buffer.trim()) {
+      try {
+        const event = JSON.parse(buffer)
+        if (event.type === 'assistant' && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'text' && block.text) {
+              yield { type: 'text', content: block.text }
+            }
+          }
+        }
+        if (event.type === 'result') {
+          yield { type: 'status', content: 'completed' }
+        }
+      } catch {}
     }
   }
 
