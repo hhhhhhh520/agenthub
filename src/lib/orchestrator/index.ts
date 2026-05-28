@@ -217,29 +217,7 @@ export async function executeTaskBatch(
         .filter(Boolean)
         .join('\n\n')
 
-      // 依赖任务的文件级上下文：读取上游工作区的产出文件
-      let upstreamFiles = ''
-      for (const depId of task.dependencies) {
-        const depTask = tasks.find(t => t.id === depId)
-        if (depTask?.workspacePath) {
-          try {
-            const { readdirSync, readFileSync, statSync } = await import('fs')
-            const entries = readdirSync(depTask.workspacePath, { recursive: true })
-            for (const entry of entries) {
-              if (typeof entry !== 'string') continue
-              const fullPath = join(depTask.workspacePath, entry)
-              try {
-                if (statSync(fullPath).isFile()) {
-                  const content = readFileSync(fullPath, 'utf-8')
-                  upstreamFiles += `\n\n[${depTask.assignedAgent}/${entry}]\n${content}`
-                }
-              } catch {}
-            }
-          } catch {}
-        }
-      }
-
-      const fullContext = [context, depContext, upstreamFiles].filter(Boolean).join('\n\n---\n\n')
+      const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
 
       let result = ''
       let capturedSessionId: string | undefined
@@ -254,9 +232,9 @@ export async function executeTaskBatch(
         const platform = (agent.platform || 'llm') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
         const mcpConfig = chatSessionId
-          ? buildMCPConfig(chatSessionId, agent.name, projectDir || task.workspacePath || '')
+          ? buildMCPConfig(chatSessionId, agent.name, projectDir || '')
           : undefined
-        await adapter.connect({ platform, workDir: task.workspacePath, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
+        await adapter.connect({ platform, workDir: projectDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
 
         for await (const chunk of adapter.send({
           prompt: task.description,

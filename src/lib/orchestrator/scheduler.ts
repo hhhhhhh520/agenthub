@@ -4,7 +4,6 @@ export interface ScheduledTask {
   assignedAgent: string
   dependencies: string[]
   declaredFiles: string[]
-  workspacePath?: string
   batch: number
 }
 
