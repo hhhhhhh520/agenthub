@@ -621,7 +621,7 @@ async function handleExecution(
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   const projectRoot = session?.projectDir && session.projectDir.trim()
     ? session.projectDir.trim()
-    : join(process.cwd(), 'workspaces', sessionId)
+    : process.cwd()
 
   // Git snapshot before execution (for change detection)
   const gitBefore = getGitSnapshot(projectRoot)
