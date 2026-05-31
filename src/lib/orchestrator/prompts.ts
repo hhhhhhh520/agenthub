@@ -133,15 +133,19 @@ export function buildMonitoringPrompt(
   taskDescription: string,
   taskResult: string,
   declaredFiles: string[],
-  auditResult: { declared: string[]; undeclared: string[] }
+  auditResult: { declared: string[]; undeclared: string[] },
+  mode: 'batch' | 'single' = 'batch'
 ): string {
+  const fileInfo = mode === 'batch'
+    ? `声明修改的文件：${declaredFiles.join(', ') || '无'}
+实际修改的声明文件：${auditResult.declared.join(', ') || '无'}
+越界修改的文件：${auditResult.undeclared.join(', ') || '无'}`
+    : ''
+
   return `你是 Orchestrator，正在审查任务执行结果。
 
 任务描述：${taskDescription}
-声明修改的文件：${declaredFiles.join(', ') || '无'}
-实际修改的声明文件：${auditResult.declared.join(', ') || '无'}
-越界修改的文件：${auditResult.undeclared.join(', ') || '无'}
-
+${fileInfo}
 任务产出（前 500 字）：
 ${taskResult.slice(0, 500)}
 

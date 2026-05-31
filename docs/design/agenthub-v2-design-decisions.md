@@ -10,7 +10,7 @@
 
 - Orchestrator 和子 Agent 统一使用 CLI 适配器（claude-code / opencode），LLM API 作为兜底
 - Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），配置统一存 Agent 表
-- CLI 不可用时自动 fallback 到 LLM API（Vercel AI SDK）
+- CLI 不可用时直接报错，不静默降级到 LLM API（fallback 已移除，2026-05-27）
 - **原因**: 统一执行路径，减少 API 格式适配复杂度
 
 ### 2. Agent 池：全局共享，预设模板
@@ -32,12 +32,12 @@
 - 也支持手动添加服务商
 - **原因**: 用户已经在 CC-Switch 里配好了，不用重复配置
 
-### 5. Orchestrator：系统级组件
+### 5. Orchestrator：特殊 Agent 记录
 
-- 不进 Agent 池，用户不能删除或修改
+- Orchestrator 是 Agent 池中的特殊记录（`isOrchestrator: true`），用户可编辑配置但不可删除
 - 只负责选人 + 拆任务，不造人
 - 选不到合适 Agent → 告知用户去创建
-- **原因**: Orchestrator 是系统核心调度器，不是普通 Agent
+- **原因**: Orchestrator 是系统核心调度器，保留在 Agent 池中统一管理配置
 
 ### 6. 群聊结构：Orchestrator + Agent 在同一个对话里
 

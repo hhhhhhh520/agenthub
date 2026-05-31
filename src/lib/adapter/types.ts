@@ -7,6 +7,8 @@ export interface AdapterConfig {
   sessionId?: string
   permissionMode?: 'default' | 'auto'
   mcpConfig?: string  // --mcp-config JSON string for MCP tool support
+  agentId?: string      // For ProcessRegistry key
+  chatSessionId?: string // For ProcessRegistry key
 }
 
 export interface AgentTask {
@@ -16,8 +18,15 @@ export interface AgentTask {
 }
 
 export interface StreamChunk {
-  type: 'text' | 'code' | 'file' | 'status' | 'error' | 'session'
+  type: 'text' | 'code' | 'file' | 'status' | 'error' | 'session' | 'permission_request' | 'permission_cancel'
   content: string
+  data?: {
+    requestId?: string
+    toolName?: string
+    toolInput?: Record<string, unknown>
+    retry?: number
+    quality?: string
+  }
 }
 
 export interface AgentAdapter {

@@ -32,11 +32,13 @@ export async function PUT(
 ) {
   const { id } = await params
   const body = await request.json()
-  const { title, projectDir, permissionMode } = body
+  const { title, projectDir, permissionMode, isPinned, isArchived } = body
   const data: Record<string, unknown> = {}
   if (title !== undefined) data.title = title
   if (projectDir !== undefined) data.projectDir = projectDir
   if (permissionMode !== undefined) data.permissionMode = permissionMode
+  if (isPinned !== undefined) data.isPinned = isPinned
+  if (isArchived !== undefined) data.isArchived = isArchived
   const session = await prisma.session.update({
     where: { id },
     data,

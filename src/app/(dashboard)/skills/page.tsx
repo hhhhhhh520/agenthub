@@ -65,7 +65,7 @@ export default function SkillsPage() {
         {mockSkills.map((skill) => (
           <Link
             key={skill.id}
-            href={`/dashboard/skills/${skill.id}`}
+            href={`/skills/${skill.id}`}
             className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors group"
           >
             <div className="flex items-start gap-3">

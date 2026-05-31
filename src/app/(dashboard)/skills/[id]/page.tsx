@@ -28,7 +28,7 @@ export default function SkillDetailPage() {
     <div className="flex flex-1 flex-col gap-6 p-6 max-w-4xl">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href="/dashboard/skills" className="text-muted-foreground hover:text-foreground">
+        <Link href="/skills" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <div className="flex-1">
@@ -93,7 +93,7 @@ export default function SkillDetailPage() {
             {skill.agents.map((agent) => (
               <Link
                 key={agent.id}
-                href={`/dashboard/agents/${agent.id}`}
+                href={`/agents/${agent.id}`}
                 className="flex items-center gap-2 p-2 rounded border hover:bg-accent transition-colors"
               >
                 <Avatar className="h-6 w-6">
