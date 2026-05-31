@@ -1,69 +1,44 @@
 # AgentHub 文档索引
 
-## 项目概览
-
-| 文件 | 说明 |
-|------|------|
-| [README.md](../README.md) | 项目说明和使用方法 |
-| [CLAUDE.md](../CLAUDE.md) | Claude Code 项目指令 |
-| [AGENTS.md](../AGENTS.md) | Agent 配置说明 |
-| [PROGRESS.md](../PROGRESS.md) | 项目进度追踪 |
-| [课题.txt](课题.txt) | 竞赛课题要求 |
-
 ## 设计文档
 
-| 文件 | 说明 |
-|------|------|
-| [design/initial-design.md](design/initial-design.md) | 初版设计文档（2026-05-19） |
-| [design/initial-implementation-plan.md](design/initial-implementation-plan.md) | 初版实现计划（2026-05-19） |
-| [design/agenthub-v2-design-decisions.md](design/agenthub-v2-design-decisions.md) | v2 架构设计决策（当前架构） |
-| [design/implementation-plan.md](design/implementation-plan.md) | v2 实现计划（8阶段37项） |
-| [design/workspace-and-permissions.md](design/workspace-and-permissions.md) | 工作区与权限模式设计 |
-| [orchestrator-platform-refactor.md](orchestrator-platform-refactor.md) | Orchestrator 平台统一改造方案（CLI-first，✅已实施） |
-| [design/borrowable-patterns.md](design/borrowable-patterns.md) | 从 cc-connect/multica/Anthropic 借鉴的待实施设计模式（7 个，P0-P3） |
+- [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
+- [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
+- [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
+- [对齐流程](design/alignment-flow-plan.md) — Orchestrator 智能编排对齐流程
+- [可借鉴模式](design/borrowable-patterns.md) — Session TryLock 等待实施模式
 
-## QA 测试报告
+### 已归档
 
-| 文件 | 说明 |
-|------|------|
-| [qa-reports/qa-static-2026-05-23.md](qa-reports/qa-static-2026-05-23.md) | 静态代码审查 + ESLint + 构建验证 |
-| [qa-reports/qa-unit-tests-2026-05-23.md](qa-reports/qa-unit-tests-2026-05-23.md) | 单元测试报告（188 测试通过） |
-| [qa-reports/qa-browser-2026-05-22.md](qa-reports/qa-browser-2026-05-22.md) | 浏览器测试 89/100 |
-| [qa-reports/qa-browser-2026-05-23.md](qa-reports/qa-browser-2026-05-23.md) | 浏览器测试 92/100 |
-| [qa-reports/screenshots/](qa-reports/screenshots/) | 浏览器测试截图 |
-
-| [qa-reports/qa-code-review-2026-05-24.md](qa-reports/qa-code-review-2026-05-24.md) | 代码审查报告（4 Agent 并行，11 阻塞性问题） |
-
-## 安全审计
-
-| 文件 | 说明 |
-|------|------|
-| [design/full-audit-report-2026-05-25.md](design/full-audit-report-2026-05-25.md) | 全量代码审查报告（109 项问题，P0-P3 分级） |
+- [初始设计](design/initial-design-已弃用.md) — 已弃用，v1 设计
+- [初始实现计划](design/initial-implementation-plan-已弃用.md) — 已弃用，v1 计划
+- [全量审计报告](design/full-audit-report-2026-05-25-已归档.md) — 已归档，109项问题已修复
+- [Orchestrator重构方案](orchestrator-platform-refactor-已实施.md) — 已实施
 
 ## 参考资料
 
-| 文件 | 说明 |
-|------|------|
-| [reference/anthropic-scaling-managed-agents.md](reference/anthropic-scaling-managed-agents.md) | Anthropic 托管 Agent 资料 |
-| [reference/multi-agent-reference.md](reference/multi-agent-reference.md) | 多 Agent 框架对比参考 |
+- [Anthropic Managed Agents](reference/anthropic-scaling-managed-agents.md) — Anthropic 官方文章摘要
+- [多Agent技术方案](reference/multi-agent-reference.md) — AutoGen/CrewAI/LangGraph 对比
 
-## 测试
+## QA 报告
 
-| 文件 | 说明 |
-|------|------|
-| [TEST_CHECKLIST.md](TEST_CHECKLIST.md) | 功能测试清单 |
+报告存放在 `.gstack/qa-reports/` 目录：
+
+- [2026-05-28 QA](../.gstack/qa-reports/) — 7 项修复，评分 38→95
+- [2026-05-29 QA](../.gstack/qa-reports/qa-report-localhost-3001-2026-05-29.md) — 8 项发现（2 严重），评分 52
 
 ## 问题追踪
 
-所有问题记录在 [`../issues/`](../issues/) 目录，按 ISSUE-XXX 编号排序。
+- 🟡 [删除会话按钮](../issues/ISSUE-019-delete-session-button.md) — 点击无响应
+- 🟢 [群聊向导Step1](../issues/ISSUE-018-group-chat-wizard-step1-已解决.md) — 已解决，后续修复顺带解决
+- 🔴 [Orchestrator纠偏缺失](../issues/ISSUE-ORC-orchestrator纠偏缺失.md) — 核心协作机制未实现
+- 🔴 [未实现功能清单](../issues/ISSUE-DESIGN-未实现功能清单.md) — 22项决策中多项不完整
 
----
+已解决问题见 `issues/` 目录（文件名含 `-已解决`）。
 
-## 快速导航
+## 项目根目录文档
 
-- 新手上手：README.md → CLAUDE.md → AGENTS.md
-- 理解架构：design/agenthub-v2-design-decisions.md
-- 查看进度：PROGRESS.md
-- 查看问题：issues/ 目录
-- 功能测试：TEST_CHECKLIST.md
-- 测试报告：qa-reports/
+- [README.md](../README.md) — 项目说明和快速开始
+- [PROGRESS.md](../PROGRESS.md) — 项目进度和待办
+- [CLAUDE.md](../CLAUDE.md) — AI 协作规则和项目速查
+- [AGENTS.md](../AGENTS.md) — Agent 角色定义

@@ -1,38 +1,25 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
-// Mock prisma only
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    session: { update: vi.fn(), findUnique: vi.fn() },
-    message: { create: vi.fn(), findMany: vi.fn() },
-    task: { create: vi.fn() },
-    agent: { create: vi.fn(), findUnique: vi.fn() },
-    sessionMember: { create: vi.fn(), findMany: vi.fn() },
-  },
-}))
+// Reference copy of validateDecision from src/app/api/sessions/[id]/chat/route.ts:802
+// Source function is not exported (private to the route handler), so we maintain
+// an identical copy here. If the source changes, this copy must be updated.
 
-vi.mock('@/lib/orchestrator/prompts', () => ({
-  buildMonitoringPrompt: vi.fn(),
-  PM_CONFIRMATION_PROMPT: 'PM确认：{userMessage}',
-  buildAgentQuestionPrompt: vi.fn(),
-}))
-
-vi.mock('@/lib/orchestrator/scheduler', () => ({
-  enforceFileOverlap: vi.fn(),
-}))
-
-// ─── validateDecision logic (mirrored from route.ts) ───
 function validateDecision(
-  decision: { action: string; message: string; reason: string },
+  decision: { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string },
   currentPhase: string,
   history: Array<{ role: string; agentId?: string | null; rawContent: string }>
-) {
+): { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string } {
+  // alignment 中不允许直接 done
   if (currentPhase === 'alignment' && decision.action === 'done') {
     return { ...decision, action: 'align_confirm', reason: '对齐尚未完成，继续确认需求' }
   }
+
+  // execution 中不允许回到 align_*
   if (currentPhase === 'execution' && decision.action.startsWith('align_')) {
     return { ...decision, action: 'execute', reason: '已在执行阶段' }
   }
+
+  // Q&A 循环硬上限：如果已有 Agent 提问且用户已回答，强制执行
   if (decision.action === 'align_qa') {
     const agentQuestions = history.filter(
       m => m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师'
@@ -47,80 +34,152 @@ function validateDecision(
       }
     }
   }
+
   return decision
 }
 
-describe('validateDecision', () => {
-  it('should block done during alignment phase', () => {
-    const result = validateDecision({ action: 'done', message: '', reason: '完成' }, 'alignment', [])
+// Helper to create a minimal decision
+function dec(action: string, overrides?: Partial<{ target: string | null; targets: string[] | null; message: string; reason: string }>) {
+  return { action, message: '', reason: '', ...overrides }
+}
+
+describe('validateDecision — phase guards', () => {
+  it('blocks done during alignment phase', () => {
+    const result = validateDecision(dec('done'), 'alignment', [])
     expect(result.action).toBe('align_confirm')
+    expect(result.reason).toContain('对齐')
   })
 
-  it('should block align_* during execution phase', () => {
-    const result = validateDecision({ action: 'align_confirm', message: '', reason: '重新对齐' }, 'execution', [])
+  it('allows done during execution phase', () => {
+    const result = validateDecision(dec('done'), 'execution', [])
+    expect(result.action).toBe('done')
+  })
+
+  it('blocks align_confirm during execution phase', () => {
+    const result = validateDecision(dec('align_confirm'), 'execution', [])
     expect(result.action).toBe('execute')
   })
 
-  it('should block align_decompose during execution phase', () => {
-    const result = validateDecision({ action: 'align_decompose', message: '', reason: '拆解' }, 'execution', [])
+  it('blocks align_decompose during execution phase', () => {
+    const result = validateDecision(dec('align_decompose'), 'execution', [])
     expect(result.action).toBe('execute')
   })
 
-  it('should allow self during alignment', () => {
-    const result = validateDecision({ action: 'self', message: '好的', reason: '闲聊' }, 'alignment', [])
-    expect(result.action).toBe('self')
+  it('blocks align_qa during execution phase', () => {
+    const result = validateDecision(dec('align_qa'), 'execution', [])
+    expect(result.action).toBe('execute')
   })
 
-  it('should allow align_confirm during alignment', () => {
-    const result = validateDecision({ action: 'align_confirm', message: '', reason: '确认需求' }, 'alignment', [])
+  it('allows align_* during alignment phase', () => {
+    expect(validateDecision(dec('align_confirm'), 'alignment', []).action).toBe('align_confirm')
+    expect(validateDecision(dec('align_decompose'), 'alignment', []).action).toBe('align_decompose')
+    expect(validateDecision(dec('align_qa'), 'alignment', []).action).toBe('align_qa')
+  })
+
+  it('does not interfere during idle phase', () => {
+    const result = validateDecision(dec('align_confirm'), 'idle', [])
     expect(result.action).toBe('align_confirm')
   })
 
-  it('should force execute when align_qa after agent Q&A with user answer', () => {
+  it('does not interfere during other phases', () => {
+    const result = validateDecision(dec('done'), 'planning', [])
+    expect(result.action).toBe('done')
+  })
+})
+
+describe('validateDecision — Q&A loop detection', () => {
+  it('forces execute when agent asked and user answered', () => {
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '产品经理', rawContent: '确认需求...' },
       { role: 'agent', agentId: '前端工程师', rawContent: '用 React 还是 Vue？' },
       { role: 'user', agentId: null, rawContent: '用 React' },
     ]
-    const result = validateDecision({ action: 'align_qa', message: '', reason: '再问一轮' }, 'alignment', history)
+    const result = validateDecision(dec('align_qa'), 'alignment', history)
     expect(result.action).toBe('execute')
+    expect(result.reason).toContain('Q&A已完成')
   })
 
-  it('should allow align_qa when no previous agent questions', () => {
+  it('allows align_qa when no agent questions yet', () => {
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '架构师', rawContent: '方案...' },
     ]
-    const result = validateDecision({ action: 'align_qa', message: '', reason: '让Agent提问' }, 'alignment', history)
+    const result = validateDecision(dec('align_qa'), 'alignment', history)
     expect(result.action).toBe('align_qa')
   })
 
-  it('should allow align_qa when agent asked but user has not answered', () => {
+  it('allows align_qa when agent asked but user has not answered', () => {
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '前端工程师', rawContent: '用 React 还是 Vue？' },
     ]
-    const result = validateDecision({ action: 'align_qa', message: '', reason: '等用户回答' }, 'alignment', history)
+    const result = validateDecision(dec('align_qa'), 'alignment', history)
     expect(result.action).toBe('align_qa')
   })
 
-  it('should not interfere during idle phase', () => {
-    const result = validateDecision({ action: 'align_confirm', message: '', reason: '开发任务' }, 'idle', [])
-    expect(result.action).toBe('align_confirm')
+  it('allows align_qa when only PM/architect messages exist', () => {
+    // PM and 架构师 are excluded from agent question detection
+    const history = [
+      { role: 'user', agentId: null, rawContent: '搭建博客' },
+      { role: 'agent', agentId: '产品经理', rawContent: '需求确认...' },
+      { role: 'agent', agentId: '架构师', rawContent: '技术方案...' },
+    ]
+    const result = validateDecision(dec('align_qa'), 'alignment', history)
+    expect(result.action).toBe('align_qa')
   })
 
-  it('should preserve delegate action during alignment', () => {
-    const result = validateDecision({ action: 'delegate', message: '', reason: '委派' }, 'alignment', [])
+  it('forces execute when multiple agent Q&A rounds completed', () => {
+    const history = [
+      { role: 'user', agentId: null, rawContent: '搭建博客' },
+      { role: 'agent', agentId: '前端工程师', rawContent: '用什么框架？' },
+      { role: 'user', agentId: null, rawContent: 'React' },
+      { role: 'agent', agentId: '后端工程师', rawContent: '用什么数据库？' },
+      { role: 'user', agentId: null, rawContent: 'PostgreSQL' },
+    ]
+    const result = validateDecision(dec('align_qa'), 'alignment', history)
+    expect(result.action).toBe('execute')
+  })
+})
+
+describe('validateDecision — passthrough', () => {
+  it('preserves self action', () => {
+    const result = validateDecision(dec('self', { message: '好的' }), 'alignment', [])
+    expect(result.action).toBe('self')
+  })
+
+  it('preserves delegate action', () => {
+    const result = validateDecision(dec('delegate'), 'alignment', [])
     expect(result.action).toBe('delegate')
   })
 
-  it('should allow done during execution phase', () => {
-    const result = validateDecision({ action: 'done', message: '', reason: '完成' }, 'execution', [])
-    expect(result.action).toBe('done')
+  it('preserves discuss action', () => {
+    const result = validateDecision(dec('discuss'), 'alignment', [])
+    expect(result.action).toBe('discuss')
   })
 
-  it('should use reduce instead of findLastIndex for compatibility', () => {
+  it('preserves execute action during execution', () => {
+    const result = validateDecision(dec('execute'), 'execution', [])
+    expect(result.action).toBe('execute')
+  })
+
+  it('preserves message and reason fields', () => {
+    const d = dec('self', { message: 'hello', reason: 'chat' })
+    const result = validateDecision(d, 'idle', [])
+    expect(result.message).toBe('hello')
+    expect(result.reason).toBe('chat')
+  })
+
+  it('preserves target and targets fields', () => {
+    const d = dec('delegate', { target: 'frontend', targets: ['frontend', 'backend'] })
+    const result = validateDecision(d, 'execution', [])
+    expect(result.target).toBe('frontend')
+    expect(result.targets).toEqual(['frontend', 'backend'])
+  })
+})
+
+describe('validateDecision — reduce-based index lookup', () => {
+  it('finds the last agent question index correctly', () => {
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '前端工程师', rawContent: '用 React？' },
@@ -133,12 +192,20 @@ describe('validateDecision', () => {
     expect(lastIdx).toBe(3)
   })
 
-  it('should return -1 when no agent questions exist in reduce', () => {
+  it('returns -1 when no qualifying agent questions exist', () => {
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '产品经理', rawContent: '确认...' },
+      { role: 'agent', agentId: '架构师', rawContent: '方案...' },
     ]
     const lastIdx = history.reduce((last, m, i) =>
+      (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
+    )
+    expect(lastIdx).toBe(-1)
+  })
+
+  it('returns -1 for empty history', () => {
+    const lastIdx = ([] as Array<{ role: string; agentId?: string | null }>).reduce((last, m, i) =>
       (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
     )
     expect(lastIdx).toBe(-1)

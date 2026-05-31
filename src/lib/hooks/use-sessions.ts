@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 interface Session {
   id: string
@@ -11,8 +12,9 @@ interface Session {
 }
 
 export function useSessions() {
+  const searchParams = useSearchParams()
   const [sessions, setSessions] = useState<Session[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(searchParams.get('session'))
 
   const refresh = useCallback(async () => {
     const res = await fetch('/api/sessions')
@@ -21,6 +23,14 @@ export function useSessions() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // 从 URL 参数自动选中会话
+  useEffect(() => {
+    const sessionFromUrl = searchParams.get('session')
+    if (sessionFromUrl && !activeId) {
+      setActiveId(sessionFromUrl)
+    }
+  }, [searchParams, activeId])
 
   const create = async (title?: string, type?: string) => {
     const res = await fetch('/api/sessions', {

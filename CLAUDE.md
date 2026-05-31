@@ -2,63 +2,7 @@
 
 IM 风格的多 Agent 协作平台，Orchestrator 驱动任务拆解，统一适配器层，SSE 流式输出。
 
-## Karpathy 编码准则
-
-### 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-### 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-### 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-### 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+编码准则见全局 `~/.claude/CLAUDE.md`（Think Before Coding / Simplicity First / Surgical Changes / Goal-Driven Execution）。
 
 ## 技术栈
 
@@ -89,6 +33,14 @@ src/
 ├── lib/
 │   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
 │   ├── orchestrator/          # 编排器（prompt + 调度 + 执行）
+│   ├── services/              # 业务服务层（从 chat route 拆分）
+│   │   ├── chat-router.ts     # Orchestrator 决策路由 + validateDecision
+│   │   ├── alignment.ts       # 对齐流程（PM确认→架构师拆解→Q&A）
+│   │   ├── execution.ts       # 任务执行引擎
+│   │   ├── review.ts          # 结果审查 + 纠偏 + delegate/discuss
+│   │   ├── agent-factory.ts   # Agent 创建
+│   │   ├── context-builder.ts # 历史上下文构建
+│   │   └── git-utils.ts       # Git 变更检测
 │   ├── hooks/                 # use-sessions, use-chat
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
 │   └── utils.ts               # shadcn 工具
@@ -106,21 +58,24 @@ prisma/
 - 生成路径：`@/generated/prisma/client`（不是 `@prisma/client`）
 - schema generator：`provider = "prisma-client"`（不是 `prisma-client-js`）
 - SQLite 需要 `@prisma/adapter-libsql` + `@libsql/client`
-- 详见 `issues/ISSUE-001` 和 `issues/ISSUE-002`
+- **外键约束**：`db.ts` 和 `mcp-server/index.ts` 都必须设 `PRAGMA foreign_keys=ON`，否则 `onDelete: Cascade` 不生效
+- 详见 `issues/ISSUE-001-agent-creation-parse-failure-已解决` 和 `issues/ISSUE-002-prisma-generated-path-已解决`
 
 ### 数据模型（v2）
 
-- **Session**：`projectDir`（项目目录）、`permissionMode`（`default` | `auto`）
+- **Session**：`projectDir`（项目目录）、`permissionMode`（`default` | `auto`）、`isPinned`/`isArchived`（置顶/归档）
 - **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
 - **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`
-- **Task**：`cliSessionId` 用于 CLI 会话恢复
+- **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）
+- **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status
+- ⚠️ **`_count` 不可用**：`/api/sessions/[id]` 不返回 `_count`，项目详情页用 `session.messages.length` 而非 `session._count.messages`（2026-05-29 踩坑修复）
 - 详见 `prisma/schema.prisma`
 
 ### Next.js 16
 
 - 动态路由 `params` 是 `Promise`，必须 `await`
 - 签名：`{ params }: { params: Promise<{ id: string }> }`
-- 详见 `issues/ISSUE-004`
+- 详见 `issues/ISSUE-004-nextjs16-params-promise-已解决`
 
 ### Claude Code CLI 集成
 
@@ -130,20 +85,13 @@ prisma/
 - **禁止使用 `--dangerously-skip-permissions`** — 会导致 CLI 卡住
 - **中文编码**：stdin.write 必须使用 `Buffer.from(text, 'utf-8')`，否则 Windows 下中文变乱码
 - **进程清理**：使用 `taskkill /pid <PID> /T /F` 杀掉整个进程树，避免残留
-- 详见 `issues/ISSUE-005` ~ `ISSUE-008`、`issues/ISSUE-011`
-
-#### Common Pitfalls (English)
-
-| Issue | Lesson |
-|-------|--------|
-| Windows Chinese encoding | When spawning child processes with `shell: true`, stdin.write must use `Buffer.from(text, 'utf-8')` instead of string, otherwise Chinese characters become garbled (乱码). |
-| Claude Code CLI process cleanup | Use `taskkill /pid <PID> /T /F` to kill entire process tree on Windows, not just `process.kill()` which leaves child processes hanging. |
+- 详见 `issues/ISSUE-005-cli-system-prompt-ignored-已解决` ~ `ISSUE-008-cli-enoent-windows-已解决`、`issues/ISSUE-011-cli-process-tree-cleanup-已解决`
 
 ### 安全红线
 
 - **API Key 不经浏览器**：`/api/providers/import` 从服务端 config.toml 读取真实 apiKey，浏览器只传 provider name
 - **API 响应不泄露 apiKey**：所有 GET 用 Prisma select 排除 apiKey；providers 用 maskApiKey() 返回掩码值
-- **Mass Assignment 防护**：Agent PUT 白名单不含 status（设计决策#20）；Session PUT 白名单不含 phase/type/phaseStep（设计决策#8/#12）
+- **Mass Assignment 防护**：Agent PUT 白名单不含 status（设计决策#20）；Session PUT 白名单不含 phase/type/phaseStep（设计决策#8/#12），白名单字段：title/projectDir/permissionMode/isPinned/isArchived
 - **iframe sandbox**：`allow-scripts`（设计决策#17），不含 `allow-same-origin`
 - **成员列表**：agent select 排除 systemPrompt
 - **shell:true 命令注入**：ClaudeCodeAdapter/OpenCodeAdapter 使用 `shell: true`，`permissionMode`/`sessionId`/`model` 等来自用户/数据库输入，必须验证后再传入 args
@@ -155,7 +103,12 @@ prisma/
 
 - `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式，支持 `--resume` 恢复会话）
   - 120 秒无输出超时（`noOutputTimer`），超时自动 killProcessTree
-  - 3 分钟总超时（已有）
+  - **权限交互**：`--permission-prompt-tool stdio`，CLI 通过 `control_request`/`control_response` 协议与前端交互。`default` 模式下发 `control_request`，前端显示确认横幅；`auto` 模式不发请求
+  - ProcessRegistry key：`${sessionId}:${agentId}:${workDir}`，permission API 必须用相同格式
+  - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
+  - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
+- **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次
+- **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
 - `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
   - 支持 abortSignal 取消请求
 - `platform: 'opencode'` → OpenCodeAdapter（JSON 事件流）
@@ -164,7 +117,9 @@ prisma/
 - **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
 - **CLI 自动检测**：`detectCLIPlatform()` 按优先级检测 claude-code → opencode，结果持久化到 Orchestrator Agent 记录
 - **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text' || type === 'error'`，不累加 status chunk；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
-- **MCP 协作**：ClaudeCodeAdapter 支持 `--mcp-config` 参数，通过 MCP Server 给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）。MCP Server 独立进程，Prisma 独立初始化
+- **SSE 错误处理**：`use-chat.ts` fetch 后必须检查 `res.ok`，4xx/5xx 时解析错误信息显示给用户，不静默失败
+- **MCP 协作**：ClaudeCodeAdapter 支持 `--mcp-config` 参数，MCP 配置写入临时文件避免 shell 转义问题。MCP Server 给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）
+  - **路径安全**：`isPathSafe()` 用 `realpathSync` 解析后比较 `REAL_WORK_DIR + sep`，防 symlink 和前缀目录绕过；文件不存在时 fallback 到 `resolve + startsWith(WORK_DIR + sep)`
 - **LLM fallback 已移除**：CLI 不可用时直接报错，不静默降级到 LLM API
 
 ### 多供应商配置
@@ -208,32 +163,31 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 - 用户创建群聊时可指定项目目录（如 `E:\projects\todo-app\`）
 - Session 表存储 `projectDir` 和 `permissionMode`（`default` | `auto`）
-- 创建会话时自动为每个 Agent 创建独立子目录（英文标识，如 `frontend/`、`backend/`）
+- Agent 直接在 `projectDir` 中工作，不创建独立子目录
 - 最近打开的目录存储在 `RecentDir` 表，API：`/api/recent-dirs`
 - 聊天命令 `/permission auto` 或 `/permission default` 切换权限模式
-- 输入 `/` 显示可用命令气泡提示
-- ClaudeCodeAdapter 支持 `--permission-mode` 参数
+- ClaudeCodeAdapter 支持 `--permission-mode` + `--permission-prompt-tool stdio` 参数
+- **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
+- **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
 - 详见 `docs/design/workspace-and-permissions.md`
 
-### 工作区隔离
+### 文件变更检测
 
-- 执行任务时创建 `workspaces/{sessionId}/task-{taskId}/` 隔离目录
-- `src/lib/workspace.ts`：createTaskWorkspace / takeSnapshot / auditTaskWorkspace
-- 审计：检测 Agent 是否修改了非声明文件（declaredFiles）
-- 跳过：node_modules, .next, .git, workspaces
-- **Agent 子目录用英文标识**：`DIR_SLUGS` 映射（前端→frontend，后端→backend 等），不用中文名
-- **close() 不删工作区**：清理由 `cleanupTaskWorkspaces` 统一处理，保证下游 Agent 可读取上游产出
-- **依赖上下文注入**：执行前自动读取上游任务工作区的文件，注入到下游 Agent 的 prompt
+- 每批任务执行后自动 `git diff --name-only HEAD` 检测实际改动文件
+- 对比 `declaredFiles`（Agent 声明的文件）和实际改动，越界修改发送告警
+- 未初始化 Git 的项目 fallback 到无检测
+- 实现：`src/lib/services/git-utils.ts` 中的 `getGitSnapshot` / `getChangedFiles`
 
 ### Chat API Session Lock
 
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
 - 原因：并发请求会读到过时的 phaseStep，导致同一 handler 被触发两次
-- 实现：`sessionLocks` Map + Promise chain，请求排队，stream 结束后 release
+- 实现：`src/lib/session-lock.ts` → `acquireSessionLock()`，chat route 和 redo API 共用
 - **超时保护**：等待前一个请求超过 60 秒则跳过等待继续执行
 - **abort 监听**：客户端断开时自动 release 锁
 - **SSE 全局超时**：5 分钟无响应则强制关闭流
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
+- **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态
 
 ### 会话类型
 
@@ -244,23 +198,23 @@ Orchestrator 自主决定流程，支持 8 种 action：
 ### 设计文档（必读）
 
 - **v2 设计决策**：`docs/design/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
-- **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、Agent 子目录
+- **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、变更检测
 - **实现计划**：`docs/design/implementation-plan.md` — 8 阶段任务拆分
 - 参考资料：`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
 - 新增功能前必须对照 v2 设计决策文档
 
-### 已知功能差距（开发前必看）
+### 已知功能差距
+
+- ChatFab（右下角聊天框）仍为 Mock 数据，私聊功能待实现 → 详见 `docs/plan-chatfab-private-chat.md`（开发前必看）
 
 详见 `issues/ISSUE-DESIGN-未实现功能清单.md`，核心缺失：
-- 纠偏范围 — 所有 Agent（CLI + LLM），LLM Agent 做语义核对，CLI Agent 做文件审计+语义核对
-- 失败处理 — 无错误重试、熔断、用户操作面板（已有超时兜底）
-- pin 消息 — Agent 级长期上下文未实现
+- Pin 消息 — Agent 级长期上下文未实现
 
 ## API 路由
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/api/sessions` | 会话列表 |
+| GET | `/api/sessions` | 会话列表（默认过滤归档，`?archived=true` 查看归档） |
 | POST | `/api/sessions` | 创建会话（自动添加预设 Agent） |
 | GET | `/api/sessions/[id]` | 会话详情 |
 | PUT | `/api/sessions/[id]` | 更新会话 |
@@ -272,8 +226,10 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | POST | `/api/sessions/[id]/members` | 添加成员到会话 |
 | DELETE | `/api/sessions/[id]/members` | 移除会话成员 |
 | GET | `/api/sessions/[id]/tasks` | Task 列表 |
+| POST | `/api/sessions/[id]/tasks/[taskId]/redo` | 重做失败/阻塞任务（编辑描述+重新执行+级联下游） |
 | GET | `/api/sessions/[id]/files/[filename]` | 读取工作区文件 |
 | POST | `/api/sessions/[id]/chat` | SSE 流式聊天（per-session lock） |
+| POST | `/api/sessions/[id]/permission` | 权限交互回应（允许/拒绝 CLI 工具调用） |
 | POST | `/api/sessions/recommend-agents` | 推荐 Agent（LLM 分析任务） |
 | GET | `/api/agents` | 全局 Agent 列表 |
 | POST | `/api/agents` | 创建 Agent |
@@ -282,7 +238,13 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | GET | `/api/providers` | CC-Switch 服务商列表 |
 | POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 config.toml 读 apiKey） |
 | POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
-| POST | `/api/config/detect-platform` | 检测 CLI 可用性 |
+| GET | `/api/config` | 通用配置读取（key 查询） |
+| POST | `/api/config` | 通用配置写入（key-value） |
+| GET | `/api/config/orchestrator` | Orchestrator 配置（apiKey/model/baseUrl） |
+| POST | `/api/config/orchestrator` | 更新 Orchestrator 配置 |
+| POST | `/api/config/test-connection` | 连接测试（CLI 检测 + LLM 测试） |
+| POST | `/api/config/import-provider` | 从 CC-Switch 导入服务商配置 |
+| POST | `/api/config/detect-platform` | CLI 平台检测（claude-code/opencode） |
 | POST | `/api/deploy` | 模拟部署 |
 | GET | `/api/recent-dirs` | 最近打开的目录列表 |
 | POST | `/api/recent-dirs` | 添加最近目录 |

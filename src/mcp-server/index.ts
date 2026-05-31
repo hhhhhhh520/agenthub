@@ -2,8 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { PrismaClient } from '../generated/prisma/client'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
-import { readFileSync, readdirSync, statSync } from 'fs'
-import { join, resolve } from 'path'
+import { readFileSync, readdirSync, statSync, realpathSync } from 'fs'
+import { join, resolve, sep } from 'path'
 import { z } from 'zod'
 
 // 独立 Prisma 初始化（不依赖 Next.js）
@@ -11,10 +11,25 @@ const dbAdapter = new PrismaLibSql({
   url: process.env.DATABASE_URL || 'file:./dev.db',
 })
 const prisma = new PrismaClient({ adapter: dbAdapter })
+prisma.$executeRawUnsafe('PRAGMA journal_mode=WAL').catch(() => {})
+prisma.$executeRawUnsafe('PRAGMA foreign_keys=ON').catch(() => {})
 
 const SESSION_ID = process.env.AGENTHUB_SESSION_ID || ''
 const AGENT_NAME = process.env.AGENTHUB_AGENT_NAME || ''
 const WORK_DIR = resolve(process.env.AGENTHUB_WORK_DIR || '.')
+const REAL_WORK_DIR = realpathSync(WORK_DIR)
+
+function isPathSafe(filePath: string): boolean {
+  try {
+    const realPath = realpathSync(filePath)
+    return realPath === REAL_WORK_DIR || realPath.startsWith(REAL_WORK_DIR + sep)
+  } catch {
+    // realpathSync throws if file doesn't exist, but resolve+startsWith
+    // can still be bypassed by .. paths — reject unknown paths
+    const resolved = resolve(filePath)
+    return resolved === WORK_DIR || resolved.startsWith(WORK_DIR + sep)
+  }
+}
 
 const server = new McpServer({
   name: 'agenthub',
@@ -28,8 +43,7 @@ server.tool(
   { path: z.string().describe('相对于项目根目录的文件路径，如 frontend/src/App.tsx') },
   async ({ path: filePath }) => {
     const fullPath = resolve(WORK_DIR, filePath)
-    // 安全检查：路径必须在 WORK_DIR 内
-    if (!fullPath.startsWith(WORK_DIR)) {
+    if (!isPathSafe(fullPath)) {
       return { content: [{ type: 'text', text: '错误：路径超出项目目录' }] }
     }
     try {

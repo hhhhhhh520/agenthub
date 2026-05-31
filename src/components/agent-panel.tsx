@@ -4,6 +4,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
@@ -46,6 +48,10 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null)
+  const [redoTask, setRedoTask] = useState<Task | null>(null)
+  const [redoDescription, setRedoDescription] = useState('')
+  const [redoLoading, setRedoLoading] = useState(false)
+  const [redoPollFast, setRedoPollFast] = useState(false)
 
   const loadAgents = useCallback(async () => {
     if (!sessionId) return
@@ -66,16 +72,20 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
 
   useEffect(() => {
     if (!sessionId) return
-    fetch(`/api/sessions/${sessionId}/tasks`)
-      .then(r => r.json())
-      .then(setTasks)
-    const interval = setInterval(() => {
+    let errorCount = 0
+    const fetchTasks = () => {
       fetch(`/api/sessions/${sessionId}/tasks`)
-        .then(r => r.json())
-        .then(setTasks)
-    }, 3000)
+        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
+        .then(data => { setTasks(data); errorCount = 0 })
+        .catch(() => { errorCount++ })
+    }
+    fetchTasks()
+    const interval = setInterval(() => {
+      if (errorCount >= 5) return // 退避：连续失败 5 次后停止轮询
+      fetchTasks()
+    }, redoPollFast ? 1000 : 3000)
     return () => clearInterval(interval)
-  }, [sessionId])
+  }, [sessionId, redoPollFast])
 
   return (
     <div className="w-72 border-l bg-gray-50 flex flex-col">
@@ -152,6 +162,14 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
               <div className="flex items-center gap-2">
                 <span>{TASK_STATUS_ICONS[task.status] || task.status}</span>
                 <span className="flex-1">{task.description}</span>
+                {(task.status === 'failed' || task.status === 'blocked') && (
+                  <button
+                    onClick={() => { setRedoTask(task); setRedoDescription(task.description) }}
+                    className="text-xs text-blue-500 hover:underline whitespace-nowrap"
+                  >
+                    重做
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -202,6 +220,60 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           loadAgents()
         }}
       />
+      {redoTask && sessionId && (
+        <Dialog open={!!redoTask} onOpenChange={(open) => { if (!open) setRedoTask(null) }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>重做任务</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-gray-500">可以修改任务描述后重新执行，也可以不改直接提交。</p>
+            <Textarea
+              value={redoDescription}
+              onChange={(e) => setRedoDescription(e.target.value)}
+              rows={3}
+              className="mt-3"
+            />
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRedoTask(null)}>取消</Button>
+              <Button
+                disabled={redoLoading}
+                onClick={async () => {
+                  setRedoLoading(true)
+                  const taskToRedo = redoTask
+                  const desc = redoDescription
+                  setRedoTask(null) // Close dialog immediately
+                  setRedoPollFast(true) // Speed up polling
+                  try {
+                    await fetch(`/api/sessions/${sessionId}/tasks/${taskToRedo.id}/redo`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ description: desc }),
+                    })
+                  } catch (e) {
+                    console.error('Redo request failed:', e)
+                  } finally {
+                    setRedoLoading(false)
+                  }
+                  // Check task status until terminal, then restore slow polling
+                  const checkDone = async () => {
+                    const res = await fetch(`/api/sessions/${sessionId}/tasks`)
+                    const tasks = await res.json()
+                    const t = tasks.find((t: Task) => t.id === taskToRedo.id)
+                    if (t && (t.status === 'completed' || t.status === 'failed' || t.status === 'blocked')) {
+                      setRedoPollFast(false)
+                    } else {
+                      setTimeout(checkDone, 1000)
+                    }
+                  }
+                  setTimeout(checkDone, 1000)
+                }}
+              >
+                确认重做
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

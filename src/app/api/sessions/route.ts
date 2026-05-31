@@ -1,17 +1,5 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { mkdirSync, existsSync } from 'fs'
-import { join } from 'path'
-
-const DIR_SLUGS: Record<string, string> = {
-  '前端工程师': 'frontend',
-  '后端工程师': 'backend',
-  '测试工程师': 'test',
-  '架构师': 'architect',
-  '产品经理': 'product',
-  'UI 设计师': 'designer',
-  'Orchestrator': 'orchestrator',
-}
 
 function hasLoneSurrogates(str: string): boolean {
   let i = 0
@@ -32,8 +20,11 @@ function hasLoneSurrogates(str: string): boolean {
   return false
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const showArchived = searchParams.get('archived') === 'true'
   const sessions = await prisma.session.findMany({
+    where: showArchived ? {} : { isArchived: false },
     orderBy: { updatedAt: 'desc' },
     include: { _count: { select: { messages: true, members: true } } },
   })
@@ -84,25 +75,6 @@ export async function POST(request: Request) {
       })),
     })
 
-    // 为每个 Agent 创建独立子目录
-    if (projectDir && projectDir.trim()) {
-      const rootDir = projectDir.trim().replace(/\\/g, '/')
-      // 确保根目录存在
-      if (!existsSync(rootDir)) {
-        mkdirSync(rootDir, { recursive: true })
-      }
-      for (const agent of agents) {
-        const slug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
-const agentDir = join(rootDir, slug)
-        try {
-          if (!existsSync(agentDir)) {
-            mkdirSync(agentDir, { recursive: true })
-          }
-        } catch {
-          // 静默失败，不影响主流程
-        }
-      }
-    }
   } else {
     // No agentIds: add all preset agents (legacy behavior)
     const presetAgents = await prisma.agent.findMany({ where: { isPreset: true } })
@@ -115,25 +87,6 @@ const agentDir = join(rootDir, slug)
         })),
       })
 
-      // 为每个 Agent 创建独立子目录
-      if (projectDir && projectDir.trim()) {
-        const rootDir = projectDir.trim().replace(/\\/g, '/')
-        // 确保根目录存在
-        if (!existsSync(rootDir)) {
-          mkdirSync(rootDir, { recursive: true })
-        }
-        for (const agent of presetAgents) {
-          const slug = DIR_SLUGS[agent.name] || agent.name.toLowerCase().replace(/\s+/g, '-')
-const agentDir = join(rootDir, slug)
-          try {
-            if (!existsSync(agentDir)) {
-              mkdirSync(agentDir, { recursive: true })
-            }
-          } catch {
-            // 静默失败，不影响主流程
-          }
-        }
-      }
     }
   }
 

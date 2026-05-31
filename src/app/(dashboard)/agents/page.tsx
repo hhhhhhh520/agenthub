@@ -82,7 +82,7 @@ export default function AgentsPage() {
               return (
                 <tr key={agent.id} className="border-b last:border-0 hover:bg-accent/50 transition-colors">
                   <td className="px-4 py-3">
-                    <Link href={`/dashboard/agents/${agent.id}`} className="flex items-center gap-2 hover:underline">
+                    <Link href={`/agents/${agent.id}`} className="flex items-center gap-2 hover:underline">
                       <Avatar className="h-7 w-7">
                         <AvatarFallback className="text-xs text-white" style={{ backgroundColor: agent.accentColor }}>
                           {agent.name.charAt(0)}

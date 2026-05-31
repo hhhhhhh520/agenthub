@@ -25,10 +25,10 @@ import {
 } from "@/components/ui/sidebar"
 
 const navItems = [
-  { title: "工作区", href: "/dashboard", icon: Home },
-  { title: "项目", href: "/dashboard/projects", icon: FolderKanban },
-  { title: "智能体", href: "/dashboard/agents", icon: Bot },
-  { title: "Skill", href: "/dashboard/skills", icon: Sparkles },
+  { title: "工作区", href: "/", icon: Home },
+  { title: "项目", href: "/projects", icon: FolderKanban },
+  { title: "智能体", href: "/agents", icon: Bot },
+  { title: "Skill", href: "/skills", icon: Sparkles },
 ]
 
 export function AppSidebar() {
@@ -54,7 +54,7 @@ export function AppSidebar() {
               {navItems.map((item) => {
                 const isActive =
                   pathname === item.href ||
-                  (item.href !== "/dashboard" && pathname.startsWith(item.href))
+                  (item.href !== "/" && pathname.startsWith(item.href))
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton isActive={isActive} tooltip={item.title} render={<Link href={item.href} />}>

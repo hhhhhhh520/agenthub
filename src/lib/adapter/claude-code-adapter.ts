@@ -1,207 +1,73 @@
-import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import type { ChildProcess } from 'child_process'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
+import { processRegistry } from './process-registry'
 
 // 默认工作目录：项目的 workspaces 目录（在 Claude Code 允许范围内）
-const DEFAULT_WORK_DIR = join(process.cwd(), 'workspaces', 'default')
+const DEFAULT_WORK_DIR = process.cwd()
 
 export class ClaudeCodeAdapter implements AgentAdapter {
   private workDir: string = ''
-  private process: ChildProcess | null = null
   private sessionId: string | null = null
   private permissionMode: string = 'default'
   private mcpConfig: string | undefined
+  private agentId: string | undefined
+  private chatSessionId: string | undefined
 
   async connect(config: AdapterConfig): Promise<void> {
     this.workDir = config.workDir || DEFAULT_WORK_DIR
     this.sessionId = config.sessionId || null
     this.permissionMode = config.permissionMode || 'default'
     this.mcpConfig = config.mcpConfig
-    if (!existsSync(this.workDir)) {
-      mkdirSync(this.workDir, { recursive: true })
-    }
+    this.agentId = config.agentId
+    this.chatSessionId = config.chatSessionId
+  }
+
+  private getRegistryKey(): string {
+    // Key format: chatSessionId:agentId:workDir
+    // Falls back to workDir alone if session/agent not available
+    const sessionPart = this.chatSessionId || 'default'
+    const agentPart = this.agentId || 'default'
+    return `${sessionPart}:${agentPart}:${this.workDir}`
   }
 
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
-    // Use stdin to pass prompt (avoids shell escaping issues with Chinese/special chars)
-    const args = ['--output-format', 'stream-json', '--verbose', '--bare']
+    const key = this.getRegistryKey()
 
-    // MCP 协作工具支持 — 写入临时文件避免 shell 转义问题
-    let mcpConfigFile: string | null = null
-    if (this.mcpConfig) {
-      mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
-      writeFileSync(mcpConfigFile, this.mcpConfig, 'utf-8')
-      args.push('--mcp-config', mcpConfigFile)
-    }
-
-    // 添加权限模式
-    if (this.permissionMode) {
-      args.push('--permission-mode', this.permissionMode)
-    }
-
-    // 恢复已有会话
-    if (this.sessionId) {
-      args.push('--resume', this.sessionId)
-    }
-
-    const cmd = 'claude'
-    this.process = spawn(cmd, args, {
-      cwd: this.workDir,
-      env: {
-        ...process.env,
-        PYTHONIOENCODING: 'utf-8',
-        LANG: 'en_US.UTF-8',
-        LC_ALL: 'en_US.UTF-8',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
-    })
-
-    // Capture stderr for debugging
-    const stderrChunks: string[] = []
-    if (this.process.stderr) {
-      this.process.stderr.on('data', (chunk: Buffer) => {
-        stderrChunks.push(chunk.toString())
-      })
-    }
-
-    // No-output timeout: kill process if it produces nothing on stdout for 120s
-    let noOutputTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-      this.killProcessTree()
-    }, 120_000)
-
-    const resetNoOutputTimer = () => {
-      if (noOutputTimer) clearTimeout(noOutputTimer)
-      noOutputTimer = setTimeout(() => {
-        this.killProcessTree()
-      }, 120_000)
-    }
-    this.process.stdout?.on('data', resetNoOutputTimer)
-
-    // Combine systemPrompt + context + prompt into a single prompt for CLI
+    // Build full prompt (same as before)
     const parts: string[] = []
     if (task.systemPrompt) parts.push(task.systemPrompt)
     if (task.context) parts.push(`背景信息：\n${task.context}`)
     parts.push(task.prompt)
     const fullPrompt = parts.join('\n\n---\n\n')
 
-    // Write combined prompt to stdin then close
-    if (this.process.stdin) {
-      const buffer = Buffer.from(fullPrompt, 'utf-8')
-      this.process.stdin.write(buffer)
-      this.process.stdin.end()
+    // Build spawn config for process rebuild on retry
+    const spawnConfig = {
+      workDir: this.workDir,
+      sessionId: this.sessionId,
+      permissionMode: this.permissionMode,
+      mcpConfig: this.mcpConfig,
     }
 
-    // Wait for process to exit or timeout
-    const timeout = setTimeout(() => {
-      this.killProcessTree()
-    }, 3 * 60 * 1000) // 3 minutes timeout
+    // Get or create process via registry
+    const entry = processRegistry.getOrCreate(key, spawnConfig)
 
-    try {
-      for await (const chunk of this.readProcess(this.process)) {
-        yield chunk
+    // Update sessionId from registry (in case process was resumed)
+    if (entry.sessionId) {
+      this.sessionId = entry.sessionId
+    }
+
+    // Yield chunks from registry (pass spawnConfig for retry rebuild)
+    for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
+      // Capture session_id from session chunks
+      if (chunk.type === 'session') {
+        this.sessionId = chunk.content
       }
-    } catch (error) {
-      const stderr = stderrChunks.join('')
-      throw new Error(`Claude CLI error: ${error}${stderr ? `\nStderr: ${stderr}` : ''}`)
-    } finally {
-      clearTimeout(timeout)
-      if (noOutputTimer) clearTimeout(noOutputTimer)
-      this.killProcessTree()
-      if (mcpConfigFile) { try { unlinkSync(mcpConfigFile) } catch {} }
+      yield chunk
     }
-  }
-
-  private async *readProcess(proc: ChildProcess): AsyncIterable<StreamChunk> {
-    const stdout = proc.stdout
-    if (!stdout) return
-
-    let buffer = ''
-    const decoder = new TextDecoder()
-
-    for await (const raw of stdout) {
-      buffer += decoder.decode(raw, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          const event = JSON.parse(line)
-
-          // 提取 session_id（在 result 或 init 事件中）
-          if (event.session_id && !this.sessionId) {
-            this.sessionId = event.session_id
-            yield { type: 'session', content: event.session_id }
-          }
-
-          // Assistant message with content array
-          if (event.type === 'assistant' && event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'text' && block.text) {
-                yield { type: 'text', content: block.text }
-              }
-            }
-          }
-          // Final result — only emit status marker, not text (assistant events already streamed full content)
-          else if (event.type === 'result') {
-            yield { type: 'status', content: 'completed' }
-          }
-        } catch {
-          // Non-JSON output, skip
-        }
-      }
-    }
-    // Process remaining buffer
-    if (buffer.trim()) {
-      try {
-        const event = JSON.parse(buffer)
-        if (event.type === 'assistant' && event.message?.content) {
-          for (const block of event.message.content) {
-            if (block.type === 'text' && block.text) {
-              yield { type: 'text', content: block.text }
-            }
-          }
-        }
-        if (event.type === 'result') {
-          yield { type: 'status', content: 'completed' }
-        }
-      } catch {}
-    }
-  }
-
-  private killProcessTree(): void {
-    if (!this.process) return
-
-    const pid = this.process.pid
-    if (!pid) return
-
-    // Kill process tree on Windows
-    if (process.platform === 'win32') {
-      try {
-        // Use taskkill to kill entire process tree
-        spawn('taskkill', ['/pid', pid.toString(), '/T', '/F'], { shell: false })
-      } catch {
-        // Fallback to simple kill
-        this.process.kill('SIGTERM')
-      }
-    } else {
-      // On Unix, kill process group
-      try {
-        process.kill(-pid, 'SIGTERM')
-      } catch {
-        this.process.kill('SIGTERM')
-      }
-    }
-
-    this.process = null
   }
 
   async close(): Promise<void> {
-    this.killProcessTree()
-    // 不删除工作区 — 下游 Agent 可能需要读取产出文件
-    // 清理由 handleExecution 结束时的 cleanupTaskWorkspaces 统一处理
+    // Phase 1: do nothing - process stays in registry for reuse
+    // Idle cleanup will handle eventual termination
   }
 }

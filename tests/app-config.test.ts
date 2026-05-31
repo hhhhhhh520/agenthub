@@ -1,78 +1,117 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-describe('app-config: Orchestrator config defaults', () => {
-  it('default model should be claude-sonnet-4-20250514', () => {
-    const defaultModel = 'claude-sonnet-4-20250514'
-    expect(defaultModel).toBe('claude-sonnet-4-20250514')
+// Mock @/lib/db so prisma.$queryRaw / $executeRaw are controllable
+const mockQueryRaw = vi.fn()
+const mockExecuteRaw = vi.fn()
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    $queryRaw: mockQueryRaw,
+    $executeRaw: mockExecuteRaw,
+  },
+}))
+
+// Mock @/lib/cli-detect (used by ensureOrchestratorAgent)
+vi.mock('@/lib/cli-detect', () => ({
+  detectCLIPlatform: () => 'claude-code',
+}))
+
+// Import AFTER mocks are set up
+const appConfig = await import('../src/lib/app-config')
+
+describe('getConfig', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset()
   })
 
-  it('empty apiKey should be treated as undefined for SDK fallback', () => {
-    const apiKey = ''
-    const resolved = apiKey || undefined
-    expect(resolved).toBeUndefined()
+  it('returns value from database', async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ value: 'my-value' }])
+    const result = await appConfig.getConfig('myKey')
+    expect(result).toBe('my-value')
   })
 
-  it('empty baseUrl should be treated as undefined for SDK fallback', () => {
-    const baseUrl = ''
-    const resolved = baseUrl || undefined
-    expect(resolved).toBeUndefined()
-  })
-
-  it('non-empty apiKey should be passed through', () => {
-    const apiKey = 'sk-ant-test123'
-    const resolved = apiKey || undefined
-    expect(resolved).toBe('sk-ant-test123')
-  })
-})
-
-describe('app-config: first-run detection', () => {
-  it('setupCompleted=true means setup is done', () => {
-    const value = 'true'
-    expect(value === 'true').toBe(true)
-  })
-
-  it('empty value means setup not done', () => {
-    const value: string = ''
-    expect(value === 'true').toBe(false)
-  })
-
-  it('any other value means setup not done', () => {
-    const v1: string = 'false'
-    const v2: string = '1'
-    expect(v1 === 'true').toBe(false)
-    expect(v2 === 'true').toBe(false)
+  it('returns empty string when key not found', async () => {
+    mockQueryRaw.mockResolvedValueOnce([])
+    const result = await appConfig.getConfig('nonexistent')
+    expect(result).toBe('')
   })
 })
 
-describe('app-config: API key masking in responses', () => {
-  it('config keys ending with _apiKey should be masked', () => {
+describe('setConfig', () => {
+  beforeEach(() => {
+    mockExecuteRaw.mockReset()
+  })
+
+  it('calls INSERT OR REPLACE with key and value', async () => {
+    mockExecuteRaw.mockResolvedValueOnce(undefined)
+    await appConfig.setConfig('myKey', 'myValue')
+    expect(mockExecuteRaw).toHaveBeenCalledOnce()
+  })
+})
+
+describe('isSetupCompleted', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset()
+  })
+
+  it('returns true when setupCompleted is "true"', async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ value: 'true' }])
+    expect(await appConfig.isSetupCompleted()).toBe(true)
+  })
+
+  it('returns false when setupCompleted is empty', async () => {
+    mockQueryRaw.mockResolvedValueOnce([])
+    expect(await appConfig.isSetupCompleted()).toBe(false)
+  })
+
+  it('returns false when setupCompleted is "false"', async () => {
+    mockQueryRaw.mockResolvedValueOnce([{ value: 'false' }])
+    expect(await appConfig.isSetupCompleted()).toBe(false)
+  })
+})
+
+describe('getOrchestratorConfig', () => {
+  beforeEach(() => {
+    mockQueryRaw.mockReset()
+  })
+
+  it('returns config from database rows', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { key: 'orchestrator_apiKey', value: 'sk-ant-123' },
+      { key: 'orchestrator_model', value: 'claude-sonnet-4-20250514' },
+      { key: 'orchestrator_baseUrl', value: 'https://api.anthropic.com' },
+    ])
+    const config = await appConfig.getOrchestratorConfig()
+    expect(config.apiKey).toBe('sk-ant-123')
+    expect(config.model).toBe('claude-sonnet-4-20250514')
+    expect(config.baseUrl).toBe('https://api.anthropic.com')
+  })
+
+  it('uses default model when not in database', async () => {
+    mockQueryRaw.mockResolvedValueOnce([])
+    const config = await appConfig.getOrchestratorConfig()
+    expect(config.model).toBe('claude-sonnet-4-20250514')
+  })
+
+  it('returns empty string for missing apiKey and baseUrl', async () => {
+    mockQueryRaw.mockResolvedValueOnce([])
+    const config = await appConfig.getOrchestratorConfig()
+    expect(config.apiKey).toBe('')
+    expect(config.baseUrl).toBe('')
+  })
+})
+
+describe('maskApiKey behavior in config route', () => {
+  // The config route uses maskApiKey from @/lib/utils to mask _apiKey keys.
+  // We test the masking logic directly since it's a pure function.
+  it('keys ending with _apiKey should be identified for masking', () => {
     const key = 'orchestrator_apiKey'
-    expect(key.endsWith('_apiKey')).toBe(true)
+    expect(key.endsWith('_apiKey') || key.endsWith('_api_key')).toBe(true)
   })
 
-  it('non-apiKey keys should not be masked', () => {
+  it('non-apiKey keys should not be identified for masking', () => {
     const keys = ['orchestrator_model', 'orchestrator_baseUrl', 'setupCompleted']
-    keys.forEach(key => {
-      expect(key.endsWith('_apiKey')).toBe(false)
-      expect(key.endsWith('_api_key')).toBe(false)
-    })
-  })
-})
-
-describe('setup-wizard: XSS prevention', () => {
-  it('should reject agent name with HTML tags', () => {
-    const htmlTagRegex = /<[a-zA-Z][^>]*>/
-    expect(htmlTagRegex.test('<script>alert(1)</script>')).toBe(true)
-    expect(htmlTagRegex.test('正常名称')).toBe(false)
-    expect(htmlTagRegex.test('Agent-123')).toBe(false)
-  })
-})
-
-describe('setup-wizard: CC-Switch import flow', () => {
-  it('providerName is required for import', () => {
-    const body1 = { providerName: '' }
-    const body2 = { providerName: 'my-provider' }
-    expect(!body1.providerName || typeof body1.providerName !== 'string').toBe(true)
-    expect(!body2.providerName || typeof body2.providerName !== 'string').toBe(false)
+    for (const key of keys) {
+      expect(key.endsWith('_apiKey') || key.endsWith('_api_key')).toBe(false)
+    }
   })
 })

@@ -45,3 +45,11 @@ next-env.d.ts
 # prisma
 dev.db
 dev.db-journal
+dev.db-shm
+dev.db-wal
+
+# agent workspaces
+workspaces/
+
+# gstack
+.gstack/

@@ -1,5 +1,5 @@
 # Orchestrator 纠错行为缺失问题
-> 创建时间: 2026-05-23 | 状态: 🔴未解决
+> 创建时间: 2026-05-23 | 状态: 🟡部分解决
 
 ## 问题描述
 
@@ -12,7 +12,7 @@
 
 ## 问题清单
 
-### ISSUE-ORC-001: 对齐流程未实现
+### ISSUE-ORC-001: 对齐流程未实现 — 🟢已解决 (2026-05-28)
 
 **位置**: `src/app/api/sessions/[id]/chat/route.ts`
 
@@ -30,28 +30,28 @@ Orchestrator: 其他 Agent 有问题吗？
 ...
 ```
 
-**问题**：
-- `PM_CONFIRMATION_PROMPT` 已定义（`src/lib/orchestrator/prompts.ts:51`）但未使用
-- `buildAgentQuestionPrompt` 已定义（`src/lib/orchestrator/prompts.ts:87-108`）但未使用
-- 当前 Orchestrator 直接用 `getOrchestratorDecision` 做决策，跳过了对齐阶段
-- 只有导入语句（`route.ts:4`），没有实际调用代码
+**原问题**：
+- `PM_CONFIRMATION_PROMPT` 已定义但未使用
+- `buildAgentQuestionPrompt` 已定义但未使用
+- 只有导入语句，没有实际调用代码
 
-### ISSUE-ORC-002: 纠偏触发范围有限
+**已解决**：
+- `handlePMConfirm()` (route.ts:850-927) — 使用 `PM_CONFIRMATION_PROMPT` 调用产品经理确认需求
+- `handleArchitectPlan()` (route.ts:930-1018) — 调用架构师拆解任务并持久化到数据库
+- `handleAgentQA()` (route.ts:1021-1088) — 并行调用所有 Agent 使用 `buildAgentQuestionPrompt` 提问
+- `validateDecision()` (route.ts:814-846) — 安全校验：alignment 阶段禁止 done，execution 阶段禁止 align_*
 
-**位置**: `src/app/api/sessions/[id]/chat/route.ts:606-621`
+### ISSUE-ORC-002: 纠偏触发范围有限 — 🟢已解决
 
-```typescript
-// 6.2b: Orchestrator monitoring (only for CLI agents)
-const agent = agents.find(a => a.id === task?.assignedAgentId)
-if (agent?.platform !== 'llm') {
-  // 纠偏逻辑...
-}
-```
+**原问题**：`agent?.platform !== 'llm'` 条件导致 LLM Agent 不被监督纠偏。
 
-**问题**：
-- 条件 `agent?.platform !== 'llm'` 导致 LLM API Agent（产品经理、架构师）的产出不会被监督纠偏
-- 只在执行阶段 CLI Agent 任务完成后触发纠偏
-- 对齐阶段无纠偏机制（因为对齐流程本身未实现）
+**实际状态**（2026-05-30 更新）：
+- ✅ 批量执行（`handleExecution`）：所有平台 Agent 均被审查
+- ✅ delegate（委派单 Agent）：`reviewResult()` 审查 + quality 标记
+- ✅ @提及：`reviewResult()` 审查 + quality 标记
+- ✅ 私聊：`reviewResult()` 审查 + quality 标记
+- ✅ discuss（多轮讨论）：对最终 summary 做一次 `reviewResult()` 审查
+- ❌ 对齐阶段（PM 确认/架构师方案/Agent QA）无纠偏：结构化流程节点，下游自然验证，不需审查
 
 ### ISSUE-ORC-003: 监督机制缺失
 
@@ -81,12 +81,12 @@ if (agent?.platform !== 'llm') {
 
 | 设计要求 | 实现状态 | 代码位置 |
 |---------|---------|----------|
-| 主持人：控制阶段切换 | ⚠️ 部分实现 | `getOrchestratorDecision` 无显式阶段控制 |
-| 监督者：沉默观察 | ❌ 未实现 | 只在任务完成后审查，无持续监督 |
-| 纠偏者：发现跑偏时纠正 | ⚠️ 部分实现 | `route.ts:606-621`，仅 CLI Agent |
-| 对齐流程：PM 确认需求 | ❌ 未实现 | `PM_CONFIRMATION_PROMPT` 未使用 |
-| 对齐流程：架构师方案 | ⚠️ 间接实现 | `getOrchestratorDecision` 可委派架构师 |
-| 对齐流程：其他 Agent 提问 | ❌ 未实现 | `buildAgentQuestionPrompt` 未使用 |
+| 主持人：控制阶段切换 | ✅ 已实现 | `handlePMConfirm`→`handleArchitectPlan`→`handleAgentQA`→`handleExecution` |
+| 监督者：沉默观察 | ❌ 未实现 | 只在批量任务完成后审查，无持续监督 |
+| 纠偏者：发现跑偏时纠正 | 🟢 已实现 | 批量执行+delegate/@提及/私聊/discuss 均有审查 |
+| 对齐流程：PM 确认需求 | ✅ 已实现 | `handlePMConfirm()` (route.ts:850-927) |
+| 对齐流程：架构师方案 | ✅ 已实现 | `handleArchitectPlan()` (route.ts:930-1018) |
+| 对齐流程：其他 Agent 提问 | ✅ 已实现 | `handleAgentQA()` (route.ts:1021-1088) |
 
 ## 相关文件
 

@@ -39,15 +39,18 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
           {sessions.map(session => (
             <div
               key={session.id}
-              className={`p-2 rounded cursor-pointer text-sm flex justify-between items-center group ${
+              className={`p-2 rounded cursor-pointer text-sm flex justify-between items-center group select-none ${
                 activeId === session.id ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-100'
               }`}
               onClick={() => onSelect(session.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(session.id) }}
             >
-              <span className="truncate">{session.title}</span>
+              <span className="truncate flex-1 min-w-0">{session.title}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleDelete(session.id, session.title) }}
-                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 text-xs"
+                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 text-xs shrink-0 ml-1"
                 aria-label={`删除会话 ${session.title}`}
               >
                 x

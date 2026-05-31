@@ -12,30 +12,25 @@ interface Session {
   id: string
   title: string
   updatedAt: string
+  isPinned: boolean
+  isArchived: boolean
   _count: { messages: number; members: number }
-}
-
-// 本地状态（后续接 API）
-interface SessionMeta {
-  pinned: boolean
-  archived: boolean
 }
 
 export default function WorkspacePage() {
   const router = useRouter()
   const [agentCount, setAgentCount] = useState(0)
   const [sessions, setSessions] = useState<Session[]>([])
+  const [archivedSessions, setArchivedSessions] = useState<Session[]>([])
   const [showSetup, setShowSetup] = useState(false)
   const [setupChecked, setSetupChecked] = useState(false)
   const [showCreateGroup, setShowCreateGroup] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [showArchived, setShowArchived] = useState(false)
-  // 本地置顶/归档状态（后续迁移到 API）
-  const [meta, setMeta] = useState<Record<string, SessionMeta>>({})
 
   useEffect(() => {
     fetch('/api/agents').then(r => r.json()).then(d => setAgentCount(Array.isArray(d) ? d.length : 0))
-    fetch('/api/sessions').then(r => r.json()).then(setSessions)
+    refreshSessions()
   }, [])
 
   // 首次设置检测
@@ -51,26 +46,32 @@ export default function WorkspacePage() {
   }, [setupChecked])
 
   const refreshSessions = () => {
-    fetch('/api/sessions').then(r => r.json()).then(setSessions)
+    fetch('/api/sessions').then(r => r.json()).then(d => { if (Array.isArray(d)) setSessions(d) })
+    fetch('/api/sessions?archived=true').then(r => r.json()).then(d => { if (Array.isArray(d)) setArchivedSessions(d) })
   }
 
-  const togglePin = (id: string) => {
-    setMeta(prev => ({
-      ...prev,
-      [id]: { ...prev[id], pinned: !prev[id]?.pinned, archived: prev[id]?.archived || false },
-    }))
+  const togglePin = async (id: string, current: boolean) => {
+    await fetch(`/api/sessions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isPinned: !current }),
+    })
+    refreshSessions()
   }
 
-  const toggleArchive = (id: string) => {
-    setMeta(prev => ({
-      ...prev,
-      [id]: { ...prev[id], archived: !prev[id]?.archived, pinned: prev[id]?.pinned || false },
-    }))
+  const toggleArchive = async (id: string, current: boolean) => {
+    await fetch(`/api/sessions/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: !current }),
+    })
+    refreshSessions()
   }
 
   // 过滤 + 排序
   const filteredSessions = useMemo(() => {
-    let result = sessions
+    const list = showArchived ? archivedSessions : sessions
+    let result = [...list]
 
     // 搜索过滤
     if (searchQuery.trim()) {
@@ -78,23 +79,16 @@ export default function WorkspacePage() {
       result = result.filter(s => s.title.toLowerCase().includes(q))
     }
 
-    // 归档过滤
-    if (!showArchived) {
-      result = result.filter(s => !meta[s.id]?.archived)
-    }
-
     // 排序：置顶优先，然后按时间
-    result = [...result].sort((a, b) => {
-      const aPin = meta[a.id]?.pinned ? 1 : 0
-      const bPin = meta[b.id]?.pinned ? 1 : 0
-      if (aPin !== bPin) return bPin - aPin
+    result.sort((a, b) => {
+      if (a.isPinned !== b.isPinned) return b.isPinned ? 1 : -1
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     })
 
     return result
-  }, [sessions, searchQuery, showArchived, meta])
+  }, [sessions, archivedSessions, searchQuery, showArchived])
 
-  const archivedCount = sessions.filter(s => meta[s.id]?.archived).length
+  const archivedCount = archivedSessions.length
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6">
@@ -111,7 +105,7 @@ export default function WorkspacePage() {
         onOpenChange={setShowCreateGroup}
         onCreated={async (sessionId) => {
           refreshSessions()
-          router.push(`/?session=${sessionId}`)
+          router.push(`/chat?session=${sessionId}`)
         }}
       />
 
@@ -130,7 +124,7 @@ export default function WorkspacePage() {
             创建群聊
           </button>
           <Link
-            href="/"
+            href="/chat"
             className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
           >
             <MessageSquare className="h-4 w-4" />
@@ -142,7 +136,7 @@ export default function WorkspacePage() {
       {/* Stats cards */}
       <div className="grid grid-cols-3 gap-4">
         <Link
-          href="/dashboard/projects"
+          href="/projects"
           className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -157,7 +151,7 @@ export default function WorkspacePage() {
         </Link>
 
         <Link
-          href="/dashboard/agents"
+          href="/agents"
           className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -172,7 +166,7 @@ export default function WorkspacePage() {
         </Link>
 
         <Link
-          href="/dashboard/skills"
+          href="/skills"
           className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors"
         >
           <div className="flex items-center gap-3">
@@ -203,7 +197,7 @@ export default function WorkspacePage() {
                 {showArchived ? `已归档 (${archivedCount})` : `${archivedCount} 个已归档`}
               </button>
             )}
-            <Link href="/dashboard/projects" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+            <Link href="/projects" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
               查看全部 <ArrowRight className="h-3 w-3" />
             </Link>
           </div>
@@ -232,8 +226,8 @@ export default function WorkspacePage() {
         {/* 会话列表 */}
         <div className="space-y-2">
           {filteredSessions.map((session) => {
-            const isPinned = meta[session.id]?.pinned
-            const isArchived = meta[session.id]?.archived
+            const isPinned = session.isPinned
+            const isArchived = session.isArchived
             return (
               <div
                 key={session.id}
@@ -242,7 +236,7 @@ export default function WorkspacePage() {
                 } ${isArchived ? 'opacity-60' : ''}`}
               >
                 <Link
-                  href={`/dashboard/projects/${session.id}`}
+                  href={`/projects/${session.id}`}
                   className="flex-1 min-w-0"
                 >
                   <div className="flex items-center gap-2">
@@ -261,21 +255,21 @@ export default function WorkspacePage() {
                   {/* 操作按钮 */}
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      onClick={(e) => { e.stopPropagation(); togglePin(session.id) }}
+                      onClick={(e) => { e.stopPropagation(); togglePin(session.id, isPinned) }}
                       className="flex h-6 w-6 items-center justify-center rounded hover:bg-background transition-colors"
                       title={isPinned ? '取消置顶' : '置顶'}
                     >
                       {isPinned ? <PinOff className="h-3 w-3 text-muted-foreground" /> : <Pin className="h-3 w-3 text-muted-foreground" />}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleArchive(session.id) }}
+                      onClick={(e) => { e.stopPropagation(); toggleArchive(session.id, isArchived) }}
                       className="flex h-6 w-6 items-center justify-center rounded hover:bg-background transition-colors"
                       title={isArchived ? '取消归档' : '归档'}
                     >
                       {isArchived ? <ArchiveRestore className="h-3 w-3 text-muted-foreground" /> : <Archive className="h-3 w-3 text-muted-foreground" />}
                     </button>
                     <Link
-                      href={`/?session=${session.id}`}
+                      href={`/chat?session=${session.id}`}
                       className="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary"
                       onClick={(e) => e.stopPropagation()}
                     >

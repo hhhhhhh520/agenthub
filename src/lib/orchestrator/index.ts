@@ -6,6 +6,22 @@ import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
+// Update agent status per-session (not global Agent.status)
+async function updateAgentSessionStatus(sessionId: string | undefined, agentId: string | undefined, agentName: string, status: string) {
+  if (!sessionId) return
+  try {
+    if (agentId) {
+      await prisma.sessionMember.updateMany({ where: { sessionId, agentId }, data: { status } })
+    } else {
+      // Fallback: find by agent name
+      const agent = await prisma.agent.findFirst({ where: { name: agentName }, select: { id: true } })
+      if (agent) {
+        await prisma.sessionMember.updateMany({ where: { sessionId, agentId: agent.id }, data: { status } })
+      }
+    }
+  } catch {}
+}
+
 export interface OrchestratorDecision {
   action: 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_decompose' | 'align_qa' | 'execute' | 'done'
   target?: string | null
@@ -222,11 +238,9 @@ export async function executeTaskBatch(
       let result = ''
       let capturedSessionId: string | undefined
 
-      // Design decision #20: update Agent status
+      // Design decision #20: update Agent status per-session
       const agentId = (agent as any).id as string | undefined
-      if (agentId) {
-        try { await prisma.agent.update({ where: { id: agentId }, data: { status: 'working' } }) } catch {}
-      }
+      await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'working')
 
       try {
         const platform = (agent.platform || 'llm') as AdapterConfig['platform']
@@ -234,7 +248,17 @@ export async function executeTaskBatch(
         const mcpConfig = chatSessionId
           ? buildMCPConfig(chatSessionId, agent.name, projectDir || '')
           : undefined
-        await adapter.connect({ platform, workDir: projectDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
+        await adapter.connect({
+          platform,
+          workDir: projectDir,
+          model: agent.model,
+          baseUrl: agent.baseUrl,
+          apiKey: agent.apiKey,
+          permissionMode: agent.permissionMode as AdapterConfig['permissionMode'],
+          mcpConfig,
+          agentId: agentId,
+          chatSessionId: chatSessionId,
+        })
 
         for await (const chunk of adapter.send({
           prompt: task.description,
@@ -251,9 +275,7 @@ export async function executeTaskBatch(
 
         await adapter.close()
       } finally {
-        if (agentId) {
-          try { await prisma.agent.update({ where: { id: agentId }, data: { status: 'idle' } }) } catch {}
-        }
+        await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'idle')
       }
 
       // Guard: empty response
@@ -298,17 +320,26 @@ export async function executeSingleAgent(
     } catch {}
   }
 
-  // Design decision #20: update Agent status
-  if (agent.id) {
-    try { await prisma.agent.update({ where: { id: agent.id }, data: { status: 'working' } }) } catch {}
-  }
+  // Design decision #20: update Agent status per-session
+  await updateAgentSessionStatus(chatSessionId, agent.id, agent.name, 'working')
 
   try {
     const adapter = createAdapter({ platform })
     const mcpConfig = chatSessionId
       ? buildMCPConfig(chatSessionId, agent.name, projectDir || agent.workDir || '')
       : undefined
-    await adapter.connect({ platform, workDir: agent.workDir, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, sessionId: agent.sessionId, permissionMode: agent.permissionMode as AdapterConfig['permissionMode'], mcpConfig })
+    await adapter.connect({
+      platform,
+      workDir: agent.workDir,
+      model: agent.model,
+      baseUrl: agent.baseUrl,
+      apiKey: agent.apiKey,
+      sessionId: agent.sessionId,
+      permissionMode: agent.permissionMode as AdapterConfig['permissionMode'],
+      mcpConfig,
+      agentId: agent.id,
+      chatSessionId: chatSessionId,
+    })
 
     let result = ''
     let capturedSessionId: string | undefined
@@ -335,10 +366,8 @@ export async function executeSingleAgent(
 
     return { result, sessionId: capturedSessionId }
   } finally {
-    // Design decision #20: reset Agent status
-    if (agent.id) {
-      try { await prisma.agent.update({ where: { id: agent.id }, data: { status: 'idle' } }) } catch {}
-    }
+    // Design decision #20: reset Agent status per-session
+    await updateAgentSessionStatus(chatSessionId, agent.id, agent.name, 'idle')
   }
 }
 

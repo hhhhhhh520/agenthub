@@ -10,6 +10,7 @@ import { parseMessage, type ParsedMessage } from '@/lib/message-parser'
 import { MessageActionMenu } from '@/components/message-action-menu'
 import { WebPreview } from '@/components/web-preview'
 import { CodeDiff } from '@/components/code-diff'
+import { Shield } from 'lucide-react'
 import { FileCard } from '@/components/file-card'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
@@ -29,7 +30,7 @@ const COMMANDS = [
 ]
 
 export function ChatArea({ sessionId, sessionType }: { sessionId: string | null; sessionType?: string }) {
-  const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput } = useChat(sessionId)
+  const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission } = useChat(sessionId)
   const [input, setInput] = useState('')
   const [agentNames, setAgentNames] = useState<string[]>([])
   const [agentColorMap, setAgentColorMap] = useState<Record<string, string>>({})
@@ -209,6 +210,28 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           {!['pm_confirm', 'architect_plan', 'agent_qa'].includes(awaitingInput) && '等待你的输入...'}
         </div>
       )}
+      {pendingPermissions.length > 0 && pendingPermissions.map(p => (
+        <div key={p.requestId} className="border-t px-3 py-2 text-sm bg-amber-50 text-amber-800 flex items-center justify-between">
+          <span className="flex items-center gap-1">
+            <Shield className="w-4 h-4" />
+            Agent 请求使用 <strong>{p.toolName}</strong>
+            {p.toolName === 'Bash' && !!p.toolInput?.command && (
+              <code className="ml-1 text-xs bg-amber-100 px-1 rounded">
+                {String(p.toolInput.command).slice(0, 80)}
+              </code>
+            )}
+            {p.toolName === 'Write' && !!p.toolInput?.file_path && (
+              <code className="ml-1 text-xs bg-amber-100 px-1 rounded">
+                {String(p.toolInput.file_path)}
+              </code>
+            )}
+          </span>
+          <div className="flex gap-2">
+            <Button size="xs" variant="destructive" onClick={() => respondPermission(p.requestId, 'deny')}>拒绝</Button>
+            <Button size="xs" onClick={() => respondPermission(p.requestId, 'allow')}>允许</Button>
+          </div>
+        </div>
+      ))}
       {phase !== 'idle' && (
         <div className="border-t px-3 py-1 text-xs text-gray-400 bg-gray-50 flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />

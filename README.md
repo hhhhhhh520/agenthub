@@ -15,8 +15,9 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - **SSE 流式** — 实时推送 Agent 输出
 - **消息操作** — 回复引用、重新生成、复制代码、操作菜单
 - **产物内联** — 代码块、Web 预览、文件卡片、Diff 视图（Accept/Reject）
-- **工作区隔离** — 每个任务独立目录，文件声明 + 重叠检测 + 合并审计
-- **工作区与权限** — 用户指定项目目录，Agent 独立子目录，权限模式（default/auto）
+- **工作区与权限** — 用户指定项目目录，Agent 直接在项目中工作，权限模式（default/auto）
+- **变更检测** — 每批任务执行后 Git diff 检测越界修改
+- **任务重做** — 失败/阻塞任务可编辑描述后重新执行，自动级联下游任务
 - **聊天命令** — `/permission` 切换权限模式，`/` 气泡提示
 - **Code Diff** — Monaco Editor 代码对比
 - **Web Preview** — iframe 预览生成的网页
@@ -48,7 +49,7 @@ src/lib/adapter/     — 适配器层（LLM / Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（188 个测试）
+tests/               — Vitest 单元测试（204 个测试）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
@@ -57,7 +58,8 @@ issues/              — 开发问题记录
 ## 文档
 
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md) — 当前架构设计
-- [Orchestrator 平台改造](docs/orchestrator-platform-refactor.md) — CLI-first 架构改造方案
+- [Orchestrator 平台改造](docs/orchestrator-platform-refactor-已实施.md) — CLI-first 架构改造方案（已实施）
 - [对齐流程实现](docs/design/alignment-flow-plan.md) — Orchestrator 智能编排实现计划
 - [Anthropic Managed Agents](docs/reference/anthropic-scaling-managed-agents.md) — 参考架构
 - [多 Agent 技术方案](docs/reference/multi-agent-reference.md) — 框架对比
+- [ChatFab 私聊计划](docs/plan-chatfab-private-chat.md) — 右下角私聊功能实现方案
