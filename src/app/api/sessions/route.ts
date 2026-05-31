@@ -26,7 +26,10 @@ export async function GET(request: Request) {
   const sessions = await prisma.session.findMany({
     where: showArchived ? {} : { isArchived: false },
     orderBy: { updatedAt: 'desc' },
-    include: { _count: { select: { messages: true, members: true } } },
+    include: {
+      _count: { select: { messages: true, members: true } },
+      members: { select: { agentId: true } },
+    },
   })
   return NextResponse.json(sessions)
 }
