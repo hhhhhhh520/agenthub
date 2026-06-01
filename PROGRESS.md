@@ -41,6 +41,8 @@
 | ClaudeCode Provider 注入 | SpawnConfig 加 apiKey/baseUrl/model + spawnProcess 注入 ANTHROPIC_API_KEY/BASE_URL + --model CLI 参数 | 2026-05-31 |
 | Provider 表 + UI | Provider 模型 + CRUD API + CreateProviderDialog + Agent 对话框下拉选择 + 种子数据 | 2026-05-31 |
 | CC-Switch DB 集成 | cc-switch-reader.ts 读取 ~/.cc-switch/cc-switch.db + 4 源合并 + baseUrl 去重 | 2026-05-31 |
+| 图片/文件附件 | Attachment 模型 + 上传/读取 API + AttachmentInput 组件 + 拖拽/粘贴 + ClaudeCodeAdapter image block + 中间层透传 + 文件清理，437测试 | 2026-06-01 |
+| Skill 功能砍除 | 评估后移除：AgentSkill 关联在磁盘共享下是伪概念，CC Switch 已有方案 | 2026-06-01 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
