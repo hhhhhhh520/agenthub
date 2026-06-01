@@ -41,9 +41,9 @@ src/
 │   │   ├── agent-factory.ts   # Agent 创建
 │   │   ├── context-builder.ts # 历史上下文构建
 │   │   └── git-utils.ts       # Git 变更检测
-│   ├── hooks/                 # use-sessions, use-chat
+│   ├── hooks/                 # use-sessions, use-chat, use-chat-fab
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
-│   └── utils.ts               # shadcn 工具
+│   └── utils.ts               # cn/maskApiKey/hasLoneSurrogates
 └── generated/prisma/          # Prisma 生成（gitignore）
 prisma/
 ├── schema.prisma              # Session/Agent/Task/Message 模型
@@ -66,8 +66,10 @@ prisma/
 - **Session**：`projectDir`（项目目录）、`permissionMode`（`default` | `auto`）、`isPinned`/`isArchived`（置顶/归档）
 - **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
 - **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`
+- **Provider**：已保存的服务商配置模板（`name` 唯一、`baseUrl`、`apiKey`、`model`、`category`）。Agent 选中后复制字段，不是 FK
 - **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）
 - **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status
+- **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
 - ⚠️ **`_count` 不可用**：`/api/sessions/[id]` 不返回 `_count`，项目详情页用 `session.messages.length` 而非 `session._count.messages`（2026-05-29 踩坑修复）
 - 详见 `prisma/schema.prisma`
 
@@ -125,10 +127,15 @@ prisma/
 ### 多供应商配置
 
 - Agent 表有 `model`/`baseUrl`/`apiKey` 字段，支持不同 Agent 使用不同供应商
-- **LLM 供应商判断逻辑**：有 `baseUrl` → 默认用 OpenAI SDK（兼容 DeepSeek、Moonshot 等）；无 `baseUrl` + model 匹配 `gpt-/o1-/o3-` → OpenAI；其他 → Anthropic
-- OpenCodeAdapter 通过环境变量传递 API key 和 base URL
-- `/api/providers` 读取 `~/.cc-connect/config.toml` 和 `~/.claude/settings.json`（apiKey 返回掩码值）
-- `/api/providers/import` 接收 provider name，后端从 config.toml 读取真实 apiKey（浏览器不传 apiKey）
+- **Provider 表**：已保存的服务商配置模板，创建 Agent 时选中后复制到 Agent 自身字段（不是 FK，运行时不引用）
+- **ClaudeCodeAdapter provider 注入**：`spawnProcess` 将 Agent 的 `apiKey` → `ANTHROPIC_API_KEY`，`baseUrl` → `ANTHROPIC_BASE_URL`，`model` → `--model` CLI 参数。空值不注入（不覆盖系统环境变量）。per-agent per-session 独立进程，天然并发隔离
+- **OpenCodeAdapter**：通过环境变量传递 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`
+- **4 个 Provider 数据源**（GET `/api/providers` 合并返回，按 baseUrl 去重，高优先级覆盖低优先级）：
+  1. `database` — Provider 表（apiKey 完整返回）
+  2. `cc-switch-db` — CC-Switch SQLite DB `~/.cc-switch/cc-switch.db`（apiKey 完整返回）
+  3. `cc-connect` — `~/.cc-connect/config.toml`（apiKey mask）
+  4. `settings.json` — `~/.claude/settings.json`（apiKey mask）
+- **PUT 不覆盖空值**：`apiKey`/`baseUrl` 用 `&&` 判断，空字符串不覆盖已有值
 
 ### Orchestrator 智能编排模式
 
@@ -198,6 +205,8 @@ Orchestrator 自主决定流程，支持 8 种 action：
 ### 设计文档（必读）
 
 - **v2 设计决策**：`docs/design/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
+- **适配器生命周期重构**：`docs/design/adapter-lifecycle-refactor.md` — SessionManager + OneShotRunner 重构方案，补齐 OpenCode 重试/超时/清理能力
+- **Skill 功能**：`docs/design/skill-feature-plan.md` — Skill 表 + AgentSkill 关联 + `~/.claude/skills/` 写入 + CLI 原生发现
 - **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、变更检测
 - **实现计划**：`docs/design/implementation-plan.md` — 8 阶段任务拆分
 - 参考资料：`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
@@ -205,10 +214,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 ### 已知功能差距
 
-- ChatFab（右下角聊天框）仍为 Mock 数据，私聊功能待实现 → 详见 `docs/plan-chatfab-private-chat.md`（开发前必看）
-
-详见 `issues/ISSUE-DESIGN-未实现功能清单.md`，核心缺失：
-- Pin 消息 — Agent 级长期上下文未实现
+详见 `issues/ISSUE-DESIGN-未实现功能清单.md`
 
 ## API 路由
 
@@ -221,6 +227,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | DELETE | `/api/sessions/[id]` | 删除会话 |
 | GET | `/api/sessions/[id]/messages` | 消息列表 |
 | POST | `/api/sessions/[id]/messages` | 创建消息 |
+| PATCH | `/api/sessions/[id]/messages/[messageId]` | Pin/取消 Pin 消息（isPinned boolean，每会话最多 10 条） |
 | GET | `/api/sessions/[id]/agents` | 会话 Agent 列表（仅 Agent 对象） |
 | GET | `/api/sessions/[id]/members` | 会话成员列表（含 role/joinedAt） |
 | POST | `/api/sessions/[id]/members` | 添加成员到会话 |
@@ -235,8 +242,13 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | POST | `/api/agents` | 创建 Agent |
 | PUT | `/api/agents/[id]` | 更新 Agent |
 | DELETE | `/api/agents/[id]` | 删除 Agent |
-| GET | `/api/providers` | CC-Switch 服务商列表 |
+| GET | `/api/providers` | 服务商列表（合并 4 源：database + cc-switch-db + cc-connect TOML + settings.json） |
 | POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 config.toml 读 apiKey） |
+| GET | `/api/providers/db` | Provider 表列表（含完整 apiKey） |
+| POST | `/api/providers/db` | 创建 Provider |
+| GET | `/api/providers/db/[id]` | 单个 Provider |
+| PUT | `/api/providers/db/[id]` | 更新 Provider（空 apiKey 不覆盖） |
+| DELETE | `/api/providers/db/[id]` | 删除 Provider |
 | POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
 | GET | `/api/config` | 通用配置读取（key 查询） |
 | POST | `/api/config` | 通用配置写入（key-value） |

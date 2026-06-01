@@ -64,8 +64,8 @@ export default function AgentDetailPage() {
           <p className="text-xs text-muted-foreground">{agent.expertise}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs">{agent.platform}</Badge>
-          <Badge variant="outline" className="text-xs">{agent.model}</Badge>
+          <Badge variant="outline" className="text-xs">{agent.platform === 'llm' ? 'LLM API' : agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</Badge>
+          {agent.model && <Badge variant="outline" className="text-xs">{agent.model}</Badge>}
         </div>
       </div>
 
@@ -120,7 +120,7 @@ export default function AgentDetailPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">平台</label>
-              <div className="text-sm">{agent.platform}</div>
+              <div className="text-sm">{agent.platform === 'llm' ? 'LLM API' : agent.platform === 'opencode' ? 'OpenCode CLI' : 'Claude Code CLI'}</div>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">模型</label>

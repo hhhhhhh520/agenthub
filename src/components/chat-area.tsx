@@ -10,7 +10,7 @@ import { parseMessage, type ParsedMessage } from '@/lib/message-parser'
 import { MessageActionMenu } from '@/components/message-action-menu'
 import { WebPreview } from '@/components/web-preview'
 import { CodeDiff } from '@/components/code-diff'
-import { Shield } from 'lucide-react'
+import { Shield, Pin } from 'lucide-react'
 import { FileCard } from '@/components/file-card'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
@@ -97,6 +97,15 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
     send('', undefined, undefined, undefined, messageId)
   }
 
+  const handlePin = async (messageId: string, isPinned: boolean) => {
+    await fetch(`/api/sessions/${sessionId}/messages/${messageId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isPinned }),
+    })
+    loadMessages()
+  }
+
   const SESSION_TYPE_LABELS: Record<string, string> = {
     group: '群聊',
     private: '私聊',
@@ -139,7 +148,10 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
               const style = getAgentStyle(msg.agentId, agentColorMap[msg.agentId])
               const parsed = parseMessage(msg.rawContent)
               return (
-                <div key={msg.id} className="flex gap-2 max-w-[80%] group">
+                <div key={msg.id} className="flex gap-2 max-w-[80%] group relative">
+                  {msg.isPinned && (
+                    <Pin className="absolute -top-1 -left-1 w-3 h-3 text-amber-500 fill-amber-500 z-10" />
+                  )}
                   <Avatar size="sm">
                     <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                   </Avatar>
@@ -148,10 +160,12 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                       <span className="text-xs font-medium opacity-70">{msg.agentId}</span>
                       <MessageActionMenu
                         role="agent"
+                        isPinned={msg.isPinned}
                         onReply={() => setReplyTo({ id: msg.id, rawContent: msg.rawContent, role: msg.agentId || 'agent' })}
                         onCopy={() => handleCopy(msg.rawContent)}
                         onQuote={() => handleQuote(msg.rawContent)}
                         onRegenerate={() => handleRegenerate(msg.id)}
+                        onPin={() => handlePin(msg.id, !msg.isPinned)}
                       />
                     </div>
                     {replyPreview}
@@ -163,15 +177,20 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
             const style = ROLE_STYLES[msg.role] || ROLE_STYLES.orchestrator
             const parsed = parseMessage(msg.rawContent)
             return (
-              <div key={msg.id} className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? style.bg + ' ml-auto' : style.bg} group`}>
+              <div key={msg.id} className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? style.bg + ' ml-auto' : style.bg} group relative`}>
+                {msg.isPinned && (
+                  <Pin className="absolute -top-1 -right-1 w-3 h-3 text-amber-500 fill-amber-500 z-10" />
+                )}
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-medium opacity-70">{style.label}</span>
                   <MessageActionMenu
                     role={msg.role}
+                    isPinned={msg.isPinned}
                     onReply={() => setReplyTo({ id: msg.id, rawContent: msg.rawContent, role: msg.role })}
                     onCopy={() => handleCopy(msg.rawContent)}
                     onQuote={() => handleQuote(msg.rawContent)}
                     onRegenerate={msg.role !== 'user' ? () => handleRegenerate(msg.id) : undefined}
+                    onPin={() => handlePin(msg.id, !msg.isPinned)}
                   />
                 </div>
                 {replyPreview}

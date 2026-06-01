@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { CreateProviderDialog } from '@/components/create-provider-dialog'
 
 const PRESET_COLORS = [
   '#6366f1', '#10b981', '#f59e0b', '#ef4444',
@@ -25,6 +26,7 @@ interface AgentData {
 }
 
 interface Provider {
+  id?: string
   name: string
   displayName: string
   baseUrl: string
@@ -56,6 +58,8 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   const [loading, setLoading] = useState(false)
   const [providers, setProviders] = useState<Provider[]>([])
   const [showProviders, setShowProviders] = useState(false)
+  const [selectedProviderId, setSelectedProviderId] = useState('')
+  const [showCreateProvider, setShowCreateProvider] = useState(false)
 
   const isEdit = !!editAgent
 
@@ -74,13 +78,13 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   }, [open, editAgent])
 
   useEffect(() => {
-    if (showProviders) {
+    if (open) {
       fetch('/api/providers')
         .then(r => r.json())
         .then(data => { if (Array.isArray(data)) setProviders(data) })
         .catch(() => {})
     }
-  }, [showProviders])
+  }, [open])
 
   const addCap = () => {
     const v = capInput.trim()
@@ -107,6 +111,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     setCapInput('')
     setError('')
     setShowProviders(false)
+    setSelectedProviderId('')
   }
 
   const applyProvider = (p: Provider) => {
@@ -197,57 +202,57 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
             </select>
           </div>
 
-          {/* Provider import */}
+          {/* Provider selector */}
           <div className="border-t pt-3">
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium">服务商配置</label>
-              <Button variant="ghost" size="sm" onClick={() => setShowProviders(!showProviders)}>
-                {showProviders ? '收起' : '从 CC-Switch 导入'}
+              <label className="text-sm font-medium">服务商</label>
+              <Button variant="ghost" size="sm" onClick={() => setShowCreateProvider(true)}>
+                + 新增服务商
               </Button>
             </div>
-            {showProviders && (
-              <div className="space-y-1 max-h-32 overflow-y-auto border rounded p-2">
-                {providers.length === 0 ? (
-                  <p className="text-xs text-gray-400">未找到已配置的服务商</p>
-                ) : providers.map(p => (
-                  <div
-                    key={p.name}
-                    className="p-2 rounded cursor-pointer hover:bg-gray-50 text-sm"
-                    onClick={() => applyProvider(p)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{p.displayName}</span>
-                      <Badge variant="outline" className="text-xs">{p.source}</Badge>
-                    </div>
-                    <div className="text-xs text-gray-500">{p.baseUrl} | {p.model}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {!showProviders && (model || baseUrl) && (
-              <div className="text-xs text-gray-500">
-                {model && <span>模型: {model} </span>}
-                {baseUrl && <span>端点: {baseUrl}</span>}
-              </div>
-            )}
+            <select
+              className="w-full rounded border px-3 py-2 text-sm"
+              value={selectedProviderId}
+              onChange={e => {
+                const key = e.target.value
+                setSelectedProviderId(key)
+                if (key) {
+                  const p = providers.find(pr => (pr.id || pr.name) === key)
+                  if (p) applyProvider(p)
+                }
+              }}
+            >
+              <option value="">手动配置</option>
+              {providers.map(p => (
+                <option key={p.id || p.name} value={p.id || p.name}>
+                  {p.displayName} [{p.source}]
+                </option>
+              ))}
+            </select>
+            {selectedProviderId && (() => {
+              const sel = providers.find(p => (p.id || p.name) === selectedProviderId)
+              return (
+                <div className="text-xs text-gray-500 mt-1">
+                  <span>已选: {sel?.displayName || selectedProviderId} </span>
+                  {model && <span>| 模型: {model} </span>}
+                  {baseUrl && <span>| 端点: {baseUrl}</span>}
+                </div>
+              )
+            })()}
           </div>
 
-          {platform === 'llm' && (
-            <>
-              <div>
-                <label className="text-sm font-medium">模型</label>
-                <Input value={model} onChange={e => setModel(e.target.value)} placeholder="如：claude-sonnet-4-20250514" />
-              </div>
-              <div>
-                <label className="text-sm font-medium">Base URL</label>
-                <Input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.anthropic.com" />
-              </div>
-              <div>
-                <label className="text-sm font-medium">API Key</label>
-                <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
-              </div>
-            </>
-          )}
+          <div>
+            <label className="text-sm font-medium">模型</label>
+            <Input value={model} onChange={e => setModel(e.target.value)} placeholder="如：claude-sonnet-4-20250514" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Base URL</label>
+            <Input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.anthropic.com" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">API Key</label>
+            <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
+          </div>
 
           <div>
             <label className="text-sm font-medium">主题色</label>
@@ -307,6 +312,31 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <CreateProviderDialog
+        open={showCreateProvider}
+        onOpenChange={setShowCreateProvider}
+        onCreated={(newProvider) => {
+          // Refresh providers list
+          fetch('/api/providers')
+            .then(r => r.json())
+            .then(data => { if (Array.isArray(data)) setProviders(data) })
+            .catch(() => {})
+          // Auto-select the new provider
+          const providerKey = newProvider.id
+          applyProvider({
+            id: newProvider.id,
+            name: newProvider.name,
+            displayName: newProvider.name,
+            baseUrl: newProvider.baseUrl,
+            model: newProvider.model,
+            apiKey: newProvider.apiKey,
+            agentType: 'claudecode',
+            source: 'database',
+          })
+          setSelectedProviderId(providerKey)
+        }}
+      />
     </Dialog>
   )
 }

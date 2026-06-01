@@ -1,5 +1,5 @@
 # AgentHub 设计功能未实现问题清单
-> 创建时间: 2026-05-23 | 状态: 🟡部分解决
+> 创建时间: 2026-05-23 | 状态: 🟡部分解决 | 最后更新: 2026-05-31
 
 ## 问题概述
 
@@ -19,7 +19,7 @@
 
 **设计文档位置**: 第 398-482 行
 
-### ISSUE-FAIL-001: 错误分类与重试策略 — 🟡部分实现
+### ISSUE-FAIL-001: 错误分类与重试策略 — 🟢已解决 (2026-05-30)
 
 **设计要求**（第 400-408 行）：
 | 错误类型 | 策略 |
@@ -28,13 +28,13 @@
 | 不可重试（API Key 错误、权限不足） | 直接终止 |
 | 半可重试（返回格式错误） | 重试时调整 prompt |
 
-**实际状态**: 🟡 部分实现（2026-05-30 更新）
+**实际状态**: ✅ 已完整实现
 - ✅ CLI 进程崩溃自动重试：ProcessRegistry.send() 支持最多 1 次重试，检测进程退出和 60s 无数据超时
 - ✅ 进程重建：崩溃后自动 kill 旧进程 + spawnProcess 重建 + 重发 prompt
 - ✅ 重试状态通知：yield status chunk 标记重试中
-- ❌ 无错误分类：未区分可重试/不可重试/半可重试
-- ❌ 无指数退避：重试间隔固定（立即重试）
-- ❌ LLM 适配器无重试：LLM adapter 仍直接抛出（但当前几乎不使用）
+- ✅ 错误分类：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误
+- ✅ 指数退避：瞬时错误指数退避 1s→2s→4s，最多重试 3 次
+- ✅ 永久错误不重试：直接终止并通知用户
 
 **相关文件**: `src/lib/adapter/process-registry.ts`, `src/lib/adapter/types.ts`
 
@@ -54,7 +54,7 @@
 
 ---
 
-### ISSUE-FAIL-003: 质量自动检测机制 — 🟡部分实现
+### ISSUE-FAIL-003: 质量自动检测机制 — ⚪不实施 (2026-05-31)
 
 **设计要求**（第 420-429 行）：
 | 检测方式 | 适用场景 |
@@ -64,14 +64,18 @@
 | 语义核对 | 通用 |
 | 结构化输出校验 | JSON 类 |
 
-**实际状态**: 🟡 部分实现（2026-05-30 验证）
-- ✅ LLM 语义核对已实现：`buildMonitoringPrompt` + `callLLMForAnalysis` 在批量执行后审查所有 Agent 结果
-- ✅ Git 文件越界检测已实现：`getChangedFiles` 对比 declaredFiles 与实际改动
-- ❌ 确定性自动检测未实现：无编译/语法检查、无测试覆盖率断言、无 JSON Schema 验证
+**评估结论**: 不作为平台功能实施，应由 Code Review Agent 在工作流中完成。
+- 编译/语法/测试检查是 Code Review Agent 的职责，非平台基础设施
+- Orchestrator 在 `align_decompose` 阶段拆任务时，自动在编码任务后插入审查任务即可
+- 现有 LLM 语义核对（`buildMonitoringPrompt` + `callLLMForAnalysis`）+ Git 越界检测作为平台级兜底已足够
+
+**已实现的平台级检测**:
+- ✅ LLM 语义核对：批量执行后审查所有 Agent 结果
+- ✅ Git 文件越界检测：`getChangedFiles` 对比 declaredFiles 与实际改动
 
 ---
 
-### ISSUE-FAIL-004: 纠偏熔断器 — 🟡部分实现
+### ISSUE-FAIL-004: 纠偏熔断器 — 🟢已解决 (2026-05-30)
 
 **设计要求**（第 431-439 行）：
 ```
@@ -80,9 +84,9 @@
   → 通知用户，附带每次产出差异
 ```
 
-**实际状态**: 🟡 部分实现（2026-05-30 验证）
+**实际状态**: ✅ 已实现
 - ✅ 重试上限已实现：`chat/route.ts:761-769` 有 `_correctionRetryCount` 计数器，2 次后停止纠偏并通知用户
-- ❌ 计数器未持久化：存在 JS 对象属性 `(task as any)._correctionRetryCount` 上，进程重启即丢失
+- ✅ 计数器已持久化：`Task.correctionCount` 字段，重启不丢失
 - ❌ 无产出差异比较：熔断时只发简单文本消息，未附带每次产出差异
 
 ---
@@ -145,17 +149,18 @@
 
 **设计文档位置**: 第 379-386 行
 
-### ISSUE-CTX-001: Agent 级 pin 消息未实现
+### ISSUE-CTX-001: Pin 消息 — 🟢已解决 (2026-05-31)
 
 **设计要求**（第 382 行）：
 > 长期上下文: 用户手动 pin 关键消息，绑定到 Agent（Agent 级，跨会话可见）
 
-**实际状态**: ❌ 未实现
-- 数据库没有 `pinned` 字段
-- 没有 pin 消息的 UI
-- 没有 Agent 级上下文机制
+**实际状态**: ✅ 已实现
+- `Message.isPinned` 字段（Boolean，默认 false）
+- `PATCH /api/sessions/[id]/messages/[messageId]` API，每会话最多 10 条
+- `context-builder.ts` 将 pinned 消息优先插入上下文顶部
+- 前端：消息右键菜单 "Pin/取消 Pin"，pinned 消息显示图钉图标
 
-**相关文件**: `prisma/schema.prisma`（Message 表）
+**相关文件**: `prisma/schema.prisma`, `src/app/api/sessions/[id]/messages/[messageId]/route.ts`, `src/lib/services/context-builder.ts`, `src/components/chat-area.tsx`, `src/components/message-action-menu.tsx`
 
 ---
 
@@ -323,15 +328,15 @@
 |----------|------|----------|----------|------|
 | ISSUE-ORC-001 | 对齐流程（PM 确认、Agent 提问） | 第 61-93 行 | **高** | 🟢已解决 |
 | ISSUE-ORC-002 | 纠偏范围（批量执行已全平台，单 Agent 调用缺失） | route.ts:747-773 | **高** | 🟡部分解决 |
-| ISSUE-ORC-003 | 无持续监督机制，只在任务完成后审查 | 第 311-316 行 | 中 | ❌ |
+| ISSUE-ORC-003 | 无持续监督机制，只在任务完成后审查 | 第 311-316 行 | 中 | ⚪不实施 |
 | ISSUE-ORC-004 | 无显式阶段切换控制 | 第 57-59 行 | 中 | ❌ |
-| ISSUE-FAIL-001 | CLI 进程崩溃重试（无错误分类/指数退避） | 第 400-408 行 | **高** | 🟡部分解决 |
+| ISSUE-FAIL-001 | CLI 进程崩溃重试（无错误分类/指数退避） | 第 400-408 行 | **高** | 🟢已解决 |
 | ISSUE-FAIL-002 | 无降级能力检查 | 第 410-418 行 | 中 | ❌ |
-| ISSUE-FAIL-003 | 无确定性质量检测机制 | 第 420-429 行 | 中 | 🟡部分解决 |
-| ISSUE-FAIL-004 | 纠偏熔断器计数器未持久化 | 第 431-439 行 | 中 | 🟡部分解决 |
+| ISSUE-FAIL-003 | 无确定性质量检测机制 | 第 420-429 行 | 中 | ⚪不实施 |
+| ISSUE-FAIL-004 | 纠偏熔断器计数器未持久化 | 第 431-439 行 | 中 | 🟢已解决 |
 | ISSUE-FAIL-006 | 无用户操作面板（重试/跳过/回滚） | 第 463-472 行 | **高** | ❌ |
 | ISSUE-FAIL-007 | 无全链路可观测 trace | 第 474-481 行 | 中 | ❌ |
-| ISSUE-CTX-001 | Agent 级 pin 消息未实现 | 第 382 行 | **高** | ❌ |
+| ISSUE-CTX-001 | Agent 级 pin 消息未实现 | 第 382 行 | **高** | 🟢已解决 |
 | ISSUE-TOOL-001 | 工具集预设映射 UI 缺失 | 第 276 行 | 中 | 🟡部分解决 |
 | ISSUE-TOOL-002 | Orchestrator 工具推荐 UI 缺失 | 第 277 行 | 中 | 🟡部分解决 |
 | ISSUE-DIFF-001 | Diff Accept 前无文件修改检测 | 第 220 行 | 中 | ❌ |
@@ -345,12 +350,12 @@
 - ISSUE-CTX-002（多轮工件关联）：有部分实现，影响较小
 - ISSUE-ALIGN-001/002：与 ISSUE-ORC-001 合并（对齐流程）
 
-**实际需要解决的问题**: **18 项**
+**实际需要解决的问题**: **15 项**
 
 | 优先级 | 数量 | 问题 |
 |--------|------|------|
-| **高** | 5 | 对齐流程、纠偏范围、错误重试、用户操作面板、pin 消息 |
-| 中 | 9 | 监督机制、阶段控制、降级检查、质量检测、熔断、trace、工具集、Diff检测、任务恢复 |
+| **高** | 2 | 纠偏范围、用户操作面板 |
+| 中 | 9 | 监督机制、阶段控制、降级检查、质量检测、trace、工具集、Diff检测、任务恢复、熔断差异比较 |
 | 低 | 4 | 长驻进程、Agent状态更新、头像拼图、上下文隔离回滚 |
 
 ---

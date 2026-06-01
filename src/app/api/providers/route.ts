@@ -3,8 +3,11 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { maskApiKey } from '@/lib/utils'
+import { prisma } from '@/lib/db'
+import { readCCSwitchProviders } from '@/lib/cc-switch-reader'
 
 interface Provider {
+  id?: string
   name: string
   displayName: string
   baseUrl: string
@@ -44,7 +47,33 @@ function parseConfigToml(content: string): Provider[] {
 export async function GET() {
   const providers: Provider[] = []
 
-  // 1. Read from ~/.cc-connect/config.toml (CC-Switch imported providers)
+  // 1. Database providers (full apiKey, source: 'database')
+  try {
+    const dbProviders = await prisma.provider.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, baseUrl: true, apiKey: true, model: true, category: true },
+    })
+    for (const p of dbProviders) {
+      providers.push({
+        id: p.id,
+        name: p.name,
+        displayName: p.name,
+        baseUrl: p.baseUrl,
+        model: p.model,
+        apiKey: p.apiKey,
+        agentType: 'claudecode',
+        source: 'database',
+      })
+    }
+  } catch { /* ignore */ }
+
+  // 2. CC-Switch SQLite database (before TOML so DB wins dedup)
+  try {
+    const ccProviders = await readCCSwitchProviders()
+    providers.push(...ccProviders)
+  } catch { /* ignore */ }
+
+  // 3. Read from ~/.cc-connect/config.toml (CC-Switch imported providers)
   try {
     const configPath = join(homedir(), '.cc-connect', 'config.toml')
     if (existsSync(configPath)) {
@@ -53,7 +82,7 @@ export async function GET() {
     }
   } catch { /* ignore */ }
 
-  // 2. Read from ~/.claude/settings.json (current Claude Code config)
+  // 4. Read from ~/.claude/settings.json (current Claude Code config)
   try {
     const settingsPath = join(homedir(), '.claude', 'settings.json')
     if (existsSync(settingsPath)) {
@@ -73,13 +102,18 @@ export async function GET() {
     }
   } catch { /* ignore */ }
 
-  // Deduplicate by name
+  // Deduplicate by baseUrl (falling back to name), mask apiKey for discovered sources
+  const unmaskSources = new Set(['database', 'cc-switch-db'])
   const seen = new Set<string>()
   const unique = providers.filter(p => {
-    if (seen.has(p.name)) return false
-    seen.add(p.name)
+    const key = p.baseUrl ? `url:${p.baseUrl}` : `name:${p.name}`
+    if (seen.has(key)) return false
+    seen.add(key)
     return true
-  }).map(p => ({ ...p, apiKey: maskApiKey(p.apiKey) }))
+  }).map(p => ({
+    ...p,
+    apiKey: unmaskSources.has(p.source) ? p.apiKey : maskApiKey(p.apiKey),
+  }))
 
   return NextResponse.json(unique)
 }

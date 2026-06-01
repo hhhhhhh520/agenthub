@@ -1,44 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { validateDecision } from '@/lib/services/chat-router'
 
-// Reference copy of validateDecision from src/app/api/sessions/[id]/chat/route.ts:802
-// Source function is not exported (private to the route handler), so we maintain
-// an identical copy here. If the source changes, this copy must be updated.
-
-function validateDecision(
-  decision: { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string },
-  currentPhase: string,
-  history: Array<{ role: string; agentId?: string | null; rawContent: string }>
-): { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string } {
-  // alignment 中不允许直接 done
-  if (currentPhase === 'alignment' && decision.action === 'done') {
-    return { ...decision, action: 'align_confirm', reason: '对齐尚未完成，继续确认需求' }
-  }
-
-  // execution 中不允许回到 align_*
-  if (currentPhase === 'execution' && decision.action.startsWith('align_')) {
-    return { ...decision, action: 'execute', reason: '已在执行阶段' }
-  }
-
-  // Q&A 循环硬上限：如果已有 Agent 提问且用户已回答，强制执行
-  if (decision.action === 'align_qa') {
-    const agentQuestions = history.filter(
-      m => m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师'
-    )
-    if (agentQuestions.length > 0) {
-      const lastAgentQuestionIdx = history.reduce((last, m, i) =>
-        (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
-      )
-      const userAnswersAfter = history.slice(lastAgentQuestionIdx + 1).filter(m => m.role === 'user')
-      if (userAnswersAfter.length > 0) {
-        return { ...decision, action: 'execute', reason: 'Q&A已完成，开始执行' }
-      }
-    }
-  }
-
-  return decision
-}
-
-// Helper to create a minimal decision
 function dec(action: string, overrides?: Partial<{ target: string | null; targets: string[] | null; message: string; reason: string }>) {
   return { action, message: '', reason: '', ...overrides }
 }
@@ -119,7 +81,6 @@ describe('validateDecision — Q&A loop detection', () => {
   })
 
   it('allows align_qa when only PM/architect messages exist', () => {
-    // PM and 架构师 are excluded from agent question detection
     const history = [
       { role: 'user', agentId: null, rawContent: '搭建博客' },
       { role: 'agent', agentId: '产品经理', rawContent: '需求确认...' },
@@ -175,39 +136,5 @@ describe('validateDecision — passthrough', () => {
     const result = validateDecision(d, 'execution', [])
     expect(result.target).toBe('frontend')
     expect(result.targets).toEqual(['frontend', 'backend'])
-  })
-})
-
-describe('validateDecision — reduce-based index lookup', () => {
-  it('finds the last agent question index correctly', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '前端工程师', rawContent: '用 React？' },
-      { role: 'user', agentId: null, rawContent: '用 React' },
-      { role: 'agent', agentId: '后端工程师', rawContent: '用 Node？' },
-    ]
-    const lastIdx = history.reduce((last, m, i) =>
-      (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
-    )
-    expect(lastIdx).toBe(3)
-  })
-
-  it('returns -1 when no qualifying agent questions exist', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '产品经理', rawContent: '确认...' },
-      { role: 'agent', agentId: '架构师', rawContent: '方案...' },
-    ]
-    const lastIdx = history.reduce((last, m, i) =>
-      (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
-    )
-    expect(lastIdx).toBe(-1)
-  })
-
-  it('returns -1 for empty history', () => {
-    const lastIdx = ([] as Array<{ role: string; agentId?: string | null }>).reduce((last, m, i) =>
-      (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
-    )
-    expect(lastIdx).toBe(-1)
   })
 })

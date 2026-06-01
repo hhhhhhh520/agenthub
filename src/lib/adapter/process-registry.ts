@@ -30,6 +30,9 @@ interface SpawnConfig {
   sessionId?: string | null
   permissionMode?: string
   mcpConfig?: string
+  apiKey?: string
+  baseUrl?: string
+  model?: string
 }
 
 const MAX_PROCESSES = 10
@@ -130,6 +133,18 @@ class ProcessRegistry {
       args.push('--resume', config.sessionId)
     }
 
+    if (config.model) {
+      args.push('--model', config.model)
+    }
+
+    // Per-agent provider env vars (multica pattern: custom_env injection)
+    const providerEnv: Record<string, string> = {}
+    if (config.apiKey) providerEnv.ANTHROPIC_API_KEY = config.apiKey
+    if (config.baseUrl) providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
+    if (Object.keys(providerEnv).length > 0) {
+      console.log(`[ProcessRegistry ${key}] inject provider env:`, Object.keys(providerEnv))
+    }
+
     const workDir = config.workDir
     if (!existsSync(workDir)) {
       mkdirSync(workDir, { recursive: true })
@@ -139,6 +154,7 @@ class ProcessRegistry {
       cwd: workDir,
       env: {
         ...process.env,
+        ...providerEnv,
         PYTHONIOENCODING: 'utf-8',
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',

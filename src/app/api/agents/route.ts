@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json()
-  const { name, expertise, systemPrompt, platform, model, tools, capabilities, accentColor } = body
+  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor } = body
 
   if (!name || !expertise || !systemPrompt || typeof name !== 'string' || typeof expertise !== 'string' || typeof systemPrompt !== 'string') {
     return NextResponse.json(
@@ -44,6 +44,8 @@ export async function POST(request: Request) {
         systemPrompt,
         platform: platform || 'claude-code',
         model: model || '',
+        baseUrl: baseUrl || '',
+        apiKey: apiKey || '',
         tools: JSON.stringify(tools || []),
         capabilities: JSON.stringify(capabilities || []),
         accentColor: accentColor || '#6366f1',

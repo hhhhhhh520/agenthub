@@ -12,6 +12,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private mcpConfig: string | undefined
   private agentId: string | undefined
   private chatSessionId: string | undefined
+  private apiKey: string | undefined
+  private baseUrl: string | undefined
+  private model: string | undefined
 
   async connect(config: AdapterConfig): Promise<void> {
     this.workDir = config.workDir || DEFAULT_WORK_DIR
@@ -20,6 +23,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     this.mcpConfig = config.mcpConfig
     this.agentId = config.agentId
     this.chatSessionId = config.chatSessionId
+    this.apiKey = config.apiKey
+    this.baseUrl = config.baseUrl
+    this.model = config.model
   }
 
   private getRegistryKey(): string {
@@ -46,6 +52,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       sessionId: this.sessionId,
       permissionMode: this.permissionMode,
       mcpConfig: this.mcpConfig,
+      apiKey: this.apiKey,
+      baseUrl: this.baseUrl,
+      model: this.model,
     }
 
     // Get or create process via registry

@@ -1,24 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-
-function hasLoneSurrogates(str: string): boolean {
-  let i = 0
-  while (i < str.length) {
-    const code = str.charCodeAt(i)
-    if (code >= 0xD800 && code <= 0xDBFF) {
-      // High surrogate — must be followed by a low surrogate
-      const next = str.charCodeAt(i + 1)
-      if (!(next >= 0xDC00 && next <= 0xDFFF)) return true
-      i += 2
-    } else if (code >= 0xDC00 && code <= 0xDFFF) {
-      // Lone low surrogate
-      return true
-    } else {
-      i++
-    }
-  }
-  return false
-}
+import { hasLoneSurrogates } from '@/lib/utils'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
