@@ -11,10 +11,19 @@ export interface AdapterConfig {
   chatSessionId?: string // For ProcessRegistry key
 }
 
+export interface TaskAttachment {
+  id: string
+  filename: string
+  path: string
+  mimeType: string
+  size: number
+}
+
 export interface AgentTask {
   prompt: string
   context?: string
   systemPrompt?: string
+  attachments?: TaskAttachment[]
 }
 
 export interface StreamChunk {

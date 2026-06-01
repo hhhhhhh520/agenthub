@@ -33,9 +33,15 @@ export class OpenCodeAdapter implements AgentAdapter {
       args.push('--session', this.sessionId)
     }
 
-    const fullPrompt = task.context
+    // Build prompt with attachment file references
+    let fullPrompt = task.context
       ? `Context:\n${task.context}\n\n---\n\n${task.prompt}`
       : task.prompt
+
+    if (task.attachments && task.attachments.length > 0) {
+      const fileList = task.attachments.map(a => `- ${a.filename}: ${a.path}`).join('\n')
+      fullPrompt = `用户附带了以下文件：\n${fileList}\n\n---\n\n${fullPrompt}`
+    }
 
     const cmd = 'opencode'
 

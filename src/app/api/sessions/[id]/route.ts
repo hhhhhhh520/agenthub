@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { cleanupAttachmentFiles } from '@/lib/attachment-cleanup'
 
 export async function GET(
   request: Request,
@@ -51,6 +52,12 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  // Clean up attachment files before deleting session (cascade deletes DB records)
+  const attachments = await prisma.attachment.findMany({
+    where: { sessionId: id },
+    select: { path: true },
+  })
+  await cleanupAttachmentFiles(attachments)
   await prisma.session.delete({ where: { id } })
   return NextResponse.json({ success: true })
 }

@@ -82,7 +82,8 @@ describe('ClaudeCodeAdapter', () => {
     expect(mockSend).toHaveBeenCalledWith(
       expect.anything(),
       'you are PM\n\n---\n\n背景信息：\nsome context\n\n---\n\ndo it',
-      expect.anything()
+      expect.anything(),
+      []
     )
   })
 

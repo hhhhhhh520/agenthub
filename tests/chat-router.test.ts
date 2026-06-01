@@ -118,7 +118,7 @@ describe('handleOrchestratorDecision', () => {
   it('action=delegate → calls delegateToAgent', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'delegate', target: 'PM', message: 'do it', reason: 'r' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
-    expect(mockDelegateToAgent).toHaveBeenCalledWith('PM', 'do it', 's1', agents, sendEvent)
+    expect(mockDelegateToAgent).toHaveBeenCalledWith('PM', 'do it', 's1', agents, sendEvent, undefined)
   })
 
   it('action=discuss → calls runMultiAgentDiscussion', async () => {

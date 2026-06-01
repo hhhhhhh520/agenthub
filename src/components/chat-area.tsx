@@ -12,6 +12,7 @@ import { WebPreview } from '@/components/web-preview'
 import { CodeDiff } from '@/components/code-diff'
 import { Shield, Pin } from 'lucide-react'
 import { FileCard } from '@/components/file-card'
+import { AttachmentInput, type AttachmentPreview } from '@/components/attachment-input'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
   user: { bg: 'bg-blue-500 text-white ml-auto', label: 'You' },
@@ -35,6 +36,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   const [agentNames, setAgentNames] = useState<string[]>([])
   const [agentColorMap, setAgentColorMap] = useState<Record<string, string>>({})
   const [replyTo, setReplyTo] = useState<{ id: string; rawContent: string; role: string } | null>(null)
+  const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
   const [showCommands, setShowCommands] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -80,9 +82,11 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         targetAgent = match[1]
       }
     }
-    send(input, mentionAll, targetAgent, replyTo?.id)
+    const attachmentIds = attachments.filter(a => !a.uploading).map(a => a.id)
+    send(input, mentionAll, targetAgent, replyTo?.id, undefined, attachmentIds.length > 0 ? attachmentIds : undefined)
     setInput('')
     setReplyTo(null)
+    setAttachments([])
   }
 
   const handleCopy = (content: string) => {
@@ -169,6 +173,28 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                       />
                     </div>
                     {replyPreview}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {msg.attachments.map(att => (
+                          att.mimeType.startsWith('image/') ? (
+                            <img
+                              key={att.id}
+                              src={`/api/attachments/${att.id}`}
+                              alt={att.filename}
+                              className="max-w-[300px] max-h-[200px] rounded border object-contain cursor-pointer"
+                              onClick={() => window.open(`/api/attachments/${att.id}`, '_blank')}
+                            />
+                          ) : (
+                            <FileCard
+                              key={att.id}
+                              fileName={att.filename}
+                              fileSize={att.size}
+                              downloadUrl={`/api/attachments/${att.id}`}
+                            />
+                          )
+                        ))}
+                      </div>
+                    )}
                     <MessageContent parsed={parsed} sessionId={sessionId} />
                   </div>
                 </div>
@@ -194,6 +220,28 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                   />
                 </div>
                 {replyPreview}
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {msg.attachments.map(att => (
+                      att.mimeType.startsWith('image/') ? (
+                        <img
+                          key={att.id}
+                          src={`/api/attachments/${att.id}`}
+                          alt={att.filename}
+                          className="max-w-[300px] max-h-[200px] rounded border object-contain cursor-pointer"
+                          onClick={() => window.open(`/api/attachments/${att.id}`, '_blank')}
+                        />
+                      ) : (
+                        <FileCard
+                          key={att.id}
+                          fileName={att.filename}
+                          fileSize={att.size}
+                          downloadUrl={`/api/attachments/${att.id}`}
+                        />
+                      )
+                    ))}
+                  </div>
+                )}
                 <MessageContent parsed={parsed} sessionId={sessionId} />
               </div>
             )
@@ -277,7 +325,14 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
             }
           </div>
         )}
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-end">
+          {sessionId && (
+            <AttachmentInput
+              sessionId={sessionId}
+              attachments={attachments}
+              onAttachmentsChange={setAttachments}
+            />
+          )}
           <Input
             value={input}
             onChange={handleInputChange}

@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mock setup ---
-const { mockFindUnique, mockUpdate, mockDelete } = vi.hoisted(() => ({
+const { mockFindUnique, mockUpdate, mockDelete, mockAttachmentFindMany } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockUpdate: vi.fn(),
   mockDelete: vi.fn(),
+  mockAttachmentFindMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -13,6 +14,9 @@ vi.mock('@/lib/db', () => ({
       findUnique: mockFindUnique,
       update: mockUpdate,
       delete: mockDelete,
+    },
+    attachment: {
+      findMany: mockAttachmentFindMany,
     },
   },
 }))
@@ -31,6 +35,7 @@ const params = { params: Promise.resolve({ id: 's1' }) }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockAttachmentFindMany.mockResolvedValue([])
 })
 
 // --- Tests ---

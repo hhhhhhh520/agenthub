@@ -22,9 +22,10 @@ model Session {
   isPinned       Boolean   @default(false)    // 置顶
   isArchived     Boolean   @default(false)    // 归档
 
-  members  SessionMember[]
-  tasks    Task[]
-  messages Message[]
+  members     SessionMember[]
+  tasks       Task[]
+  messages    Message[]
+  attachments Attachment[]
 }
 
 // ─── Agent 全局池 ─────────────────────────────────────
@@ -116,10 +117,27 @@ model Message {
   sessionId   String
   createdAt   DateTime @default(now())
 
-  session  Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  task     Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  replyTo  Message? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies  Message[] @relation("MessageReplies")
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  replyTo     Message? @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[] @relation("MessageReplies")
+  attachments Attachment[]
+}
+
+// ─── 附件 ─────────────────────────────────────────────
+// 用户上传的图片/文件，先上传后关联消息
+model Attachment {
+  id        String   @id @default(uuid())
+  filename  String                     // 原始文件名
+  path      String                     // 磁盘路径: uploads/{sessionId}/{uuid}.{ext}
+  mimeType  String                     // image/png 等
+  size      Int                        // 字节数
+  messageId String?                    // 可空，上传时无消息，发消息时关联
+  sessionId String                     // 方便查询孤儿文件
+  createdAt DateTime @default(now())
+
+  message Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  session Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }
 
 // ─── 最近打开的目录 ───────────────────────────────────

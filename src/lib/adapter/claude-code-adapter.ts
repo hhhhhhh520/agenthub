@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'child_process'
+import { readFileSync } from 'fs'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 import { processRegistry } from './process-registry'
 
@@ -39,12 +40,35 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const key = this.getRegistryKey()
 
-    // Build full prompt (same as before)
+    // Build full prompt, including non-image attachment references
     const parts: string[] = []
     if (task.systemPrompt) parts.push(task.systemPrompt)
     if (task.context) parts.push(`背景信息：\n${task.context}`)
+
+    // Add non-image file references to prompt
+    const nonImageAttachments = task.attachments?.filter(a => !a.mimeType.startsWith('image/')) || []
+    if (nonImageAttachments.length > 0) {
+      const fileList = nonImageAttachments.map(a => `- ${a.filename} (${a.path})`).join('\n')
+      parts.push(`用户附带了以下文件，请使用 Read 工具读取：\n${fileList}`)
+    }
+
     parts.push(task.prompt)
     const fullPrompt = parts.join('\n\n---\n\n')
+
+    // Read image files for base64 embedding
+    const imageAttachments = task.attachments
+      ? task.attachments
+          .filter(a => a.mimeType.startsWith('image/'))
+          .map(a => {
+            try {
+              const fileData = readFileSync(a.path)
+              return { mimeType: a.mimeType, data: fileData.toString('base64') }
+            } catch {
+              return null
+            }
+          })
+          .filter((a): a is { mimeType: string; data: string } => a !== null)
+      : []
 
     // Build spawn config for process rebuild on retry
     const spawnConfig = {
@@ -66,7 +90,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
 
     // Yield chunks from registry (pass spawnConfig for retry rebuild)
-    for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
+    for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig, imageAttachments)) {
       // Capture session_id from session chunks
       if (chunk.type === 'session') {
         this.sessionId = chunk.content
