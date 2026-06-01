@@ -47,11 +47,10 @@
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-05-31 更新）
+### 📋 待办（2026-06-01 更新）
 
 | 优先级 | 任务 | 说明 | ISSUE |
 |--------|------|------|-------|
-| 🔴高 | Skill 功能 | 数据库无 Skill 表，页面 mock 数据。设计文档 `docs/design/skill-feature-plan.md` | - |
 | 🟡中 | 适配器生命周期重构 | OpenCode 适配器缺少重试/超时/清理能力，设计文档已写入 `docs/design/adapter-lifecycle-refactor.md` | - |
 | 🟡中 | 工具集硬限制 | 后端有 tools 字段，执行时仅 prompt 提示无硬限制；课题要求"适配器根据 tools 加载对应工具" | TOOL-001 |
 | 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 |
@@ -72,3 +71,4 @@
 **已评估不实施**：
 - ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高，现有事后审查+纠偏重试+熔断器已足够覆盖
 - FAIL-003（确定性质量检测）— 应由 Code Review Agent 在工作流中完成（编译/语法/测试），非平台职责；Orchestrator 拆任务时自动插入审查步骤即可
+- Skill 功能 — AgentSkill 多对多关联在磁盘共享机制下是伪概念；执行时写入多余；CC Switch 已有完善 Skill 管理；不在核心价值链上。详见 `docs/design/skill-feature-plan.md`

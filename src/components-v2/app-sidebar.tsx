@@ -6,7 +6,7 @@ import {
   Home,
   FolderKanban,
   Bot,
-  Sparkles,
+
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react"
@@ -28,7 +28,7 @@ const navItems = [
   { title: "工作区", href: "/", icon: Home },
   { title: "项目", href: "/projects", icon: FolderKanban },
   { title: "智能体", href: "/agents", icon: Bot },
-  { title: "Skill", href: "/skills", icon: Sparkles },
+
 ]
 
 export function AppSidebar() {
