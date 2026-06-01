@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion, callLLMForAnalysis } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { buildContextFromHistory } from './context-builder'
+import type { TaskAttachment } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
 
@@ -35,7 +36,8 @@ export async function delegateToAgent(
   taskMessage: string,
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  attachments?: TaskAttachment[]
 ) {
   const agent = agents.find(a => a.name === agentName)
   if (!agent) {
@@ -45,7 +47,7 @@ export async function delegateToAgent(
 
   sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
 
-  const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
+  const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
   const context = buildContextFromHistory(history)
 
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
@@ -59,7 +61,8 @@ export async function delegateToAgent(
     context,
     (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
     sessionId,
-    workDir
+    workDir,
+    attachments
   )
 
   await prisma.message.create({

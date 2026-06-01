@@ -1,15 +1,30 @@
 import { parseMessage } from '@/lib/message-parser'
 
-export function buildContextFromHistory(
-  history: Array<{ role: string; agentId?: string | null; rawContent: string; isPinned?: boolean }>
-): string {
+interface HistoryMessage {
+  role: string
+  agentId?: string | null
+  rawContent: string
+  isPinned?: boolean
+  attachments?: Array<{ filename: string; mimeType: string; path?: string }>
+}
+
+export function buildContextFromHistory(history: HistoryMessage[]): string {
   const pinned = history.filter(m => m.isPinned)
   const normal = history.filter(m => !m.isPinned)
 
-  const format = (m: typeof history[0]) => {
+  const format = (m: HistoryMessage) => {
     const role = m.role === 'user' ? 'User' : m.agentId || 'Agent'
     const parsed = parseMessage(m.rawContent)
     let content = parsed.text
+
+    // Include attachment info
+    if (m.attachments && m.attachments.length > 0) {
+      const attInfo = m.attachments
+        .map(a => a.mimeType.startsWith('image/') ? `[图片: ${a.filename}]` : `[文件: ${a.filename}]`)
+        .join(' ')
+      content = `${attInfo}\n${content}`
+    }
+
     if (parsed.codeBlocks.length > 0) {
       content += '\n\n[代码块]\n' + parsed.codeBlocks.map(b => '```' + (b.language || '') + '\n' + b.code + '\n```').join('\n')
     }

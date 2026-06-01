@@ -5,6 +5,7 @@ import { buildContextFromHistory } from '@/lib/services/context-builder'
 import { reviewResult } from '@/lib/services/review'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleOrchestratorChat } from '@/lib/services/chat-router'
+import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
   request: Request,
@@ -14,15 +15,17 @@ export async function POST(
 
   const releaseLock = await acquireSessionLock(sessionId, request.signal)
 
-  let message: string, mentionAll: boolean | undefined, targetAgent: string | undefined, replyToId: string | undefined, regenerate: string | undefined
+  let message: string, mentionAll: boolean | undefined, targetAgent: string | undefined, replyToId: string | undefined, regenerate: string | undefined, attachmentIds: string[] | undefined
   try {
-    ({ message, mentionAll, targetAgent, replyToId, regenerate } = await request.json())
+    ({ message, mentionAll, targetAgent, replyToId, regenerate, attachmentIds } = await request.json())
   } catch {
     return new Response('Invalid JSON body', { status: 400 })
   }
-  if (!message || typeof message !== 'string') {
+  // Allow empty message if attachments are present
+  if ((!message || typeof message !== 'string') && (!attachmentIds || attachmentIds.length === 0)) {
     return new Response('message is required and must be a string', { status: 400 })
   }
+  message = message || ''
 
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   if (!session) {
@@ -67,10 +70,25 @@ export async function POST(
     }
   }
 
+  // Fetch attachments if provided
+  let msgAttachments: TaskAttachment[] = []
+  if (attachmentIds && attachmentIds.length > 0) {
+    msgAttachments = await prisma.attachment.findMany({
+      where: { id: { in: attachmentIds }, sessionId },
+    }) as TaskAttachment[]
+  }
+
   if (!regenerate) {
-    await prisma.message.create({
+    const userMsg = await prisma.message.create({
       data: { role: 'user', rawContent: message, sessionId, replyToId },
     })
+    // Link attachments to the message
+    if (attachmentIds && attachmentIds.length > 0) {
+      await prisma.attachment.updateMany({
+        where: { id: { in: attachmentIds }, sessionId },
+        data: { messageId: userMsg.id },
+      })
+    }
   }
 
   const encoder = new TextEncoder()
@@ -94,7 +112,7 @@ export async function POST(
         const existingAgents = existingMembers.map(m => m.agent)
 
         if (regenerate) {
-          const original = await prisma.message.findUnique({ where: { id: regenerate } })
+          const original = await prisma.message.findUnique({ where: { id: regenerate }, include: { attachments: true } })
           if (!original || original.sessionId !== sessionId) {
             sendEvent({ agentId: 'orchestrator', type: 'error', content: '原消息不存在' })
           } else {
@@ -106,7 +124,10 @@ export async function POST(
               { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
               original.rawContent,
               '',
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
+              undefined,
+              undefined,
+              original.attachments as TaskAttachment[]
             )
 
             await prisma.message.update({ where: { id: regenerate }, data: { rawContent: result } })
@@ -130,7 +151,7 @@ export async function POST(
           if (!agent) {
             sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
           } else {
-            const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
+            const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
             const context = buildContextFromHistory(history)
 
             sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
@@ -140,7 +161,8 @@ export async function POST(
               context,
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
               sessionId,
-              workDir
+              workDir,
+              msgAttachments
             )
             await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
             const { quality: mentionQuality } = await reviewResult(result, message, sessionId, sendEvent)
@@ -154,7 +176,10 @@ export async function POST(
               { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode },
               message,
               '',
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
+              undefined,
+              undefined,
+              msgAttachments
             )
             await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
             const { quality: privQuality } = await reviewResult(result, message, sessionId, sendEvent)
@@ -168,7 +193,7 @@ export async function POST(
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent)
           } else {
-            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase)
+            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments)
           }
         }
       } catch (error) {

@@ -1,6 +1,13 @@
 'use client'
 import { useState, useCallback, useRef } from 'react'
 
+interface Attachment {
+  id: string
+  filename: string
+  mimeType: string
+  size: number
+}
+
 interface Message {
   id: string
   role: 'user' | 'agent' | 'orchestrator'
@@ -10,6 +17,7 @@ interface Message {
   replyTo?: { id: string; rawContent: string; role: string } | null
   isPinned?: boolean
   createdAt: string
+  attachments?: Attachment[]
 }
 
 interface SSEEvent {
@@ -41,8 +49,8 @@ export function useChat(sessionId: string | null) {
     setMessages(data)
   }, [sessionId])
 
-  const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string, regenerate?: string) => {
-    if (!sessionId || (!content.trim() && !regenerate)) return
+  const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string, regenerate?: string, attachmentIds?: string[]) => {
+    if (!sessionId || (!content.trim() && !regenerate && (!attachmentIds || attachmentIds.length === 0))) return
 
     if (!regenerate) {
       const userMsg: Message = {
@@ -64,7 +72,7 @@ export function useChat(sessionId: string | null) {
       const res = await fetch(`/api/sessions/${sessionId}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content, mentionAll, targetAgent, replyToId, regenerate }),
+        body: JSON.stringify({ message: content, mentionAll, targetAgent, replyToId, regenerate, attachmentIds }),
         signal: controller.signal,
       })
 

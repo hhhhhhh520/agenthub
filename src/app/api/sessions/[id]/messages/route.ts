@@ -12,6 +12,7 @@ export async function GET(
     orderBy: { createdAt: 'asc' },
     include: {
       replyTo: { select: { id: true, rawContent: true, role: true } },
+      attachments: true,
     },
   })
 

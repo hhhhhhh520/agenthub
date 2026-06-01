@@ -68,7 +68,8 @@ describe('delegateToAgent', () => {
       'context',
       expect.any(Function),
       's1',
-      '/dir'
+      '/dir',
+      undefined
     )
   })
 

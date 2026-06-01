@@ -2,6 +2,7 @@ import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
+import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
@@ -305,7 +306,8 @@ export async function executeSingleAgent(
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
   chatSessionId?: string,
-  projectDir?: string
+  projectDir?: string,
+  attachments?: TaskAttachment[]
 ): Promise<{ result: string; sessionId?: string }> {
   const platform = (agent.platform || 'llm') as AdapterConfig['platform']
 
@@ -347,6 +349,7 @@ export async function executeSingleAgent(
       prompt: effectivePrompt,
       context,
       systemPrompt: agent.systemPrompt,
+      attachments,
     })) {
       if (chunk.type === 'session') {
         capturedSessionId = chunk.content

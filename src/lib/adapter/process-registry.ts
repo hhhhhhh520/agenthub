@@ -192,7 +192,7 @@ class ProcessRegistry {
     return entry
   }
 
-  async *send(key: string, fullPrompt: string, config?: SpawnConfig): AsyncIterable<StreamChunk> {
+  async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
     let attempt = 0
     let lastError: string | null = null
 
@@ -215,7 +215,7 @@ class ProcessRegistry {
           yield { type: 'status', content: 'process crashed, retrying...', data: { retry: attempt } }
         }
 
-        yield* this.readRound(key, entry, fullPrompt)
+        yield* this.readRound(key, entry, fullPrompt, imageAttachments)
         return  // Success — exit retry loop
 
       } catch (err) {
@@ -245,7 +245,7 @@ class ProcessRegistry {
     throw new Error(errMsg)
   }
 
-  private async *readRound(key: string, entry: ProcessEntry, fullPrompt: string): AsyncIterable<StreamChunk> {
+  private async *readRound(key: string, entry: ProcessEntry, fullPrompt: string, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
     if (!entry.alive || entry.process.exitCode !== null) {
       throw new Error(`Process not alive for key: ${key}`)
     }
@@ -253,11 +253,23 @@ class ProcessRegistry {
     entry.lastActive = Date.now()
     entry.state = 'working'
 
+    // Build content array with optional image blocks
+    const content: Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }> = []
+    if (imageAttachments && imageAttachments.length > 0) {
+      for (const img of imageAttachments) {
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: img.mimeType, data: img.data },
+        })
+      }
+    }
+    content.push({ type: 'text', text: fullPrompt })
+
     const jsonPayload = JSON.stringify({
       type: 'user',
       message: {
         role: 'user',
-        content: [{ type: 'text', text: fullPrompt }]
+        content,
       }
     })
     const buffer = Buffer.from(jsonPayload + '\n', 'utf-8')

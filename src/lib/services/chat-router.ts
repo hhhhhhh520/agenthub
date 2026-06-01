@@ -4,17 +4,19 @@ import { buildContextFromHistory } from './context-builder'
 import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review'
 import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution } from './alignment'
 import type { SendEvent } from './review'
+import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function handleOrchestratorDecision(
   message: string,
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
-  sessionPhase: string
+  sessionPhase: string,
+  attachments?: TaskAttachment[]
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
-  const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
+  const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
   const context = buildContextFromHistory(history)
 
   let decision: { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string }
@@ -46,7 +48,7 @@ export async function handleOrchestratorDecision(
       break
     case 'delegate':
       if (decision.target) {
-        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent)
+        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent, attachments)
       }
       break
     case 'discuss':
