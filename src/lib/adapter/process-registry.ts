@@ -16,6 +16,7 @@ interface ProcessEntry {
   workDir: string
   permissionMode: string
   pendingPermissions: Map<string, PendingPermission>
+  format: 'claude' | 'ndjson'  // stdout 协议格式
 }
 
 interface PendingPermission {
@@ -33,6 +34,11 @@ interface SpawnConfig {
   apiKey?: string
   baseUrl?: string
   model?: string
+  // 支持 OpenCode 等其他 CLI
+  command?: string              // 默认 'claude'，OpenCode 用 'opencode'
+  args?: string[]               // 完整 CLI 参数，覆盖默认的 claude 参数
+  format?: 'claude' | 'ndjson'  // stdout 协议格式，默认 'claude'
+  env?: Record<string, string>  // 额外环境变量，合并到 spawn env
 }
 
 const MAX_PROCESSES = 10
@@ -114,27 +120,34 @@ class ProcessRegistry {
   }
 
   private spawnProcess(key: string, config: SpawnConfig): ProcessEntry {
-    // Long-lived process mode: use --print with stream-json for both input and output
-    // --print enables non-interactive mode; process stays alive as long as stdin is open
-    const args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--bare', '--permission-prompt-tool', 'stdio']
-
+    const command = config.command || 'claude'
+    let args: string[]
     let mcpConfigFile: string | null = null
-    if (config.mcpConfig) {
-      mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
-      writeFileSync(mcpConfigFile, config.mcpConfig, 'utf-8')
-      args.push('--mcp-config', mcpConfigFile)
-    }
 
-    if (config.permissionMode) {
-      args.push('--permission-mode', config.permissionMode)
-    }
+    if (config.args) {
+      // OpenCode 等自定义 CLI：使用完整参数
+      args = config.args
+    } else {
+      // Claude Code CLI：现有逻辑不变
+      args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--bare', '--permission-prompt-tool', 'stdio']
 
-    if (config.sessionId) {
-      args.push('--resume', config.sessionId)
-    }
+      if (config.mcpConfig) {
+        mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
+        writeFileSync(mcpConfigFile, config.mcpConfig, 'utf-8')
+        args.push('--mcp-config', mcpConfigFile)
+      }
 
-    if (config.model) {
-      args.push('--model', config.model)
+      if (config.permissionMode) {
+        args.push('--permission-mode', config.permissionMode)
+      }
+
+      if (config.sessionId) {
+        args.push('--resume', config.sessionId)
+      }
+
+      if (config.model) {
+        args.push('--model', config.model)
+      }
     }
 
     // Per-agent provider env vars (multica pattern: custom_env injection)
@@ -150,11 +163,12 @@ class ProcessRegistry {
       mkdirSync(workDir, { recursive: true })
     }
 
-    const proc = spawn('claude', args, {
+    const proc = spawn(command, args, {
       cwd: workDir,
       env: {
         ...process.env,
         ...providerEnv,
+        ...(config.env || {}),
         PYTHONIOENCODING: 'utf-8',
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',
@@ -175,6 +189,7 @@ class ProcessRegistry {
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
+      format: config.format || 'claude',
     }
 
     proc.on('exit', () => {
@@ -215,7 +230,18 @@ class ProcessRegistry {
           yield { type: 'status', content: 'process crashed, retrying...', data: { retry: attempt } }
         }
 
-        yield* this.readRound(key, entry, fullPrompt, imageAttachments)
+        // 根据协议格式分发
+        if (entry.format === 'ndjson') {
+          yield* this.readNdjsonRound(key, entry, fullPrompt)
+        } else {
+          yield* this.readRound(key, entry, fullPrompt, imageAttachments)
+        }
+
+        // 一次性进程清理（ndjson 格式，进程已自然退出）
+        if (entry.format === 'ndjson') {
+          this.killEntry(key)
+        }
+
         return  // Success — exit retry loop
 
       } catch (err) {
@@ -237,6 +263,12 @@ class ProcessRegistry {
           await new Promise(resolve => setTimeout(resolve, delay))
         }
       }
+    }
+
+    // 一次性进程失败后也清理
+    const entry = this.registry.get(key)
+    if (entry?.format === 'ndjson') {
+      this.killEntry(key)
     }
 
     // All attempts exhausted — yield error for frontend notification, then throw
@@ -400,6 +432,115 @@ class ProcessRegistry {
       }
     } finally {
       stdout.off('data', onData)
+    }
+
+    // Yield remaining chunks
+    while (chunkQueue.length > 0) {
+      yield chunkQueue.shift()!
+    }
+
+    yield { type: 'status', content: 'completed' }
+    entry.state = 'idle'
+  }
+
+  private async *readNdjsonRound(key: string, entry: ProcessEntry, fullPrompt: string): AsyncIterable<StreamChunk> {
+    if (!entry.alive || entry.process.exitCode !== null) {
+      throw new Error(`Process not alive for key: ${key}`)
+    }
+
+    entry.lastActive = Date.now()
+    entry.state = 'working'
+
+    // stdin：直接写纯文本（不像 Claude 需要 JSON 包装）
+    if (entry.stdin) {
+      entry.stdin.write(Buffer.from(fullPrompt, 'utf-8'))
+      entry.stdin.end()
+    }
+
+    const stdout = entry.process.stdout
+    if (!stdout) {
+      throw new Error(`Process stdout not available for key: ${key}`)
+    }
+
+    const chunkQueue: StreamChunk[] = []
+    let streamClosed = false
+    let resolveStream: (() => void) | null = null
+    const streamPromise = new Promise<void>((resolve) => { resolveStream = resolve })
+    let bufferStr = ''
+    let lastChunkTime = Date.now()
+    const decoder = new TextDecoder()
+
+    const onData = (raw: Buffer) => {
+      entry.lastActive = Date.now()
+      lastChunkTime = Date.now()
+      bufferStr += decoder.decode(raw, { stream: true })
+      const lines = bufferStr.split('\n')
+      bufferStr = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const event = JSON.parse(line)
+
+          // 提取 session ID
+          if (event.sessionID) {
+            entry.sessionId = event.sessionID
+            chunkQueue.push({ type: 'session', content: event.sessionID })
+          }
+
+          // text 事件
+          if (event.type === 'text' && event.part?.text) {
+            chunkQueue.push({ type: 'text', content: event.part.text })
+          }
+          // step_finish 事件（有内容时也输出）
+          else if (event.type === 'step_finish' && event.part?.text) {
+            chunkQueue.push({ type: 'text', content: event.part.text })
+          }
+          // error 事件
+          else if (event.type === 'error') {
+            chunkQueue.push({
+              type: 'error',
+              content: event.data?.message || event.message || 'Unknown error'
+            })
+          }
+        } catch {
+          // Non-JSON output, skip
+        }
+      }
+    }
+
+    const onClose = () => {
+      streamClosed = true
+      if (resolveStream) resolveStream()
+    }
+
+    stdout.on('data', onData)
+    stdout.on('close', onClose)
+
+    try {
+      while (!streamClosed) {
+        // Check no-data timeout
+        if (Date.now() - lastChunkTime > NO_DATA_TIMEOUT_MS) {
+          while (chunkQueue.length > 0) yield chunkQueue.shift()!
+          throw new Error(`No data received for ${NO_DATA_TIMEOUT_MS / 1000}s, process appears stalled`)
+        }
+
+        const waits: Promise<boolean>[] = [
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
+        ]
+        if (streamPromise) waits.push(streamPromise.then(() => true))
+
+        const isDone = await Promise.race(waits)
+
+        while (chunkQueue.length > 0) {
+          yield chunkQueue.shift()!
+        }
+
+        if (isDone) break
+      }
+    } finally {
+      stdout.off('data', onData)
+      stdout.off('close', onClose)
     }
 
     // Yield remaining chunks

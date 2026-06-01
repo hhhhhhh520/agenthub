@@ -1,6 +1,35 @@
 # 适配器生命周期层重构设计
 
-> 创建时间: 2026-05-31 | 状态: 设计中
+> 创建时间: 2026-05-31 | 状态: 已实现（2026-06-02）
+
+## 最终实现
+
+ProcessRegistry 直接复用，未采用 SessionManager + OneShotRunner 方案。
+
+**改动清单**：
+1. `SpawnConfig` 扩展 4 字段：`command`/`args`/`format`/`env`
+2. `ProcessEntry` 新增 `format: 'claude' | 'ndjson'`
+3. `spawnProcess()` 支持自定义命令和环境变量
+4. 新增 `readNdjsonRound()` 处理 OpenCode 的 NDJSON 协议
+5. `send()` 按 `entry.format` 分发到 readRound 或 readNdjsonRound
+6. ndjson 格式在 send() 完成后自动 `killEntry()`（一次性进程清理）
+7. `OpenCodeAdapter` 删除自管理进程代码（~70 行），委托 ProcessRegistry
+
+**关键差异**：
+
+| | readRound (Claude) | readNdjsonRound (OpenCode) |
+|---|---|---|
+| stdin | JSON `{ type: 'user', message: {...} }` | 纯文本 |
+| 等待结束 | 等 `result` 事件 | 等 stdout close |
+| 权限协商 | 处理 `control_request` | 无 |
+| session_id | `event.session_id` | `event.sessionID` |
+| 进程生命周期 | 长驻（idle 回收） | 一次性（send 后清理） |
+
+---
+
+## 原始设计（已修订）
+
+> 以下 SessionManager + OneShotRunner 方案未实施，保留作为设计背景参考。
 
 ## 一、问题背景
 

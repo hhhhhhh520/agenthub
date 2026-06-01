@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-01
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-02
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
@@ -43,17 +43,17 @@
 | CC-Switch DB 集成 | cc-switch-reader.ts 读取 ~/.cc-switch/cc-switch.db + 4 源合并 + baseUrl 去重 | 2026-05-31 |
 | 图片/文件附件 | Attachment 模型 + 上传/读取 API + AttachmentInput 组件 + 拖拽/粘贴 + ClaudeCodeAdapter image block + 中间层透传 + 文件清理，437测试 | 2026-06-01 |
 | Skill 功能砍除 | 评估后移除：AgentSkill 关联在磁盘共享下是伪概念，CC Switch 已有方案 | 2026-06-01 |
+| 适配器生命周期重构 | ProcessRegistry 直接复用：SpawnConfig 扩展 + readNdjsonRound + send 分发 + OpenCodeAdapter 委托，449测试 | 2026-06-02 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-01 更新）
+### 📋 待办（2026-06-02 更新）
 
 | 优先级 | 任务 | 说明 | ISSUE |
 |--------|------|------|-------|
-| 🟡中 | 适配器生命周期重构 | OpenCode 适配器缺少重试/超时/清理能力，设计文档已写入 `docs/design/adapter-lifecycle-refactor.md` | - |
 | 🟡中 | 工具集硬限制 | 后端有 tools 字段，执行时仅 prompt 提示无硬限制；课题要求"适配器根据 tools 加载对应工具" | TOOL-001 |
 | 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 |
 | 🟡中 | 任务恢复提示 | 加载会话时不检查待处理任务 | RECOVER-001 |
