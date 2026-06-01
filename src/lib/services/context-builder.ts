@@ -1,7 +1,12 @@
 import { parseMessage } from '@/lib/message-parser'
 
-export function buildContextFromHistory(history: Array<{ role: string; agentId?: string | null; rawContent: string }>): string {
-  return history.map(m => {
+export function buildContextFromHistory(
+  history: Array<{ role: string; agentId?: string | null; rawContent: string; isPinned?: boolean }>
+): string {
+  const pinned = history.filter(m => m.isPinned)
+  const normal = history.filter(m => !m.isPinned)
+
+  const format = (m: typeof history[0]) => {
     const role = m.role === 'user' ? 'User' : m.agentId || 'Agent'
     const parsed = parseMessage(m.rawContent)
     let content = parsed.text
@@ -12,5 +17,14 @@ export function buildContextFromHistory(history: Array<{ role: string; agentId?:
       content += '\n\n[工件: ' + parsed.artifacts.map(a => a.meta.filePath || a.type).join(', ') + ']'
     }
     return `--- ${role} ---\n${content}`
-  }).join('\n\n')
+  }
+
+  let context = ''
+  if (pinned.length > 0) {
+    context += '=== 重要上下文（用户标记） ===\n'
+    context += pinned.map(format).join('\n\n')
+    context += '\n\n=== 对话历史 ===\n'
+  }
+  context += normal.map(format).join('\n\n')
+  return context
 }

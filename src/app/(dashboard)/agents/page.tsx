@@ -21,9 +21,10 @@ interface Agent {
 }
 
 const statusLabels: Record<string, { text: string; color: string }> = {
-  online: { text: "在线", color: "bg-green-500" },
-  offline: { text: "离线", color: "bg-gray-400" },
+  idle: { text: "空闲", color: "bg-gray-400" },
   working: { text: "工作中", color: "bg-yellow-500" },
+  done: { text: "已完成", color: "bg-green-500" },
+  error: { text: "异常", color: "bg-red-500" },
 }
 
 export default function AgentsPage() {
@@ -108,7 +109,7 @@ export default function AgentsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs text-muted-foreground">{agent.platform}</span>
+                    <span className="text-xs text-muted-foreground">{agent.platform === 'llm' ? 'LLM API' : agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</span>
                   </td>
                 </tr>
               )

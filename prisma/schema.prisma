@@ -35,6 +35,18 @@ model AppConfig {
   updatedAt DateTime @updatedAt
 }
 
+// ─── 服务商配置 ────────────────────────────────────────
+// 已保存的服务商配置模板，创建 Agent 时选中后复制到 Agent 自身字段
+model Provider {
+  id        String   @id @default(uuid())
+  name      String   @unique          // 如"讯飞代理"、"Anthropic 官方"
+  baseUrl   String   @default("")     // API 端点
+  apiKey    String   @default("")     // API Key
+  model     String   @default("")     // 默认模型
+  category  String   @default("custom") // official | cn_official | aggregator | third_party | custom
+  createdAt DateTime @default(now())
+}
+
 model Agent {
   id           String  @id @default(uuid())
   name         String  @unique            // 中文角色名，如"前端工程师"
@@ -100,6 +112,7 @@ model Message {
   agentId     String?
   taskId      String?
   replyToId   String?                      // 回复引用（决策 #15）
+  isPinned    Boolean  @default(false)      // Pin 消息作为长期上下文
   sessionId   String
   createdAt   DateTime @default(now())
 

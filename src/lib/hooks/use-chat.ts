@@ -8,6 +8,7 @@ interface Message {
   agentId?: string
   replyToId?: string
   replyTo?: { id: string; rawContent: string; role: string } | null
+  isPinned?: boolean
   createdAt: string
 }
 
