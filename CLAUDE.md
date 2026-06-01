@@ -17,8 +17,7 @@ src/
 │   │   ├── layout.tsx         # SidebarProvider + AppSidebar
 │   │   ├── page.tsx           # 首页 /（工作区概览 + 会话列表 + ChatFab）
 │   │   ├── agents/            # /agents 智能体管理
-│   │   ├── projects/          # /projects 项目管理
-│   │   └── skills/            # /skills 技能管理
+│   │   └── projects/          # /projects 项目管理
 │   ├── chat/page.tsx          # /chat 聊天界面（SessionSidebar + ChatArea + AgentPanel）
 │   ├── api/                   # API 路由
 │   └── layout.tsx             # 根 layout（字体 + body）
@@ -29,7 +28,8 @@ src/
 │   ├── agent-panel.tsx        # Agent 面板 + 任务看板
 │   ├── chat-fab.tsx           # 右下角浮窗聊天卡片
 │   ├── code-diff.tsx          # Monaco DiffEditor
-│   └── web-preview.tsx        # iframe 预览
+│   ├── web-preview.tsx        # iframe 预览
+│   └── attachment-input.tsx   # 附件上传（📎按钮 + 拖拽 + 粘贴）
 ├── lib/
 │   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
 │   ├── orchestrator/          # 编排器（prompt + 调度 + 执行）
@@ -42,11 +42,12 @@ src/
 │   │   ├── context-builder.ts # 历史上下文构建
 │   │   └── git-utils.ts       # Git 变更检测
 │   ├── hooks/                 # use-sessions, use-chat, use-chat-fab
+│   ├── attachment-cleanup.ts  # 附件文件清理（unlinkSync + 孤儿清理）
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
 │   └── utils.ts               # cn/maskApiKey/hasLoneSurrogates
 └── generated/prisma/          # Prisma 生成（gitignore）
 prisma/
-├── schema.prisma              # Session/Agent/Task/Message 模型
+├── schema.prisma              # Session/Agent/Task/Message/Attachment 模型
 └── migrations/
 ```
 
@@ -70,6 +71,7 @@ prisma/
 - **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）
 - **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status
 - **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
+- **Attachment**：用户上传的图片/文件（`messageId` 可空，先上传后关联；`sessionId` 方便孤儿清理；`onDelete: Cascade` 只删 DB 记录，需 `cleanupAttachmentFiles()` 删磁盘文件）
 - ⚠️ **`_count` 不可用**：`/api/sessions/[id]` 不返回 `_count`，项目详情页用 `session.messages.length` 而非 `session._count.messages`（2026-05-29 踩坑修复）
 - 详见 `prisma/schema.prisma`
 
@@ -100,6 +102,7 @@ prisma/
 - **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
 - **所有 API 无认证**：16 个端点无任何认证/授权检查，公开部署前必须添加
 - **中文乱码检测**：`POST /api/sessions` 检测 `hasLoneSurrogates(title)` 拒绝 GBK 误编 UTF-8 的请求，返回 400
+- **附件上传安全**：10MB 文件大小限制 + mimeType 白名单 + UUID 文件名防路径遍历 + 路径遍历防护（resolved path 必须在 uploads/ 内）
 
 ### 适配器层
 
@@ -123,6 +126,7 @@ prisma/
 - **MCP 协作**：ClaudeCodeAdapter 支持 `--mcp-config` 参数，MCP 配置写入临时文件避免 shell 转义问题。MCP Server 给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）
   - **路径安全**：`isPathSafe()` 用 `realpathSync` 解析后比较 `REAL_WORK_DIR + sep`，防 symlink 和前缀目录绕过；文件不存在时 fallback 到 `resolve + startsWith(WORK_DIR + sep)`
 - **LLM fallback 已移除**：CLI 不可用时直接报错，不静默降级到 LLM API
+- **图片附件支持**：ClaudeCodeAdapter 读取图片文件转 base64，通过 stream-json 的 `type: 'image'` content block 传给 CLI（需视觉模型如 mimo-v2.5）。非图片附件在 prompt 中加路径引用，CLI 的 Read 工具自行读取
 
 ### 多供应商配置
 
@@ -250,6 +254,8 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | PUT | `/api/providers/db/[id]` | 更新 Provider（空 apiKey 不覆盖） |
 | DELETE | `/api/providers/db/[id]` | 删除 Provider |
 | POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
+| POST | `/api/sessions/[id]/attachments` | 上传附件（FormData，10MB 限制，mimeType 白名单） |
+| GET | `/api/attachments/[id]` | 读取附件文件（路径遍历防护，图片 inline 其他 attachment） |
 | GET | `/api/config` | 通用配置读取（key 查询） |
 | POST | `/api/config` | 通用配置写入（key-value） |
 | GET | `/api/config/orchestrator` | Orchestrator 配置（apiKey/model/baseUrl） |
