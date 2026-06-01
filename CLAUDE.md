@@ -116,7 +116,7 @@ prisma/
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
 - `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
   - 支持 abortSignal 取消请求
-- `platform: 'opencode'` → OpenCodeAdapter（JSON 事件流）
+- `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
 - Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
 - **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
