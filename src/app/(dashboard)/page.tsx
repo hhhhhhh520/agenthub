@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { FolderKanban, Bot, Sparkles, ArrowRight, MessageSquare, Plus, Play, Search, Pin, PinOff, Archive, ArchiveRestore, X } from "lucide-react"
+import { FolderKanban, Bot, ArrowRight, MessageSquare, Plus, Play, Search, Pin, PinOff, Archive, ArchiveRestore, X } from "lucide-react"
 import { SetupWizard } from "@/components/setup-wizard"
 import { CreateGroupDialog } from "@/components/create-group-dialog"
 import { ChatFab } from "@/components/chat-fab"
@@ -134,7 +134,7 @@ export default function WorkspacePage() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <Link
           href="/projects"
           className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors"
@@ -165,20 +165,6 @@ export default function WorkspacePage() {
           </div>
         </Link>
 
-        <Link
-          href="/skills"
-          className="rounded-lg border bg-card p-4 hover:bg-accent transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-purple-100 text-purple-700">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-2xl font-semibold">-</p>
-              <p className="text-xs text-muted-foreground">Skill</p>
-            </div>
-          </div>
-        </Link>
       </div>
 
       {/* Recent sessions */}
