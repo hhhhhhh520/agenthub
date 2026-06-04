@@ -220,7 +220,11 @@ class ProcessRegistry {
     // Per-agent provider env vars (multica pattern: custom_env injection)
     const providerEnv: Record<string, string> = {}
     if (config.apiKey) providerEnv.ANTHROPIC_API_KEY = config.apiKey
-    if (config.baseUrl) providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
+    if (config.baseUrl) {
+      providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
+    } else {
+      providerEnv.ANTHROPIC_BASE_URL = ''  // 清除系统环境变量，避免用错误端点
+    }
     if (openCodeConfigFile) {
       providerEnv.OPENCODE_CONFIG = openCodeConfigFile
     }

@@ -57,25 +57,23 @@
 **修复**: 将消息存在性检查移到 Pin 数量限制检查之前。先 findFirst 确认消息存在，再检查 Pin 限制。
 **验证**: 0 条 Pin 时 Pin 不存在消息 → 404；10 条 Pin 时 Pin 不存在消息 → 404；10 条 Pin 时 Pin 存在消息 → 400。571 测试通过。
 
-### BUG-009: 进程注册表未清除系统 ANTHROPIC_BASE_URL 导致 CLI 调用错误端点
+### BUG-009: 进程注册表未清除系统 ANTHROPIC_BASE_URL 导致 CLI 调用错误端点 — 🟢已修复 (2026-06-04)
 **严重程度**: 🔴高
 **位置**: `src/lib/adapter/process-registry.ts:222-228`
 **问题**: 当 Agent 没有配置 baseUrl 时，进程注册表不注入 `ANTHROPIC_BASE_URL`，CLI 继承系统环境变量（如 `https://token-plan-cn.xiaomimimo.com/anthropic`），用 Agent 的 apiKey 调用错误端点，返回 "API Error: 400 Param Incorrect"。
 **复现**: 系统设 ANTHROPIC_BASE_URL → 创建无 baseUrl 的 Agent → 发消息 → 400
 **根因**: `if (config.baseUrl) providerEnv.ANTHROPIC_BASE_URL = config.baseUrl` 只在有 baseUrl 时注入，但不清除系统环境的同名变量。CLI 的 `env: { ...process.env, ...providerEnv }` 会继承系统的 ANTHROPIC_BASE_URL。
-**影响**: Orchestrator 和所有 claude-code 平台 Agent 在有系统 ANTHROPIC_BASE_URL 的环境下无法正常工作。
-**修复方案**: 当 Agent 没有 baseUrl 时，显式注入空字符串清除系统变量：`if (config.baseUrl) providerEnv.ANTHROPIC_BASE_URL = config.baseUrl; else providerEnv.ANTHROPIC_BASE_URL = ''`。
-**未修复**: 记录问题，暂不修改项目文件。
+**修复**: 无 baseUrl 时显式注入空字符串清除系统变量。同步更新测试。571 测试通过。
+**验证**: Orchestrator 不再报 "API Error: 400 Param Incorrect"，正确分析任务并委派给子 Agent。
 
-### BUG-010: Orchestrator Agent 默认模型 claude-sonnet-4-20250514 不被 CLI 识别
+### BUG-010: Orchestrator Agent 模型 claude-sonnet-4-20250514 不被 CLI 识别 — 🟢已修复 (2026-06-04)
 **严重程度**: 🟡中
-**位置**: `src/lib/app-config.ts:56` + Orchestrator Agent 默认配置
-**问题**: Orchestrator Agent 默认 `model: claude-sonnet-4-20250514`，但 Claude Code CLI 不认识这个模型名，返回 "API Error: 400 Param Incorrect"。CLI 的模型名格式与 API 不同。
-**复现**: CLI 直接 `--model claude-sonnet-4-20250514` → 400；不指定 model → 正常（用默认模型）
-**根因**: `ensureOrchestratorAgent` 创建 Agent 时用 `config.model || 'claude-sonnet-4-20250514'` 作为默认值，但 CLI 的模型名体系与 Anthropic API 不同。
-**影响**: 新创建的 Orchestrator Agent 默认配置无法正常工作，需要手动修改 model 字段。
-**修复方案**: 默认 model 改为空字符串（让 CLI 用自身默认模型），或改为 CLI 认识的模型名。
-**未修复**: 记录问题，暂不修改项目文件。
+**位置**: `src/lib/app-config.ts:56`
+**问题**: Orchestrator Agent 的 `model: claude-sonnet-4-20250514` 不被 Claude Code CLI 识别，返回 "API Error: 400 Param Incorrect"。
+**复现**: CLI 直接 `--model claude-sonnet-4-20250514` → 400；不指定 model → 正常
+**根因**: CLI 的模型名体系与 Anthropic API 不同，`claude-sonnet-4-20250514` 是 API 模型名不是 CLI 模型名。
+**修复**: 默认 model 改为空字符串，CLI 用自身默认模型。已有 Orchestrator Agent 的 model 也清空。571 测试通过。
+**验证**: Orchestrator 不再报模型错误，正确完成任务分析。
 
 ### BUG-008: LLM 适配器对 Anthropic 格式 baseUrl 误用 OpenAI SDK — 🟢已修复 (2026-06-04)
 **严重程度**: 🔴高

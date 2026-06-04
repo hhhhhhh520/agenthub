@@ -56,6 +56,8 @@
 | E2E深度测试(二次) | 117项检查全通过：会话CRUD(23)/Agent CRUD(18)/消息(7)/Pin(5)/成员(8)/Provider(5)/配置(5)/目录(5)/Chat(17)/其他(24)。发现2个新Bug：Pin存在性检查顺序(LLM适配器baseUrl误判) | 2026-06-04 |
 | BUG-007修复 | Pin消息路由：消息存在性检查移到Pin数量限制检查之前，400→404 | 2026-06-04 |
 | BUG-008修复 | LLM适配器：新增detectUseAnthropic()URL检测，/anthropic路径用Anthropic SDK，Anthropic分支支持自定义baseUrl。18新测试，571测试 | 2026-06-04 |
+| BUG-009修复 | 进程注册表：无baseUrl时清除系统ANTHROPIC_BASE_URL，避免CLI用错误端点 | 2026-06-04 |
+| BUG-010修复 | app-config：Orchestrator默认model改为空字符串，CLI用自身默认模型 | 2026-06-04 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

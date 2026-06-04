@@ -49,7 +49,7 @@ export async function ensureOrchestratorAgent(): Promise<void> {
         expertise: '任务协调、智能编排、多Agent协作',
         systemPrompt: '你是 AgentHub 的 Orchestrator，负责任务协调和智能编排。',
         platform,
-        model: config.model || 'claude-sonnet-4-20250514',
+        model: config.model || '',
         baseUrl: config.baseUrl || '',
         apiKey: config.apiKey || '',
         isPreset: true,
