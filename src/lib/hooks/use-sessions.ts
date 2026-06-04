@@ -32,11 +32,11 @@ export function useSessions() {
     }
   }, [searchParams, activeId])
 
-  const create = async (title?: string, type?: string) => {
+  const create = async (title?: string, type?: string, agentIds?: string[]) => {
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, type }),
+      body: JSON.stringify({ title, type, agentIds }),
     })
     const session = await res.json()
     setSessions(prev => [session, ...prev])

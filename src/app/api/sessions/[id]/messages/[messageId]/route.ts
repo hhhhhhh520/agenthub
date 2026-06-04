@@ -12,7 +12,15 @@ export async function PATCH(
     return NextResponse.json({ error: 'isPinned must be boolean' }, { status: 400 })
   }
 
-  // Pin 时检查数量限制
+  // 先检查消息是否存在
+  const existing = await prisma.message.findFirst({
+    where: { id: messageId, sessionId },
+  })
+  if (!existing) {
+    return NextResponse.json({ error: '消息不存在' }, { status: 404 })
+  }
+
+  // 再检查 Pin 数量限制
   if (isPinned) {
     const count = await prisma.message.count({ where: { sessionId, isPinned: true } })
     if (count >= 10) {
@@ -23,11 +31,7 @@ export async function PATCH(
   const message = await prisma.message.update({
     where: { id: messageId, sessionId },
     data: { isPinned },
-  }).catch(() => null)
-
-  if (!message) {
-    return NextResponse.json({ error: '消息不存在' }, { status: 404 })
-  }
+  })
 
   return NextResponse.json(message)
 }

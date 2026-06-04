@@ -44,8 +44,18 @@ export async function POST(request: Request) {
     }
   }
 
-  // Private sessions: no auto-add (handled by onPrivateChat)
+  // Private sessions: only add explicit agentIds, no auto-add preset agents
   if (type === 'private') {
+    if (Array.isArray(agentIds) && agentIds.length > 0) {
+      const agents = await prisma.agent.findMany({ where: { id: { in: agentIds } } })
+      await prisma.sessionMember.createMany({
+        data: agents.map(agent => ({
+          sessionId: session.id,
+          agentId: agent.id,
+          role: 'member',
+        })),
+      })
+    }
     return NextResponse.json(session)
   }
 

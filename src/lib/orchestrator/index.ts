@@ -311,15 +311,19 @@ export async function executeSingleAgent(
 ): Promise<{ result: string; sessionId?: string }> {
   const platform = (agent.platform || 'llm') as AdapterConfig['platform']
 
-  // Design decision #19: inject tools hint into prompt
-  let effectivePrompt = prompt
+  // 解析工具配置
+  let toolsList: string[] = []
   if (agent.tools) {
     try {
-      const toolsList = JSON.parse(agent.tools)
-      if (Array.isArray(toolsList) && toolsList.length > 0) {
-        effectivePrompt = `[可用工具: ${toolsList.join(', ')}]\n\n${prompt}`
-      }
+      const parsed = JSON.parse(agent.tools)
+      if (Array.isArray(parsed)) toolsList = parsed
     } catch {}
+  }
+
+  // 软引导：prompt 注入告知 LLM 可用工具（兜底）
+  let effectivePrompt = prompt
+  if (toolsList.length > 0) {
+    effectivePrompt = `[可用工具: ${toolsList.join(', ')}]\n\n${prompt}`
   }
 
   // Design decision #20: update Agent status per-session
@@ -341,6 +345,7 @@ export async function executeSingleAgent(
       mcpConfig,
       agentId: agent.id,
       chatSessionId: chatSessionId,
+      allowedTools: toolsList.length > 0 ? toolsList : undefined,
     })
 
     let result = ''

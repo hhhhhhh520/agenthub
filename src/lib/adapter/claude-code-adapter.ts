@@ -16,6 +16,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   private apiKey: string | undefined
   private baseUrl: string | undefined
   private model: string | undefined
+  private allowedTools: string[] | undefined
+  private disallowedTools: string[] | undefined
 
   async connect(config: AdapterConfig): Promise<void> {
     this.workDir = config.workDir || DEFAULT_WORK_DIR
@@ -27,6 +29,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     this.apiKey = config.apiKey
     this.baseUrl = config.baseUrl
     this.model = config.model
+    this.allowedTools = config.allowedTools
+    this.disallowedTools = config.disallowedTools
   }
 
   private getRegistryKey(): string {
@@ -79,6 +83,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       apiKey: this.apiKey,
       baseUrl: this.baseUrl,
       model: this.model,
+      allowedTools: this.allowedTools,
+      disallowedTools: this.disallowedTools,
     }
 
     // Get or create process via registry

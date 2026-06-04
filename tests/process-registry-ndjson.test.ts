@@ -166,7 +166,7 @@ describe('ProcessRegistry NDJSON support', () => {
     expect(textChunks.some((c: any) => c.content === 'step result')).toBe(true)
   })
 
-  it('readNdjsonRound parses error events', async () => {
+  it('readNdjsonRound parses error events (OpenCode structure: error.data.message)', async () => {
     const config = {
       workDir: '/project',
       command: 'opencode',
@@ -175,7 +175,7 @@ describe('ProcessRegistry NDJSON support', () => {
     }
 
     setTimeout(() => {
-      mockStdout.emit('data', Buffer.from(JSON.stringify({ type: 'error', data: { message: 'something broke' } }) + '\n'))
+      mockStdout.emit('data', Buffer.from(JSON.stringify({ type: 'error', error: { data: { message: 'opencode error' } } }) + '\n'))
       mockStdout.emit('close')
     }, 10)
 
@@ -187,7 +187,30 @@ describe('ProcessRegistry NDJSON support', () => {
 
     const errorChunks = chunks.filter(c => c.type === 'error')
     expect(errorChunks.length).toBeGreaterThanOrEqual(1)
-    expect(errorChunks.some((c: any) => c.content === 'something broke')).toBe(true)
+    expect(errorChunks.some((c: any) => c.content === 'opencode error')).toBe(true)
+  })
+
+  it('readNdjsonRound parses error events (fallback: data.message)', async () => {
+    const config = {
+      workDir: '/project',
+      command: 'opencode',
+      args: ['run'],
+      format: 'ndjson' as const,
+    }
+
+    setTimeout(() => {
+      mockStdout.emit('data', Buffer.from(JSON.stringify({ type: 'error', data: { message: 'legacy error' } }) + '\n'))
+      mockStdout.emit('close')
+    }, 10)
+
+    const chunks: any[] = []
+    const gen = processRegistry.send('test-key', 'prompt', config)
+    for await (const chunk of gen) {
+      chunks.push(chunk)
+    }
+
+    const errorChunks = chunks.filter(c => c.type === 'error')
+    expect(errorChunks.some((c: any) => c.content === 'legacy error')).toBe(true)
   })
 
   it('readNdjsonRound extracts sessionID', async () => {

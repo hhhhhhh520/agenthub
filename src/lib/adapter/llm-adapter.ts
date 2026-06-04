@@ -3,6 +3,14 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { streamText } from 'ai'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 
+/** 检测 baseUrl 是否使用 Anthropic 消息格式（路径包含 /anthropic） */
+export function detectUseAnthropic(baseUrl?: string, model?: string): boolean {
+  if (baseUrl) {
+    return /\/anthropic(\/|$)/.test(baseUrl)
+  }
+  return !/^(gpt-|o1-|o3-)/.test(model || '')
+}
+
 export class LLMAdapter implements AgentAdapter {
   private config: AdapterConfig = { platform: 'llm' }
   private abortController = new AbortController()
@@ -17,15 +25,14 @@ export class LLMAdapter implements AgentAdapter {
     const apiKey = this.config.apiKey
 
     // 判断使用哪个 SDK：
-    // 1. 有 baseUrl → 大多数兼容 API 是 OpenAI 格式（DeepSeek、Moonshot、讯飞等）
-    // 2. 没有 baseUrl + 模型名以 gpt-/o1-/o3- 开头 → OpenAI
-    // 3. 其他情况 → Anthropic（Claude 系列）
-    const useOpenAI = baseUrl
-      ? true  // 自定义 baseUrl 通常是 OpenAI 兼容格式
-      : /^(gpt-|o1-|o3-)/.test(model)
+    // 1. baseUrl 包含 /anthropic → Anthropic 格式（DeepSeek、MiniMax、Zhipu 等）
+    // 2. 有 baseUrl 但不含 /anthropic → OpenAI 格式（DouBaoSeed 等）
+    // 3. 没有 baseUrl + 模型名以 gpt-/o1-/o3- 开头 → OpenAI
+    // 4. 其他情况 → Anthropic（Claude 系列）
+    const useAnthropic = detectUseAnthropic(baseUrl, model)
 
     let llm
-    if (useOpenAI) {
+    if (!useAnthropic) {
       // createOpenAI 的 baseURL 默认是 https://api.openai.com/v1
       // 路径拼接: baseURL + /chat/completions → 必须包含 /v1
       // 用户常填 https://api.deepseek.com → 需要补 /v1
@@ -41,6 +48,7 @@ export class LLMAdapter implements AgentAdapter {
     } else {
       const provider = createAnthropic({
         ...(apiKey && { apiKey }),
+        ...(baseUrl && { baseURL: baseUrl }),
       })
       llm = provider(model)
     }
