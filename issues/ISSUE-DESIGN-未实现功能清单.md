@@ -201,18 +201,24 @@
 
 **设计文档位置**: 第 275-279 行
 
-### ISSUE-TOOL-001: 工具集预设映射 — 🟡部分实现
+### ISSUE-TOOL-001: 工具集硬限制 — 🟢已解决 (2026-06-04)
 
 **设计要求**（第 276 行）：
 > 后端维护工具集预设映射：`"代码读写" → [Read, Write, Edit]`、`"命令执行" → [Bash]` 等
 
-**实际状态**: 🟡 部分实现（2026-05-30 验证）
+**实际状态**: 🟢 已实现（2026-06-04 验证）
 - ✅ 数据模型已存在：`Agent.tools` (string[], schema.prisma:39) + `Agent.capabilities` (JSON, schema.prisma:51)
-- ✅ 运行时工具提示注入：`executeSingleAgent` 读取 `agent.tools` 并在 system prompt 中注入 `[可用工具: ...]`
+- ✅ 运行时工具提示注入：`executeSingleAgent` 读取 `agent.tools` 并在 system prompt 中注入 `[可用工具: ...]`（软引导）
 - ✅ Agent 推荐 API 已实现：`/api/sessions/recommend-agents` 根据任务描述匹配 Agent
-- ❌ 无工具集预设映射配置：没有"代码读写 → [Read, Write, Edit]"等预定义方案
-- ❌ 无前端 UI 工具选择器：创建 Agent 时无法配置工具集
+- ✅ **Claude Code 硬限制**：`--allowedTools` / `--disallowedTools` CLI 参数传递（`process-registry.ts`）
+- ✅ **OpenCode 硬限制**：临时 `opencode.json` 配置文件 + `OPENCODE_CONFIG` 环境变量注入（`process-registry.ts`）
+- ✅ **工具名映射**：`Write` → `edit`、`Agent` → `task`、`AskUserQuestion` → `question` 等（`TOOL_NAME_MAP`）
+- ✅ **进程隔离**：tools hash 附加到 registry key，不同工具配置不复用进程
+- ✅ **OPENCODE_PERMISSION 冲突处理**：有工具限制时移除 `{"*":"allow"}`
+- ❌ 无前端 UI 工具选择器：创建 Agent 时无法配置工具集（预设 Agent 已有 tools，用户自建通过 API 传入）
 - ❌ 无 MCP tools 或 function calling 加载逻辑
+
+**相关文件**: `src/lib/adapter/types.ts`, `src/lib/adapter/process-registry.ts`, `src/lib/adapter/claude-code-adapter.ts`, `src/lib/adapter/opencode-adapter.ts`, `src/lib/orchestrator/index.ts`, `tests/tool-restriction.test.ts`
 
 ---
 
@@ -337,7 +343,7 @@
 | ISSUE-FAIL-006 | 无用户操作面板（重试/跳过/回滚） | 第 463-472 行 | **高** | ❌ |
 | ISSUE-FAIL-007 | 无全链路可观测 trace | 第 474-481 行 | 中 | ❌ |
 | ISSUE-CTX-001 | Agent 级 pin 消息未实现 | 第 382 行 | **高** | 🟢已解决 |
-| ISSUE-TOOL-001 | 工具集预设映射 UI 缺失 | 第 276 行 | 中 | 🟡部分解决 |
+| ISSUE-TOOL-001 | 工具集硬限制 | 第 276 行 | 中 | 🟢已解决 |
 | ISSUE-TOOL-002 | Orchestrator 工具推荐 UI 缺失 | 第 277 行 | 中 | 🟡部分解决 |
 | ISSUE-DIFF-001 | Diff Accept 前无文件修改检测 | 第 220 行 | 中 | ❌ |
 | ISSUE-CLI-001 | 长驻进程模式 | 第 135-138 行 | 低 | 🟢已解决 |
