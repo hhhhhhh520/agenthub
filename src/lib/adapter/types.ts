@@ -9,6 +9,8 @@ export interface AdapterConfig {
   mcpConfig?: string  // --mcp-config JSON string for MCP tool support
   agentId?: string      // For ProcessRegistry key
   chatSessionId?: string // For ProcessRegistry key
+  allowedTools?: string[]   // CLI tool whitelist (e.g. ["Read", "Write", "Edit"])
+  disallowedTools?: string[] // CLI tool blacklist
 }
 
 export interface TaskAttachment {

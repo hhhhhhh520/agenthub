@@ -13,10 +13,12 @@ interface ProcessEntry {
   state: 'idle' | 'working'
   mcpConfigFile: string | null
   mcpConfig: string | null  // Original mcpConfig JSON string for process rebuild
+  openCodeConfigFile: string | null  // OpenCode 临时权限配置文件
   workDir: string
   permissionMode: string
   pendingPermissions: Map<string, PendingPermission>
   format: 'claude' | 'ndjson'  // stdout 协议格式
+  stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
 }
 
 interface PendingPermission {
@@ -39,6 +41,9 @@ interface SpawnConfig {
   args?: string[]               // 完整 CLI 参数，覆盖默认的 claude 参数
   format?: 'claude' | 'ndjson'  // stdout 协议格式，默认 'claude'
   env?: Record<string, string>  // 额外环境变量，合并到 spawn env
+  // 工具硬限制
+  allowedTools?: string[]       // CLI 工具白名单
+  disallowedTools?: string[]    // CLI 工具黑名单
 }
 
 const MAX_PROCESSES = 10
@@ -67,6 +72,48 @@ function isPermanentError(error: string): boolean {
 
 function getRetryDelay(attempt: number): number {
   return Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt), 16000)
+}
+
+// OpenCode 工具名（全小写）→ 对应的权限键
+// 注意：OpenCode 的 edit 权限同时覆盖 write 和 apply_patch
+const OPENCODE_ALL_TOOLS = ['read', 'edit', 'bash', 'glob', 'grep', 'task', 'skill', 'lsp', 'webfetch', 'websearch', 'question']
+
+// Claude Code 工具名 → OpenCode 权限键的映射
+const TOOL_NAME_MAP: Record<string, string> = {
+  'Read': 'read',
+  'Write': 'edit',     // OpenCode 中 write 由 edit 权限控制
+  'Edit': 'edit',
+  'Bash': 'bash',
+  'Glob': 'glob',
+  'Grep': 'grep',
+  'Agent': 'task',     // OpenCode 中子代理对应 task
+  'Skill': 'skill',
+  'WebFetch': 'webfetch',
+  'WebSearch': 'websearch',
+  'AskUserQuestion': 'question',
+  'LSP': 'lsp',
+  'TodoWrite': 'task', // OpenCode 中 todo 由 task 权限控制
+}
+
+function buildOpenCodePermission(allowedTools: string[]): Record<string, string> {
+  const allowSet = new Set(
+    allowedTools.map(t => TOOL_NAME_MAP[t] || t.toLowerCase())
+  )
+  const permission: Record<string, string> = {}
+  for (const tool of OPENCODE_ALL_TOOLS) {
+    permission[tool] = allowSet.has(tool) ? 'allow' : 'deny'
+  }
+  return permission
+}
+
+function buildToolsHash(tools?: string[]): string {
+  if (!tools || tools.length === 0) return ''
+  const sorted = [...tools].sort().join(',')
+  let hash = 0
+  for (let i = 0; i < sorted.length; i++) {
+    hash = ((hash << 5) - hash + sorted.charCodeAt(i)) | 0
+  }
+  return ':' + Math.abs(hash).toString(36)
 }
 
 // Global registry to survive Next.js module reloads
@@ -107,26 +154,38 @@ class ProcessRegistry {
   }
 
   getOrCreate(key: string, config: SpawnConfig): ProcessEntry {
-    const existing = this.registry.get(key)
+    // 工具配置变化时生成不同 key，避免复用旧进程导致限制不生效
+    const toolsHash = buildToolsHash(config.allowedTools)
+    const effectiveKey = toolsHash ? `${key}${toolsHash}` : key
+
+    const existing = this.registry.get(effectiveKey)
     if (existing && existing.alive && existing.process.exitCode === null) {
       existing.lastActive = Date.now()
       return existing
     }
 
     if (existing) {
-      this.killEntry(key)
+      this.killEntry(effectiveKey)
     }
-    return this.spawnProcess(key, config)
+    return this.spawnProcess(effectiveKey, config)
   }
 
   private spawnProcess(key: string, config: SpawnConfig): ProcessEntry {
     const command = config.command || 'claude'
     let args: string[]
     let mcpConfigFile: string | null = null
+    let openCodeConfigFile: string | null = null
 
     if (config.args) {
       // OpenCode 等自定义 CLI：使用完整参数
       args = config.args
+
+      // 工具硬限制：写临时 opencode.json，通过 OPENCODE_CONFIG 注入
+      if (config.allowedTools && config.allowedTools.length > 0) {
+        const permission = buildOpenCodePermission(config.allowedTools)
+        openCodeConfigFile = join(tmpdir(), `agenthub-oc-${Date.now()}.json`)
+        writeFileSync(openCodeConfigFile, JSON.stringify({ permission }), 'utf-8')
+      }
     } else {
       // Claude Code CLI：现有逻辑不变
       args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--bare', '--permission-prompt-tool', 'stdio']
@@ -148,12 +207,23 @@ class ProcessRegistry {
       if (config.model) {
         args.push('--model', config.model)
       }
+
+      // 工具硬限制：通过 CLI 参数传递
+      if (config.allowedTools && config.allowedTools.length > 0) {
+        args.push('--allowedTools', config.allowedTools.join(','))
+      }
+      if (config.disallowedTools && config.disallowedTools.length > 0) {
+        args.push('--disallowedTools', config.disallowedTools.join(','))
+      }
     }
 
     // Per-agent provider env vars (multica pattern: custom_env injection)
     const providerEnv: Record<string, string> = {}
     if (config.apiKey) providerEnv.ANTHROPIC_API_KEY = config.apiKey
     if (config.baseUrl) providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
+    if (openCodeConfigFile) {
+      providerEnv.OPENCODE_CONFIG = openCodeConfigFile
+    }
     if (Object.keys(providerEnv).length > 0) {
       console.log(`[ProcessRegistry ${key}] inject provider env:`, Object.keys(providerEnv))
     }
@@ -186,10 +256,12 @@ class ProcessRegistry {
       state: 'idle',
       mcpConfigFile,
       mcpConfig: config.mcpConfig || null,
+      openCodeConfigFile,
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
       format: config.format || 'claude',
+      stderrBuffer: '',
     }
 
     proc.on('exit', () => {
@@ -199,7 +271,9 @@ class ProcessRegistry {
 
     if (proc.stderr) {
       proc.stderr.on('data', (chunk: Buffer) => {
-        console.error(`[ProcessRegistry ${key}] stderr:`, chunk.toString())
+        const text = chunk.toString()
+        entry.stderrBuffer += text
+        console.error(`[ProcessRegistry ${key}] stderr:`, text)
       })
     }
 
@@ -211,17 +285,22 @@ class ProcessRegistry {
     let attempt = 0
     let lastError: string | null = null
 
+    // 与 getOrCreate 保持一致：附加 tools hash
+    const toolsHash = buildToolsHash(config?.allowedTools)
+    const effectiveKey = toolsHash ? `${key}${toolsHash}` : key
+
     while (attempt <= MAX_SEND_RETRIES) {
-      let entry = this.registry.get(key)
+      let entry = this.registry.get(effectiveKey)
 
       // If process is dead, rebuild it
       if (!entry || !entry.alive || entry.process.exitCode !== null) {
         if (attempt > 0 && !config) {
-          throw new Error(`Process died and no config available to rebuild for key: ${key}`)
+          throw new Error(`Process died and no config available to rebuild for key: ${effectiveKey}`)
         }
-        if (entry) this.killEntry(key)
-        if (!config) throw new Error(`Process entry not found for key: ${key}`)
-        entry = this.spawnProcess(key, config)
+        if (entry) this.killEntry(effectiveKey)
+        if (!config) throw new Error(`Process entry not found for key: ${effectiveKey}`)
+        entry = this.spawnProcess(effectiveKey, config)
+        entry.stderrBuffer = ''
       }
 
       try {
@@ -239,7 +318,7 @@ class ProcessRegistry {
 
         // 一次性进程清理（ndjson 格式，进程已自然退出）
         if (entry.format === 'ndjson') {
-          this.killEntry(key)
+          this.killEntry(effectiveKey)
         }
 
         return  // Success — exit retry loop
@@ -248,17 +327,23 @@ class ProcessRegistry {
         lastError = err instanceof Error ? err.message : String(err)
         attempt++
 
-        // Permanent error: don't retry
+        // Permanent error: don't retry — throw immediately with actual error
         if (isPermanentError(lastError)) {
-          console.error(`[ProcessRegistry ${key}] Permanent error: ${lastError}. Not retrying.`)
-          break
+          console.error(`[ProcessRegistry ${effectiveKey}] Permanent error: ${lastError}. Not retrying.`)
+          // 一次性进程清理
+          const entry = this.registry.get(effectiveKey)
+          if (entry?.format === 'ndjson') {
+            this.killEntry(effectiveKey)
+          }
+          yield { type: 'error', content: lastError }
+          throw new Error(lastError)
         }
 
         if (attempt <= MAX_SEND_RETRIES) {
           // Kill old process and prepare for retry with exponential backoff
-          this.killEntry(key)
+          this.killEntry(effectiveKey)
           const delay = getRetryDelay(attempt - 1)
-          console.warn(`[ProcessRegistry ${key}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
+          console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
           await new Promise(resolve => setTimeout(resolve, delay))
         }
@@ -266,9 +351,9 @@ class ProcessRegistry {
     }
 
     // 一次性进程失败后也清理
-    const entry = this.registry.get(key)
+    const entry = this.registry.get(effectiveKey)
     if (entry?.format === 'ndjson') {
-      this.killEntry(key)
+      this.killEntry(effectiveKey)
     }
 
     // All attempts exhausted — yield error for frontend notification, then throw
@@ -408,7 +493,11 @@ class ProcessRegistry {
             console.warn(`[ProcessRegistry ${key}] Process exited normally (0) without result event`)
             break
           }
-          throw new Error(`Process exited with code ${exitCode}`)
+          const stderr = entry.stderrBuffer.trim()
+          const errMsg = stderr
+            ? `Process exited with code ${exitCode}: ${stderr}`
+            : `Process exited with code ${exitCode}`
+          throw new Error(errMsg)
         }
 
         // Check no-data timeout
@@ -463,6 +552,8 @@ class ProcessRegistry {
     }
 
     const chunkQueue: StreamChunk[] = []
+    let hasPermanentError = false
+    let permanentErrorMsg = ''
     let streamClosed = false
     let resolveStream: (() => void) | null = null
     const streamPromise = new Promise<void>((resolve) => { resolveStream = resolve })
@@ -498,10 +589,12 @@ class ProcessRegistry {
           }
           // error 事件
           else if (event.type === 'error') {
-            chunkQueue.push({
-              type: 'error',
-              content: event.data?.message || event.message || 'Unknown error'
-            })
+            const errorMsg = event.error?.data?.message || event.data?.message || event.message || 'Unknown error'
+            chunkQueue.push({ type: 'error', content: errorMsg })
+            if (isPermanentError(errorMsg)) {
+              hasPermanentError = true
+              permanentErrorMsg = errorMsg
+            }
           }
         } catch {
           // Non-JSON output, skip
@@ -519,6 +612,17 @@ class ProcessRegistry {
 
     try {
       while (!streamClosed) {
+        // Check if process died
+        if (!entry.alive || entry.process.exitCode !== null) {
+          while (chunkQueue.length > 0) yield chunkQueue.shift()!
+          const exitCode = entry.process.exitCode
+          const stderr = entry.stderrBuffer.trim()
+          const errMsg = stderr
+            ? `Process exited with code ${exitCode}: ${stderr}`
+            : `Process exited with code ${exitCode}`
+          throw new Error(errMsg)
+        }
+
         // Check no-data timeout
         if (Date.now() - lastChunkTime > NO_DATA_TIMEOUT_MS) {
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
@@ -546,6 +650,19 @@ class ProcessRegistry {
     // Yield remaining chunks
     while (chunkQueue.length > 0) {
       yield chunkQueue.shift()!
+    }
+
+    // 两层防御：先查永久错误事件，再查 exitCode
+    if (hasPermanentError) {
+      throw new Error(permanentErrorMsg)
+    }
+
+    if (entry.process.exitCode !== null && entry.process.exitCode !== 0) {
+      const stderr = entry.stderrBuffer.trim()
+      const errMsg = stderr
+        ? `Process exited with code ${entry.process.exitCode}: ${stderr}`
+        : `Process exited with code ${entry.process.exitCode}`
+      throw new Error(errMsg)
     }
 
     yield { type: 'status', content: 'completed' }
@@ -605,6 +722,10 @@ class ProcessRegistry {
 
     if (entry.mcpConfigFile) {
       try { unlinkSync(entry.mcpConfigFile) } catch {}
+    }
+
+    if (entry.openCodeConfigFile) {
+      try { unlinkSync(entry.openCodeConfigFile) } catch {}
     }
 
     this.registry.delete(key)
@@ -683,6 +804,9 @@ class ProcessRegistry {
       for (const [, entry] of this.registry) {
         if (entry.mcpConfigFile) {
           try { unlinkSync(entry.mcpConfigFile) } catch {}
+        }
+        if (entry.openCodeConfigFile) {
+          try { unlinkSync(entry.openCodeConfigFile) } catch {}
         }
       }
       this.registry.clear()

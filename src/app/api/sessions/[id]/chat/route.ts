@@ -21,8 +21,8 @@ export async function POST(
   } catch {
     return new Response('Invalid JSON body', { status: 400 })
   }
-  // Allow empty message if attachments are present
-  if ((!message || typeof message !== 'string') && (!attachmentIds || attachmentIds.length === 0)) {
+  // Allow empty message if attachments or regenerate are present
+  if ((!message || typeof message !== 'string') && (!attachmentIds || attachmentIds.length === 0) && !regenerate) {
     return new Response('message is required and must be a string', { status: 400 })
   }
   message = message || ''

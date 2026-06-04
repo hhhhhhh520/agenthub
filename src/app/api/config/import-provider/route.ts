@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
-import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
 import { prisma } from '@/lib/db'
 import { detectCLIPlatform } from '@/lib/cli-detect'
+import { resolveProvider } from '@/lib/provider-resolve'
 
 export async function POST(request: Request) {
   try {
@@ -12,28 +10,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'providerName is required' }, { status: 400 })
     }
 
-    let apiKey = ''
-    let baseUrl = ''
-    let model = ''
-
-    const configPath = join(homedir(), '.cc-connect', 'config.toml')
-    if (existsSync(configPath)) {
-      const content = readFileSync(configPath, 'utf-8')
-      const blocks = content.split(/\[\[providers\]\]/g).slice(1)
-      for (const block of blocks) {
-        const name = block.match(/name\s*=\s*"([^"]+)"/)?.[1]
-        if (name === providerName) {
-          apiKey = block.match(/api_key\s*=\s*"([^"]+)"/)?.[1] || ''
-          baseUrl = block.match(/base_url\s*=\s*"([^"]+)"/)?.[1] || ''
-          model = block.match(/model\s*=\s*"([^"]+)"/)?.[1] || ''
-          break
-        }
-      }
-    }
-
-    if (!apiKey) {
+    const resolved = await resolveProvider(providerName)
+    if (!resolved) {
       return NextResponse.json({ error: `未找到 ${providerName} 的 API Key` }, { status: 404 })
     }
+
+    const { apiKey, baseUrl, model } = resolved
 
     // 更新 AppConfig（向后兼容）
     await prisma.$executeRaw

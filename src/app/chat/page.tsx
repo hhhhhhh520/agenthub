@@ -37,12 +37,7 @@ function ChatContent() {
         <AgentPanel
           sessionId={activeId}
           onPrivateChat={async (agentId, agentName) => {
-            const session = await create(`私聊: ${agentName}`, 'private')
-            await fetch(`/api/sessions/${session.id}/members`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ agentId }),
-            })
+            await create(`私聊: ${agentName}`, 'private', [agentId])
           }}
         />
       </div>

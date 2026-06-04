@@ -8,6 +8,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   private sessionId: string | null = null
   private agentId: string | undefined
   private chatSessionId: string | undefined
+  private allowedTools: string[] | undefined
 
   async connect(config: AdapterConfig): Promise<void> {
     this.config = config
@@ -15,6 +16,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (config.sessionId) this.sessionId = config.sessionId
     this.agentId = config.agentId
     this.chatSessionId = config.chatSessionId
+    this.allowedTools = config.allowedTools
   }
 
   private getRegistryKey(): string {
@@ -26,25 +28,30 @@ export class OpenCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const key = this.getRegistryKey()
 
-    // Build prompt with context and attachment file references
-    let fullPrompt = task.context
-      ? `Context:\n${task.context}\n\n---\n\n${task.prompt}`
-      : task.prompt
+    // Build prompt: systemPrompt 拼接到消息中（opencode run 不支持 --prompt 标志）
+    const parts: string[] = []
+    if (task.systemPrompt) parts.push(task.systemPrompt)
+    if (task.context) parts.push(`Context:\n${task.context}`)
 
     if (task.attachments && task.attachments.length > 0) {
       const fileList = task.attachments.map(a => `- ${a.filename}: ${a.path}`).join('\n')
-      fullPrompt = `用户附带了以下文件：\n${fileList}\n\n---\n\n${fullPrompt}`
+      parts.push(`用户附带了以下文件：\n${fileList}`)
     }
 
-    // Build CLI args
-    const args = ['run', '--format', 'json', '--dir', this.workDir]
+    parts.push(task.prompt)
+    const fullPrompt = parts.join('\n\n---\n\n')
+
+    // Build CLI args: opencode 无子命令，直接用根命令标志
+    // -p 触发非交互模式（prompt 通过 stdin 传递，与 Claude Code 一致）
+    const args = ['-p', '-f', 'json', '-c', this.workDir]
     if (this.config.model) args.push('--model', this.config.model)
-    if (task.systemPrompt) args.push('--prompt', task.systemPrompt)
     if (this.sessionId) args.push('--session', this.sessionId)
 
     // Build env with provider config
-    const env: Record<string, string> = {
-      OPENCODE_PERMISSION: '{"*":"allow"}',
+    const env: Record<string, string> = {}
+    // 有工具限制时不设 OPENCODE_PERMISSION，避免覆盖 OPENCODE_CONFIG 的限制配置
+    if (!this.allowedTools || this.allowedTools.length === 0) {
+      env.OPENCODE_PERMISSION = '{"*":"allow"}'
     }
     if (this.config.apiKey) {
       env.ANTHROPIC_API_KEY = this.config.apiKey
@@ -62,6 +69,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       args,
       format: 'ndjson' as const,
       env,
+      allowedTools: this.allowedTools,
     }
 
     for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {

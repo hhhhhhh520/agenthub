@@ -44,17 +44,28 @@
 | 图片/文件附件 | Attachment 模型 + 上传/读取 API + AttachmentInput 组件 + 拖拽/粘贴 + ClaudeCodeAdapter image block + 中间层透传 + 文件清理，437测试 | 2026-06-01 |
 | Skill 功能砍除 | 评估后移除：AgentSkill 关联在磁盘共享下是伪概念，CC Switch 已有方案 | 2026-06-01 |
 | 适配器生命周期重构 | ProcessRegistry 直接复用：SpawnConfig 扩展 + readNdjsonRound + send 分发 + OpenCodeAdapter 委托，449测试 | 2026-06-02 |
+| OpenCode适配器修复 | 3个bug：去掉不存在的run子命令、systemPrompt拼接到消息、错误消息提取路径event.error?.data?.message | 2026-06-02 |
+| 测试覆盖率提升 | 3个新测试文件(process-registry-extended/claude-code-adapter-extended/attachment-cleanup)，覆盖率86%→91%，修复3个虚假测试，485测试 | 2026-06-02 |
+| Regenerate验证修复 | chat API空消息验证未考虑regenerate场景，485测试 | 2026-06-02 |
+| isPermanentError修复 | stderr捕获+alive检查+永久错误事件检测+send立即throw，isPermanentError路径从不可达变为完全可达，490测试 | 2026-06-02 |
+| Provider导入多源解析 | 新建provider-resolve.ts统一4源解析，修复providers/import和config/import-provider只读TOML的bug，7新测试，497测试 | 2026-06-02 |
+| 工具集硬限制 | Claude Code CLI参数(--allowedTools/--disallowedTools) + OpenCode临时配置文件(OPENCODE_CONFIG) + 工具名映射(edit覆盖write/apply_patch, Agent→task) + 进程key hash隔离 + OPENCODE_PERMISSION冲突处理，16新测试，553测试 | 2026-06-04 |
+| 私聊创建成员修复 | route.ts private分支加agentIds处理 + use-sessions hook加agentIds参数 + UI一步操作 | 2026-06-04 |
+| provider-resolve类型修复 | parseConfigTomlProviders返回类型缺name字段，新增TomlProvider接口 | 2026-06-04 |
+| E2E端到端测试 | 16项功能验证：群聊/消息/@mention/Pin/归档/搜索/Agent CRUD/文件上传/权限/回复/Provider/配置API。发现5个Bug，修复1个 | 2026-06-04 |
+| E2E深度测试(二次) | 117项检查全通过：会话CRUD(23)/Agent CRUD(18)/消息(7)/Pin(5)/成员(8)/Provider(5)/配置(5)/目录(5)/Chat(17)/其他(24)。发现2个新Bug：Pin存在性检查顺序(LLM适配器baseUrl误判) | 2026-06-04 |
+| BUG-007修复 | Pin消息路由：消息存在性检查移到Pin数量限制检查之前，400→404 | 2026-06-04 |
+| BUG-008修复 | LLM适配器：新增detectUseAnthropic()URL检测，/anthropic路径用Anthropic SDK，Anthropic分支支持自定义baseUrl。18新测试，571测试 | 2026-06-04 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-02 更新）
+### 📋 待办（2026-06-04 更新）
 
 | 优先级 | 任务 | 说明 | ISSUE |
 |--------|------|------|-------|
-| 🟡中 | 工具集硬限制 | 后端有 tools 字段，执行时仅 prompt 提示无硬限制；课题要求"适配器根据 tools 加载对应工具" | TOOL-001 |
 | 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 |
 | 🟡中 | 任务恢复提示 | 加载会话时不检查待处理任务 | RECOVER-001 |
 | 🟡中 | 全链路 trace | 无结构化执行日志 | FAIL-007 |

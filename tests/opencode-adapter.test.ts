@@ -29,6 +29,8 @@ describe('OpenCodeAdapter', () => {
     expect(config.workDir).toBe('/project')
     expect(config.command).toBe('opencode')
     expect(config.format).toBe('ndjson')
+    // 不应包含 'run' 子命令
+    expect(config.args).not.toContain('run')
   })
 
   it('connect stores sessionId, agentId, chatSessionId', async () => {
@@ -71,7 +73,7 @@ describe('OpenCodeAdapter', () => {
     )
   })
 
-  it('send builds correct args with model, systemPrompt, session', async () => {
+  it('send builds correct args with model and session', async () => {
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', model: 'claude-3', sessionId: 's1', workDir: '/dir' })
     const gen = adapter.send({ prompt: 'hi', systemPrompt: 'you are PM' })
@@ -79,18 +81,24 @@ describe('OpenCodeAdapter', () => {
     const config = mockSend.mock.calls[0][2]
     expect(config.args).toContain('--model')
     expect(config.args).toContain('claude-3')
-    expect(config.args).toContain('--prompt')
-    expect(config.args).toContain('you are PM')
+    expect(config.args).toContain('-p')
+    expect(config.args).toContain('-f')
+    expect(config.args).toContain('json')
+    expect(config.args).toContain('-c')
+    expect(config.args).toContain('/dir')
     expect(config.args).toContain('--session')
     expect(config.args).toContain('s1')
+    // systemPrompt 拼接到消息中，不在 args 里
+    expect(config.args).not.toContain('--prompt')
   })
 
-  it('send prepends context to prompt', async () => {
+  it('send prepends context and systemPrompt to prompt', async () => {
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', workDir: '/dir' })
-    const gen = adapter.send({ prompt: 'do it', context: 'background info' })
+    const gen = adapter.send({ prompt: 'do it', context: 'background info', systemPrompt: 'you are PM' })
     for await (const _ of gen) { /* consume */ }
     const prompt = mockSend.mock.calls[0][1]
+    expect(prompt).toContain('you are PM')
     expect(prompt).toContain('Context:')
     expect(prompt).toContain('background info')
     expect(prompt).toContain('do it')
