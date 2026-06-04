@@ -93,7 +93,7 @@ prisma/
 
 ### 安全红线
 
-- **API Key 不经浏览器**：`/api/providers/import` 从服务端 config.toml 读取真实 apiKey，浏览器只传 provider name
+- **API Key 不经浏览器**：`/api/providers/import` 从服务端多源（database/cc-switch-db/TOML/settings.json）解析真实 apiKey，浏览器只传 provider name
 - **API 响应不泄露 apiKey**：所有 GET 用 Prisma select 排除 apiKey；providers 用 maskApiKey() 返回掩码值
 - **Mass Assignment 防护**：Agent PUT 白名单不含 status（设计决策#20）；Session PUT 白名单不含 phase/type/phaseStep（设计决策#8/#12），白名单字段：title/projectDir/permissionMode/isPinned/isArchived
 - **iframe sandbox**：`allow-scripts`（设计决策#17），不含 `allow-same-origin`
@@ -112,11 +112,15 @@ prisma/
   - ProcessRegistry key：`${sessionId}:${agentId}:${workDir}`，permission API 必须用相同格式
   - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
-- **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次
+- **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
 - `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
+  - **URL 格式检测**：`detectUseAnthropic(baseUrl, model)` — baseUrl 含 `/anthropic` 路径用 Anthropic SDK，否则用 OpenAI SDK；无 baseUrl 时按 model 前缀判断（`gpt-`/`o1-`/`o3-` → OpenAI，其他 → Anthropic）
   - 支持 abortSignal 取消请求
 - `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
+  - **无 run 子命令**：opencode 直接用根命令标志 `-p -f json -c <workDir>`，不是 `run --format json --dir`
+  - **systemPrompt 拼接**：opencode 不支持 `--prompt` 标志，systemPrompt 拼接到消息头部（与 ClaudeCodeAdapter 同构）
+  - **错误路径**：opencode error 事件结构为 `event.error?.data?.message`，不是 `event.data?.message`
 - Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
 - **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
@@ -132,7 +136,7 @@ prisma/
 
 - Agent 表有 `model`/`baseUrl`/`apiKey` 字段，支持不同 Agent 使用不同供应商
 - **Provider 表**：已保存的服务商配置模板，创建 Agent 时选中后复制到 Agent 自身字段（不是 FK，运行时不引用）
-- **ClaudeCodeAdapter provider 注入**：`spawnProcess` 将 Agent 的 `apiKey` → `ANTHROPIC_API_KEY`，`baseUrl` → `ANTHROPIC_BASE_URL`，`model` → `--model` CLI 参数。空值不注入（不覆盖系统环境变量）。per-agent per-session 独立进程，天然并发隔离
+- **ClaudeCodeAdapter provider 注入**：`spawnProcess` 将 Agent 的 `apiKey` → `ANTHROPIC_API_KEY`，`baseUrl` → `ANTHROPIC_BASE_URL`，`model` → `--model` CLI 参数。**无 baseUrl 时显式注入空字符串清除系统 ANTHROPIC_BASE_URL**（防止继承系统环境的错误端点）。model 为空时不传 `--model`（CLI 用默认模型）。per-agent per-session 独立进程，天然并发隔离
 - **OpenCodeAdapter**：通过环境变量传递 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`
 - **4 个 Provider 数据源**（GET `/api/providers` 合并返回，按 baseUrl 去重，高优先级覆盖低优先级）：
   1. `database` — Provider 表（apiKey 完整返回）
@@ -247,7 +251,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | PUT | `/api/agents/[id]` | 更新 Agent |
 | DELETE | `/api/agents/[id]` | 删除 Agent |
 | GET | `/api/providers` | 服务商列表（合并 4 源：database + cc-switch-db + cc-connect TOML + settings.json） |
-| POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 config.toml 读 apiKey） |
+| POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 4 源解析 apiKey：database → cc-switch-db → TOML → settings.json） |
 | GET | `/api/providers/db` | Provider 表列表（含完整 apiKey） |
 | POST | `/api/providers/db` | 创建 Provider |
 | GET | `/api/providers/db/[id]` | 单个 Provider |
@@ -261,7 +265,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | GET | `/api/config/orchestrator` | Orchestrator 配置（apiKey/model/baseUrl） |
 | POST | `/api/config/orchestrator` | 更新 Orchestrator 配置 |
 | POST | `/api/config/test-connection` | 连接测试（CLI 检测 + LLM 测试） |
-| POST | `/api/config/import-provider` | 从 CC-Switch 导入服务商配置 |
+| POST | `/api/config/import-provider` | 导入服务商配置到 Orchestrator（同 `/api/providers/import`，4 源解析） |
 | POST | `/api/config/detect-platform` | CLI 平台检测（claude-code/opencode） |
 | POST | `/api/deploy` | 模拟部署 |
 | GET | `/api/recent-dirs` | 最近打开的目录列表 |
