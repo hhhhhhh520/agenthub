@@ -1,65 +1,22 @@
 {
-  "date": "2026-05-30",
-  "url": "http://localhost:3000",
-  "healthScore": 76,
+  "date": "2026-06-04",
+  "url": "http://localhost:3099",
+  "healthScore": 87,
   "issues": [
-    {
-      "id": "ISSUE-001",
-      "title": "中文编码乱码",
-      "severity": "critical",
-      "category": "content"
-    },
-    {
-      "id": "ISSUE-002",
-      "title": "删除会话按钮无响应",
-      "severity": "critical",
-      "category": "functional"
-    },
-    {
-      "id": "ISSUE-003",
-      "title": "Agent 响应返回空内容",
-      "severity": "high",
-      "category": "functional"
-    },
-    {
-      "id": "ISSUE-004",
-      "title": "归档功能显示异常",
-      "severity": "medium",
-      "category": "functional"
-    },
-    {
-      "id": "ISSUE-005",
-      "title": "会话创建后未自动跳转",
-      "severity": "medium",
-      "category": "ux"
-    },
-    {
-      "id": "ISSUE-006",
-      "title": "Agent 详情页无删除按钮",
-      "severity": "medium",
-      "category": "functional"
-    },
-    {
-      "id": "ISSUE-007",
-      "title": "搜索过滤不完整",
-      "severity": "low",
-      "category": "functional"
-    },
-    {
-      "id": "ISSUE-008",
-      "title": "响应式设计侧边栏问题",
-      "severity": "low",
-      "category": "ux"
-    }
+    { "id": "ISSUE-001", "title": "Send button click unreliable", "severity": "medium", "category": "functional" },
+    { "id": "ISSUE-002", "title": "Pin button requires wizard dismissal", "severity": "low", "category": "ux" },
+    { "id": "ISSUE-003", "title": "@所有人 API errors for unconfigured agents", "severity": "medium", "category": "functional" },
+    { "id": "ISSUE-004", "title": "Session sidebar doesn't refresh after navigation", "severity": "low", "category": "ux" },
+    { "id": "ISSUE-005", "title": "Agent creation button selector ambiguous", "severity": "low", "category": "ux" }
   ],
   "categoryScores": {
     "console": 100,
     "links": 100,
-    "visual": 70,
-    "functional": 55,
-    "ux": 75,
+    "visual": 100,
+    "functional": 85,
+    "ux": 80,
     "performance": 90,
-    "content": 40,
-    "accessibility": 70
+    "content": 90,
+    "accessibility": 75
   }
 }

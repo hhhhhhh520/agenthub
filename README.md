@@ -12,6 +12,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - **Agent 预设池** — 6 个预设 Agent（架构师/前后端/测试/PM/设计师），全局复用
 - **多供应商** — 每个 Agent 可独立配置 model/baseUrl/apiKey，支持 CC-Switch 导入
 - **混合执行层** — Claude Code CLI / OpenCode CLI 优先，LLM API 兜底
+- **工具集硬限制** — Agent 工具白名单通过 CLI 参数（Claude Code）和配置文件（OpenCode）硬限制，LLM 无法绕过
 - **SSE 流式** — 实时推送 Agent 输出
 - **消息操作** — 回复引用、重新生成、复制代码、操作菜单
 - **产物内联** — 代码块、Web 预览、文件卡片、Diff 视图（Accept/Reject）
@@ -49,7 +50,7 @@ src/lib/adapter/     — 适配器层（LLM / Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（297 个测试）
+tests/               — Vitest 单元测试（553 个测试）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
