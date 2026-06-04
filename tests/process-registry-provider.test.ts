@@ -62,16 +62,14 @@ describe('ProcessRegistry provider env injection', () => {
     expect(capturedArgs[modelIndex + 1]).toBe('claude-sonnet-4-20250514')
   })
 
-  it('should NOT inject provider env when config has no apiKey or baseUrl (inherits from process.env)', () => {
+  it('should clear ANTHROPIC_BASE_URL when config has no baseUrl (avoid inheriting wrong endpoint)', () => {
     const key = `test-${Date.now()}-noprovider`
     processRegistry.getOrCreate(key, {
       workDir: '/tmp/test',
     })
 
-    // Without provider config, env inherits from process.env (no agent-specific override)
-    // The values may exist if the system has them set, but no NEW injection happens
-    expect(capturedEnv.ANTHROPIC_API_KEY).toBe(process.env.ANTHROPIC_API_KEY || undefined)
-    expect(capturedEnv.ANTHROPIC_BASE_URL).toBe(process.env.ANTHROPIC_BASE_URL || undefined)
+    // Without baseUrl config, ANTHROPIC_BASE_URL is cleared to avoid inheriting system endpoint
+    expect(capturedEnv.ANTHROPIC_BASE_URL).toBe('')
   })
 
   it('should NOT add --model arg when model is not provided', () => {
