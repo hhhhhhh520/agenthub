@@ -62,5 +62,11 @@ ${agentList}
     .filter(a => recommendedNames.includes(a.name))
     .map(a => a.id)
 
+  // Always include Orchestrator in recommended agents for coordination
+  const orchestrator = agents.find(a => a.name === 'Orchestrator')
+  if (orchestrator && !recommendedIds.includes(orchestrator.id)) {
+    recommendedIds.push(orchestrator.id)
+  }
+
   return NextResponse.json({ recommendedIds, allAgents: agents, llmUnavailable: llmFailed })
 }
