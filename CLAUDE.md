@@ -68,7 +68,7 @@ prisma/
 - **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
 - **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`
 - **Provider**：已保存的服务商配置模板（`name` 唯一、`baseUrl`、`apiKey`、`model`、`category`）。Agent 选中后复制字段，不是 FK
-- **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）
+- **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）；`trace` JSON 数组记录执行轨迹（start/error/success/correction/blocked）
 - **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status
 - **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
 - **Attachment**：用户上传的图片/文件（`messageId` 可空，先上传后关联；`sessionId` 方便孤儿清理；`onDelete: Cascade` 只删 DB 记录，需 `cleanupAttachmentFiles()` 删磁盘文件）
@@ -114,9 +114,6 @@ prisma/
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
 - **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
-- `platform: 'llm'` → LLMAdapter（需要 ANTHROPIC_API_KEY 或 OpenAI API Key）
-  - **URL 格式检测**：`detectUseAnthropic(baseUrl, model)` — baseUrl 含 `/anthropic` 路径用 Anthropic SDK，否则用 OpenAI SDK；无 baseUrl 时按 model 前缀判断（`gpt-`/`o1-`/`o3-` → OpenAI，其他 → Anthropic）
-  - 支持 abortSignal 取消请求
 - `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
   - **无 run 子命令**：opencode 直接用根命令标志 `-p -f json -c <workDir>`，不是 `run --format json --dir`
   - **systemPrompt 拼接**：opencode 不支持 `--prompt` 标志，systemPrompt 拼接到消息头部（与 ClaudeCodeAdapter 同构）
@@ -185,6 +182,19 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
 - 详见 `docs/design/workspace-and-permissions.md`
+
+### 断点续跑
+
+- GET `/api/sessions/[id]` 自动重置超过 5 分钟未更新的 `in_progress` 任务为 `pending`，返回 `recoveredTaskCount`
+- 避免与活跃 Agent 竞态：只重置 `updatedAt < now - 5min` 的任务
+- 前端收到 `recoveredTaskCount > 0` 时弹恢复 Dialog，用户可选"继续执行"或"跳过"
+- 实现：`src/app/api/sessions/[id]/route.ts` GET handler
+
+### Diff Accept 文件修改检测
+
+- POST `/api/sessions/[id]/files/accept` 写入前用 md5 对比当前文件内容与待写入内容
+- 不一致返回 `409 { error: 'file_modified' }`，前端弹确认框，确认后带 `force: true` 重试跳过检查
+- 新文件（文件不存在）跳过检查，直接写入
 
 ### 文件变更检测
 
@@ -257,7 +267,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 | GET | `/api/providers/db/[id]` | 单个 Provider |
 | PUT | `/api/providers/db/[id]` | 更新 Provider（空 apiKey 不覆盖） |
 | DELETE | `/api/providers/db/[id]` | 删除 Provider |
-| POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件 |
+| POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件（409=文件已被外部修改，`force: true` 跳过检查） |
 | POST | `/api/sessions/[id]/attachments` | 上传附件（FormData，10MB 限制，mimeType 白名单） |
 | GET | `/api/attachments/[id]` | 读取附件文件（路径遍历防护，图片 inline 其他 attachment） |
 | GET | `/api/config` | 通用配置读取（key 查询） |
