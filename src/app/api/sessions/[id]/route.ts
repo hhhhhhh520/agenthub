@@ -24,7 +24,24 @@ export async function GET(
   if (!session) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 })
   }
-  return NextResponse.json(session)
+
+  // 断点续跑：统计并重置卡住的 in_progress 任务
+  const stuckTasks = await prisma.task.findMany({
+    where: { sessionId: id, status: 'in_progress' },
+    select: { id: true },
+  })
+  if (stuckTasks.length > 0) {
+    await prisma.task.updateMany({
+      where: { sessionId: id, status: 'in_progress' },
+      data: { status: 'pending' },
+    })
+    // 同步更新返回数据中 tasks 的状态
+    for (const task of session.tasks) {
+      if (task.status === 'in_progress') task.status = 'pending'
+    }
+  }
+
+  return NextResponse.json({ ...session, recoveredTaskCount: stuckTasks.length })
 }
 
 export async function PUT(

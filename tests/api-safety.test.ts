@@ -13,6 +13,10 @@ vi.mock('@/lib/db', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    task: {
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
     sessionMember: {
       findMany: vi.fn(),
     },
@@ -47,7 +51,7 @@ describe('API Safety — API Key masking via select', () => {
 
     const req = new Request('http://localhost/api/agents', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Test', expertise: 'test', systemPrompt: 'sp', platform: 'llm' }),
+      body: JSON.stringify({ name: 'Test', expertise: 'test', systemPrompt: 'sp', platform: 'claude-code' }),
     })
     await POST(req)
 
@@ -135,6 +139,7 @@ describe('API Safety — Mass Assignment', () => {
     ;(prisma.session.findUnique as any).mockResolvedValue({
       id: '1', members: [], tasks: [], messages: [],
     })
+    ;(prisma.task.findMany as any).mockResolvedValue([])
 
     const req = new Request('http://localhost/api/sessions/1')
     await GET(req, { params: Promise.resolve({ id: '1' }) })
@@ -224,7 +229,7 @@ describe('API Safety — Agent POST platform/accentColor type validation', () =>
 
     const req = new Request('http://localhost/api/agents', {
       method: 'POST',
-      body: JSON.stringify({ name: 'Test', expertise: 'test', systemPrompt: 'sp', platform: 'llm', accentColor: '#6366f1' }),
+      body: JSON.stringify({ name: 'Test', expertise: 'test', systemPrompt: 'sp', platform: 'claude-code', accentColor: '#6366f1' }),
     })
     const res = await POST(req)
     expect(res.status).toBe(201)
