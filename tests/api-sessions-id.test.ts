@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mock setup ---
-const { mockFindUnique, mockUpdate, mockDelete, mockAttachmentFindMany } = vi.hoisted(() => ({
+const { mockFindUnique, mockUpdate, mockDelete, mockAttachmentFindMany, mockTaskFindMany, mockTaskUpdateMany } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockUpdate: vi.fn(),
   mockDelete: vi.fn(),
   mockAttachmentFindMany: vi.fn(),
+  mockTaskFindMany: vi.fn(),
+  mockTaskUpdateMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -14,6 +16,10 @@ vi.mock('@/lib/db', () => ({
       findUnique: mockFindUnique,
       update: mockUpdate,
       delete: mockDelete,
+    },
+    task: {
+      findMany: mockTaskFindMany,
+      updateMany: mockTaskUpdateMany,
     },
     attachment: {
       findMany: mockAttachmentFindMany,
@@ -36,6 +42,7 @@ const params = { params: Promise.resolve({ id: 's1' }) }
 beforeEach(() => {
   vi.clearAllMocks()
   mockAttachmentFindMany.mockResolvedValue([])
+  mockTaskFindMany.mockResolvedValue([]) // 默认无卡住任务
 })
 
 // --- Tests ---
@@ -52,15 +59,30 @@ describe('GET /api/sessions/[id]', () => {
     mockFindUnique.mockResolvedValueOnce(session)
     const res = await GET(makeReq('GET'), params)
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual(session)
-    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 's1' },
-      include: expect.objectContaining({
-        members: expect.anything(),
-        tasks: true,
-        messages: expect.anything(),
-      }),
-    }))
+    const json = await res.json()
+    expect(json.id).toBe('s1')
+    expect(json.recoveredTaskCount).toBe(0)
+    expect(mockTaskFindMany).toHaveBeenCalledWith({
+      where: { sessionId: 's1', status: 'in_progress' },
+      select: { id: true },
+    })
+    expect(mockTaskUpdateMany).not.toHaveBeenCalled() // 无卡住任务时不调用
+  })
+
+  it('resets in_progress tasks and returns recoveredTaskCount', async () => {
+    const session = { id: 's1', members: [], tasks: [{ id: 't1', status: 'in_progress' }], messages: [] }
+    mockFindUnique.mockResolvedValueOnce(session)
+    mockTaskFindMany.mockResolvedValueOnce([{ id: 't1' }])
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 1 })
+    const res = await GET(makeReq('GET'), params)
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.recoveredTaskCount).toBe(1)
+    expect(json.tasks[0].status).toBe('pending') // 返回数据中也更新了
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
+      where: { sessionId: 's1', status: 'in_progress' },
+      data: { status: 'pending' },
+    })
   })
 })
 
