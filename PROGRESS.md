@@ -72,6 +72,8 @@
 | QA-18修复 | runDiscussion过滤error chunk不拼入讨论摘要，error仍通过onChunk转发SSE | 2026-06-05 |
 | TOOL-002实现 | create-agent-dialog工具选择UI：9个工具分3组(文件/执行/网络)多选checkbox，默认全选，提交时传tools字段 | 2026-06-05 |
 | UI-001实现 | 会话列表Agent头像拼图：sessions API返回agent name/accentColor，sidebar显示首字母圆圈(最多3个+剩余数) | 2026-06-05 |
+| 模型名后缀清理 | process-registry.ts: 传递--model前正则去除[xxx]后缀（如mimo-v2.5[1m]→mimo-v2.5），防止API 400 | 2026-06-05 |
+| QA视觉测试 | /browse截图+视觉AI分析：覆盖首页/创建群聊/Agent选择/聊天/Orchestrator响应/Tasks面板/Agent面板/服务商导入/响应式布局，发现7个问题 | 2026-06-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
