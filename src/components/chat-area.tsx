@@ -395,6 +395,17 @@ function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionI
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filePath, content }),
       })
+      if (res.status === 409) {
+        const confirmed = window.confirm('文件已被外部修改，是否覆盖？')
+        if (!confirmed) return
+        const retryRes = await fetch(`/api/sessions/${sessionId}/files/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath, content, force: true }),
+        })
+        if (retryRes.ok) setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
+        return
+      }
       if (res.ok) {
         setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
       }
