@@ -282,7 +282,8 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                     <input
                       type="checkbox"
                       checked={isSelected}
-                      onChange={() => toggleAgent(agent.id)}
+                      onChange={(e) => { e.stopPropagation(); toggleAgent(agent.id) }}
+                      onClick={(e) => e.stopPropagation()}
                       className="accent-blue-500"
                     />
                     <Avatar size="sm">
