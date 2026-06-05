@@ -53,7 +53,7 @@ model Agent {
   name         String  @unique            // 中文角色名，如"前端工程师"
   expertise    String                    // 专长描述
   systemPrompt String                    // Agent 行为规范
-  platform     String  @default("claude-code")   // claude-code | opencode | llm
+  platform     String  @default("claude-code")   // claude-code | opencode
   model        String  @default("")      // 模型标识，如 claude-opus-4-7
   baseUrl      String  @default("")      // 服务商 base_url（CC-Switch 导入）
   apiKey       String  @default("")      // 服务商 API Key（加密存储）
@@ -96,6 +96,7 @@ model Task {
   workspacePath   String?                      // CLI Agent 隔离工作区路径
   cliSessionId    String?                      // CLI Agent sessionID，用于会话恢复
   correctionCount Int      @default(0)        // 纠偏重试计数器
+  trace           String   @default("[]")     // JSON 数组，执行轨迹
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

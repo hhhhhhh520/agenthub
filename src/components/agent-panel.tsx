@@ -31,6 +31,7 @@ interface Task {
   status: string
   assignedAgentId: string
   dependencies: string
+  trace?: string
 }
 
 const TASK_STATUS_ICONS: Record<string, string> = {
@@ -44,6 +45,7 @@ const TASK_STATUS_ICONS: Record<string, string> = {
 export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | null; onPrivateChat?: (agentId: string, agentName: string) => void }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set())
   const [tab, setTab] = useState<'agents' | 'tasks'>('agents')
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
@@ -157,22 +159,48 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
               })}
             </>
           )}
-          {tab === 'tasks' && tasks.map(task => (
-            <div key={task.id} className="p-2 bg-white rounded border text-sm">
-              <div className="flex items-center gap-2">
-                <span>{TASK_STATUS_ICONS[task.status] || task.status}</span>
-                <span className="flex-1">{task.description}</span>
-                {(task.status === 'failed' || task.status === 'blocked') && (
-                  <button
-                    onClick={() => { setRedoTask(task); setRedoDescription(task.description) }}
-                    className="text-xs text-blue-500 hover:underline whitespace-nowrap"
-                  >
-                    重做
-                  </button>
+          {tab === 'tasks' && tasks.map(task => {
+            let traceEntries: Array<{ ts: string; event: string; message?: string; agent?: string; attempt?: number; duration_ms?: number }> = []
+            try { traceEntries = JSON.parse(task.trace || '[]') } catch {}
+            const isExpanded = expandedTraces.has(task.id)
+            return (
+              <div key={task.id} className="p-2 bg-white rounded border text-sm">
+                <div className="flex items-center gap-2">
+                  <span>{TASK_STATUS_ICONS[task.status] || task.status}</span>
+                  <span className="flex-1">{task.description}</span>
+                  {traceEntries.length > 0 && (
+                    <button
+                      onClick={() => setExpandedTraces(prev => { const next = new Set(prev); next.has(task.id) ? next.delete(task.id) : next.add(task.id); return next })}
+                      className="text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      {isExpanded ? '收起' : `trace(${traceEntries.length})`}
+                    </button>
+                  )}
+                  {(task.status === 'failed' || task.status === 'blocked') && (
+                    <button
+                      onClick={() => { setRedoTask(task); setRedoDescription(task.description) }}
+                      className="text-xs text-blue-500 hover:underline whitespace-nowrap"
+                    >
+                      重做
+                    </button>
+                  )}
+                </div>
+                {isExpanded && traceEntries.length > 0 && (
+                  <div className="mt-2 text-xs text-gray-500 space-y-0.5 font-mono">
+                    {traceEntries.map((entry, i) => (
+                      <div key={i}>
+                        {entry.event === 'start' && `▶ ${entry.agent || '?'} 开始执行`}
+                        {entry.event === 'success' && `✓ 完成${entry.duration_ms ? ` (${entry.duration_ms}ms)` : ''}`}
+                        {entry.event === 'error' && `✗ 失败: ${entry.message || '未知错误'}`}
+                        {entry.event === 'correction' && `↻ 纠偏 #${entry.attempt}: ${entry.message || ''}`}
+                        {entry.event === 'blocked' && `⏸ 阻塞: ${entry.message || ''}`}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </ScrollArea>
       <CreateAgentDialog

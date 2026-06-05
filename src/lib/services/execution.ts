@@ -6,6 +6,25 @@ import { getChangedFiles, getGitSnapshot } from './git-utils'
 import { buildContextFromHistory } from './context-builder'
 import type { SendEvent } from './review'
 
+interface TraceEntry {
+  ts: string
+  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction'
+  agent?: string
+  message?: string
+  attempt?: number
+  duration_ms?: number
+}
+
+function appendTrace(existing: string, entry: TraceEntry): string {
+  try {
+    const arr = JSON.parse(existing || '[]')
+    arr.push(entry)
+    return JSON.stringify(arr)
+  } catch {
+    return JSON.stringify([entry])
+  }
+}
+
 export async function handleExecution(
   message: string,
   sessionId: string,
@@ -74,8 +93,12 @@ export async function handleExecution(
     if (readyTasks.length === 0) break
 
     for (const task of readyTasks) {
-      await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress' } })
+      const startTrace = appendTrace(task.trace || '[]', {
+        ts: new Date().toISOString(), event: 'start', agent: agents.find(a => a.id === task.assignedAgentId)?.name,
+      })
+      await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress', trace: startTrace } })
       task.status = 'in_progress'
+      task.trace = startTrace
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
 
@@ -111,9 +134,12 @@ export async function handleExecution(
       )
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
-    } catch {
+    } catch (err) {
       for (const task of readyTasks) {
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'failed' } })
+        const failTrace = appendTrace(task.trace || '[]', {
+          ts: new Date().toISOString(), event: 'error', message: err instanceof Error ? err.message : 'Task batch execution failed',
+        })
+        await prisma.task.update({ where: { id: task.id }, data: { status: 'failed', trace: failTrace } })
         task.status = 'failed'
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
       }
@@ -123,7 +149,10 @@ export async function handleExecution(
     for (const taskId of batchFailedIds) {
       const task = tasks.find(t => t.id === taskId)
       if (task && task.status !== 'failed') {
-        await prisma.task.update({ where: { id: taskId }, data: { status: 'failed' } })
+        const failTrace = appendTrace(task.trace || '[]', {
+          ts: new Date().toISOString(), event: 'error', message: 'Task failed in batch execution',
+        })
+        await prisma.task.update({ where: { id: taskId }, data: { status: 'failed', trace: failTrace } })
         task.status = 'failed'
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
       }
@@ -131,9 +160,13 @@ export async function handleExecution(
 
     for (const [taskId, { result, sessionId: cliSessionId }] of results) {
       allResults.set(taskId, result)
+      const taskForTrace = tasks.find(t => t.id === taskId)
+      const successTrace = appendTrace(taskForTrace?.trace || '[]', {
+        ts: new Date().toISOString(), event: 'success',
+      })
       await prisma.task.update({
         where: { id: taskId },
-        data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0 },
+        data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace },
       })
       const task = tasks.find(t => t.id === taskId)
       if (task) task.status = 'completed'
@@ -167,8 +200,11 @@ export async function handleExecution(
 
             const retryCount = task?.correctionCount ?? 0
             if (retryCount < 2) {
-              await prisma.task.update({ where: { id: taskId }, data: { status: 'pending', correctionCount: retryCount + 1 } })
-              if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1 }
+              const correctionTrace = appendTrace(task?.trace || '[]', {
+                ts: new Date().toISOString(), event: 'correction', message: review.correctionNote, attempt: retryCount + 1,
+              })
+              await prisma.task.update({ where: { id: taskId }, data: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace } })
+              if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace }
               sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
               hasProgress = true
             } else {
@@ -187,7 +223,10 @@ export async function handleExecution(
         return dep?.status === 'failed'
       })
       if (hasFailedDep) {
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'blocked' } })
+        const blockedTrace = appendTrace(task.trace || '[]', {
+          ts: new Date().toISOString(), event: 'blocked', message: '依赖任务失败',
+        })
+        await prisma.task.update({ where: { id: task.id }, data: { status: 'blocked', trace: blockedTrace } })
         task.status = 'blocked'
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'blocked' }) })
       }
