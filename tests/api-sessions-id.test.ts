@@ -62,14 +62,15 @@ describe('GET /api/sessions/[id]', () => {
     const json = await res.json()
     expect(json.id).toBe('s1')
     expect(json.recoveredTaskCount).toBe(0)
-    expect(mockTaskFindMany).toHaveBeenCalledWith({
-      where: { sessionId: 's1', status: 'in_progress' },
+    // 只检查 findMany 被调用，具体参数含 updatedAt 时间窗口
+    expect(mockTaskFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ sessionId: 's1', status: 'in_progress' }),
       select: { id: true },
-    })
+    }))
     expect(mockTaskUpdateMany).not.toHaveBeenCalled() // 无卡住任务时不调用
   })
 
-  it('resets in_progress tasks and returns recoveredTaskCount', async () => {
+  it('resets stuck in_progress tasks (older than 5min) and returns recoveredTaskCount', async () => {
     const session = { id: 's1', members: [], tasks: [{ id: 't1', status: 'in_progress' }], messages: [] }
     mockFindUnique.mockResolvedValueOnce(session)
     mockTaskFindMany.mockResolvedValueOnce([{ id: 't1' }])
@@ -80,7 +81,7 @@ describe('GET /api/sessions/[id]', () => {
     expect(json.recoveredTaskCount).toBe(1)
     expect(json.tasks[0].status).toBe('pending') // 返回数据中也更新了
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
-      where: { sessionId: 's1', status: 'in_progress' },
+      where: { id: { in: ['t1'] } },
       data: { status: 'pending' },
     })
   })

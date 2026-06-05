@@ -25,19 +25,24 @@ export async function GET(
     return NextResponse.json({ error: 'Session not found' }, { status: 404 })
   }
 
-  // 断点续跑：统计并重置卡住的 in_progress 任务
+  // 断点续跑：重置超过 5 分钟未更新的 in_progress 任务（避免与活跃 Agent 竞态）
+  const STUCK_THRESHOLD_MS = 5 * 60 * 1000
   const stuckTasks = await prisma.task.findMany({
-    where: { sessionId: id, status: 'in_progress' },
+    where: {
+      sessionId: id,
+      status: 'in_progress',
+      updatedAt: { lt: new Date(Date.now() - STUCK_THRESHOLD_MS) },
+    },
     select: { id: true },
   })
   if (stuckTasks.length > 0) {
+    const stuckIds = stuckTasks.map(t => t.id)
     await prisma.task.updateMany({
-      where: { sessionId: id, status: 'in_progress' },
+      where: { id: { in: stuckIds } },
       data: { status: 'pending' },
     })
-    // 同步更新返回数据中 tasks 的状态
     for (const task of session.tasks) {
-      if (task.status === 'in_progress') task.status = 'pending'
+      if (stuckIds.includes(task.id)) task.status = 'pending'
     }
   }
 
