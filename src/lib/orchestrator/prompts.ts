@@ -61,12 +61,12 @@ export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，
 → {"action":"execute","target":null,"targets":null,"message":"开始执行","reason":"疑问已解答，开始执行"}`
 
 export const ROLE_GENERATION_PROMPT = `你是一个团队组建专家。根据任务类型，生成合适的 Agent 角色。
-每个 Agent 需要：name（中文角色名）、expertise（专长描述）、systemPrompt（角色行为规范）、platform（llm 或 claude-code）。
-代码类任务的 Agent platform 设为 "claude-code"，其他设为 "llm"。
+每个 Agent 需要：name（中文角色名）、expertise（专长描述）、systemPrompt（角色行为规范）、platform（claude-code 或 opencode）。
+platform 设为 "claude-code"。
 返回 JSON 数组，不要包含其他文字：
 {
   "agents": [
-    { "name": "...", "expertise": "...", "systemPrompt": "...", "platform": "llm" }
+    { "name": "...", "expertise": "...", "systemPrompt": "...", "platform": "claude-code" }
   ]
 }`
 

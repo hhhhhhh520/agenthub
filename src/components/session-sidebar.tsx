@@ -5,7 +5,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 interface Session {
   id: string
   title: string
+  type?: string
   updatedAt: string
+  members?: Array<{ agentId: string; agent?: { name: string; accentColor: string } }>
 }
 
 interface Props {
@@ -47,6 +49,29 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
               tabIndex={0}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(session.id) }}
             >
+              {session.type === 'group' && session.members && session.members.length > 0 && (
+                <div className="flex -space-x-1.5 mr-2 shrink-0">
+                  {session.members.slice(0, 3).map(m => {
+                    const name = m.agent?.name || m.agentId
+                    const color = m.agent?.accentColor || '#6366f1'
+                    return (
+                      <div
+                        key={m.agentId}
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium border border-white"
+                        style={{ backgroundColor: color, color: '#fff' }}
+                        title={name}
+                      >
+                        {name.charAt(0)}
+                      </div>
+                    )
+                  })}
+                  {session.members.length > 3 && (
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] bg-gray-200 text-gray-600 border border-white">
+                      +{session.members.length - 3}
+                    </div>
+                  )}
+                </div>
+              )}
               <span className="truncate flex-1 min-w-0">{session.title}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); handleDelete(session.id, session.title) }}

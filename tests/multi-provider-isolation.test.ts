@@ -47,8 +47,8 @@ describe('LLMAdapter — SDK selection logic', () => {
     const adapter1 = new LLMAdapter()
     const adapter2 = new LLMAdapter()
 
-    await adapter1.connect({ platform: 'llm', apiKey: 'key-1', model: 'gpt-4', baseUrl: 'https://api1.example.com' })
-    await adapter2.connect({ platform: 'llm', apiKey: 'key-2', model: 'claude-sonnet-4-20250514' })
+    await adapter1.connect({ platform: 'claude-code', apiKey: 'key-1', model: 'gpt-4', baseUrl: 'https://api1.example.com' })
+    await adapter2.connect({ platform: 'claude-code', apiKey: 'key-2', model: 'claude-sonnet-4-20250514' })
 
     // Both should be independently usable — connecting one doesn't affect the other
     const iter1 = adapter1.send({ prompt: 'test1' })
@@ -65,8 +65,8 @@ describe('LLMAdapter — SDK selection logic', () => {
     const adapter1 = new LLMAdapter()
     const adapter2 = new LLMAdapter()
 
-    await adapter1.connect({ platform: 'llm', apiKey: 'key-1' })
-    await adapter2.connect({ platform: 'llm', apiKey: 'key-2' })
+    await adapter1.connect({ platform: 'claude-code', apiKey: 'key-1' })
+    await adapter2.connect({ platform: 'claude-code', apiKey: 'key-2' })
 
     // Abort adapter1
     await adapter1.close()
@@ -102,7 +102,7 @@ describe('LLMAdapter — baseUrl normalization', () => {
     for (const baseUrl of baseUrls) {
       const adapter = new LLMAdapter()
       await expect(
-        adapter.connect({ platform: 'llm', apiKey: 'test', model: 'deepseek-chat', baseUrl })
+        adapter.connect({ platform: 'claude-code', apiKey: 'test', model: 'deepseek-chat', baseUrl })
       ).resolves.toBeUndefined()
       await adapter.close()
     }
@@ -115,7 +115,7 @@ describe('createAdapter — instance isolation', () => {
   it('should create independent adapter instances for different platforms', async () => {
     const { createAdapter } = await import('../src/lib/adapter')
 
-    const llm = createAdapter({ platform: 'llm' })
+    const llm = createAdapter({ platform: 'claude-code' })
     const cli = createAdapter({ platform: 'claude-code' })
     const oc = createAdapter({ platform: 'opencode' })
 
@@ -128,8 +128,8 @@ describe('createAdapter — instance isolation', () => {
   it('should create new instance on every call (no singleton)', async () => {
     const { createAdapter } = await import('../src/lib/adapter')
 
-    const a1 = createAdapter({ platform: 'llm' })
-    const a2 = createAdapter({ platform: 'llm' })
+    const a1 = createAdapter({ platform: 'claude-code' })
+    const a2 = createAdapter({ platform: 'claude-code' })
     expect(a1).not.toBe(a2)
   })
 })
@@ -260,18 +260,18 @@ describe('Provider isolation — simulated multi-agent execution', () => {
     const { createAdapter } = await import('../src/lib/adapter')
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
 
-    // Agent A: LLM with DeepSeek (baseUrl present)
-    const agentA = createAdapter({ platform: 'llm', baseUrl: 'https://api.deepseek.com', apiKey: 'ds-key', model: 'deepseek-chat' })
+    // Agent A: Claude Code with DeepSeek
+    const agentA = createAdapter({ platform: 'claude-code', baseUrl: 'https://api.deepseek.com', apiKey: 'ds-key', model: 'deepseek-chat' })
 
     // Agent B: Claude Code CLI
     const agentB = createAdapter({ platform: 'claude-code', apiKey: 'claude-key', model: 'claude-opus-4-7' })
 
-    // Agent C: LLM with OpenAI (no baseUrl, gpt- model)
-    const agentC = createAdapter({ platform: 'llm', apiKey: 'openai-key', model: 'gpt-4o' })
+    // Agent C: Claude Code with OpenAI
+    const agentC = createAdapter({ platform: 'claude-code', apiKey: 'openai-key', model: 'gpt-4o' })
 
-    expect(agentA).toBeInstanceOf(LLMAdapter)
+    expect(agentA.constructor.name).toBe('ClaudeCodeAdapter')
     expect(agentB.constructor.name).toBe('ClaudeCodeAdapter')
-    expect(agentC).toBeInstanceOf(LLMAdapter)
+    expect(agentC.constructor.name).toBe('ClaudeCodeAdapter')
 
     // All are different instances
     expect(agentA).not.toBe(agentC)
@@ -288,7 +288,7 @@ describe('Provider isolation — simulated multi-agent execution', () => {
 
     const adapters = agents.map(a => {
       const adapter = new LLMAdapter()
-      return adapter.connect({ platform: 'llm', ...a }).then(() => adapter)
+      return adapter.connect({ platform: 'claude-code', ...a }).then(() => adapter)
     })
 
     const resolved = await Promise.all(adapters)

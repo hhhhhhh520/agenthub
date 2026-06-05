@@ -20,7 +20,7 @@ vi.mock('@/lib/db', () => ({
 const { mockGetOrchestratorDecision, mockExecuteSingleAgent, mockGetOrchestratorAgent } = vi.hoisted(() => ({
   mockGetOrchestratorDecision: vi.fn(),
   mockExecuteSingleAgent: vi.fn().mockResolvedValue({ result: 'agent reply' }),
-  mockGetOrchestratorAgent: vi.fn().mockReturnValue({ platform: 'llm', apiKey: 'sk', model: 'test', baseUrl: '' }),
+  mockGetOrchestratorAgent: vi.fn().mockReturnValue({ platform: 'claude-code', apiKey: 'sk', model: 'test', baseUrl: '' }),
 }))
 
 vi.mock('@/lib/orchestrator', () => ({
@@ -62,8 +62,8 @@ import { handleOrchestratorDecision, validateDecision, handleOrchestratorChat } 
 
 const sendEvent = vi.fn()
 const agents = [
-  { id: 'a1', name: 'PM', systemPrompt: '', platform: 'llm', expertise: 'product', model: '', baseUrl: '', apiKey: '', tools: '[]' },
-  { id: 'a2', name: '架构师', systemPrompt: '', platform: 'llm', expertise: 'arch', model: '', baseUrl: '', apiKey: '', tools: '[]' },
+  { id: 'a1', name: 'PM', systemPrompt: '', platform: 'claude-code', expertise: 'product', model: '', baseUrl: '', apiKey: '', tools: '[]' },
+  { id: 'a2', name: '架构师', systemPrompt: '', platform: 'claude-code', expertise: 'arch', model: '', baseUrl: '', apiKey: '', tools: '[]' },
 ]
 
 beforeEach(() => {
@@ -71,7 +71,7 @@ beforeEach(() => {
   mockMessageFindMany.mockResolvedValue([])
   mockTaskCount.mockResolvedValue(0)
   mockExecuteSingleAgent.mockResolvedValue({ result: 'agent reply' })
-  mockGetOrchestratorAgent.mockReturnValue({ platform: 'llm', apiKey: 'sk', model: 'test', baseUrl: '' })
+  mockGetOrchestratorAgent.mockReturnValue({ platform: 'claude-code', apiKey: 'sk', model: 'test', baseUrl: '' })
 })
 
 describe('validateDecision', () => {
@@ -178,7 +178,7 @@ describe('handleOrchestratorDecision', () => {
 describe('handleOrchestratorChat', () => {
   it('calls executeSingleAgent and saves result', async () => {
     mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
-    await handleOrchestratorChat('hello', 's1', sendEvent, [{ name: 'PM', expertise: 'product', platform: 'llm' }])
+    await handleOrchestratorChat('hello', 's1', sendEvent, [{ name: 'PM', expertise: 'product', platform: 'claude-code' }])
     expect(mockExecuteSingleAgent).toHaveBeenCalled()
     expect(mockMessageCreate).toHaveBeenCalledWith({
       data: { role: 'orchestrator', rawContent: 'agent reply', sessionId: 's1' },

@@ -63,7 +63,7 @@ vi.mock('@/lib/orchestrator', () => ({
   generateRoles: mockGenerateRoles,
   decomposeTasks: mockDecomposeTasks,
   parseJSON: vi.fn(),
-  getOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'llm', model: 'test', apiKey: 'key', baseUrl: '' }),
+  getOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: 'test', apiKey: 'key', baseUrl: '' }),
   formatArchitectPlan: vi.fn().mockReturnValue('## 架构师方案\n'),
   runDiscussion: vi.fn().mockResolvedValue([]),
   topologicalSort: vi.fn(),
@@ -110,7 +110,7 @@ import { handleExecution } from '@/lib/services/execution'
 // ── Helpers ────────────────────────────────────────────────────────
 function makeAgent(overrides?: Partial<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>) {
   return {
-    id: 'agent-1', name: '测试Agent', systemPrompt: '你是测试Agent', platform: 'llm',
+    id: 'agent-1', name: '测试Agent', systemPrompt: '你是测试Agent', platform: 'claude-code',
     expertise: '测试', model: 'test', baseUrl: '', apiKey: '', tools: '[]', ...overrides,
   }
 }

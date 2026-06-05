@@ -36,9 +36,10 @@
 
 ### 4. LLM adapter 保留但不使用
 
-- `llm-adapter.ts` 文件保留在代码中，`platform: 'llm'` 类型保留在 types.ts
+- `llm-adapter.ts` 文件保留在代码中（备用）
+- `platform: 'llm'` 类型已从 types.ts 移除，所有入口已切断
 - Orchestrator 和子 Agent 的执行路径不再使用 `llm` adapter
-- Agent 创建时的 platform 默认值从 `'llm'` 改为 `'claude-code'`
+- Agent 创建时的 platform 默认值为 `'claude-code'`
 - 保留原因：未来可能支持直接 API 调用场景
 
 ### 5. 配置向导改为"导入平台配置"
@@ -109,7 +110,7 @@
 | `src/lib/adapter/llm-adapter.ts` | 保留但不再被 Orchestrator/子 Agent 使用 |
 | `src/lib/adapter/claude-code-adapter.ts` | 保持不变 |
 | `src/lib/adapter/opencode-adapter.ts` | 保持不变 |
-| `src/lib/adapter/types.ts` | `platform: 'llm'` 类型保留 |
+| `src/lib/adapter/types.ts` | `platform: 'llm'` 类型已移除（2026-06-04） |
 
 ## 验证标准
 

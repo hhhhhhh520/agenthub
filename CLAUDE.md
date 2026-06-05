@@ -223,8 +223,6 @@ Orchestrator 自主决定流程，支持 8 种 action：
 ### 设计文档（必读）
 
 - **v2 设计决策**：`docs/design/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
-- **适配器生命周期重构**：`docs/design/adapter-lifecycle-refactor.md` — SessionManager + OneShotRunner 重构方案，补齐 OpenCode 重试/超时/清理能力
-- **Skill 功能**：`docs/design/skill-feature-plan.md` — Skill 表 + AgentSkill 关联 + `~/.claude/skills/` 写入 + CLI 原生发现
 - **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、变更检测
 - **实现计划**：`docs/design/implementation-plan.md` — 8 阶段任务拆分
 - 参考资料：`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`

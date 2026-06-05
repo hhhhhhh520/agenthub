@@ -37,7 +37,7 @@ export async function POST(request: Request) {
         name: provider,
         expertise: 'general',
         systemPrompt: `You are ${provider}, a helpful AI assistant.`,
-        platform: 'llm',
+        platform: 'claude-code',
         model: resolved.model,
         baseUrl: resolved.baseUrl,
         apiKey: resolved.apiKey,

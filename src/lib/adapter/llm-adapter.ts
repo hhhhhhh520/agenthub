@@ -12,7 +12,7 @@ export function detectUseAnthropic(baseUrl?: string, model?: string): boolean {
 }
 
 export class LLMAdapter implements AgentAdapter {
-  private config: AdapterConfig = { platform: 'llm' }
+  private config: AdapterConfig = { platform: 'claude-code' }
   private abortController = new AbortController()
 
   async connect(config: AdapterConfig): Promise<void> {

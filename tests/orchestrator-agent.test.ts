@@ -60,7 +60,7 @@ describe('getOrchestratorAgent', () => {
     // getOrchestratorConfig is mocked to return config-key/gpt-4
 
     const result = await getOrchestratorAgent()
-    expect(result.platform).toBe('llm')
+    expect(result.platform).toBe('claude-code')
     expect(result.model).toBe('gpt-4')
     expect(result.apiKey).toBe('config-key')
   })
@@ -75,7 +75,7 @@ describe('getOrchestratorAgent', () => {
     })
 
     const result = await getOrchestratorAgent()
-    expect(result.platform).toBe('llm')
+    expect(result.platform).toBe('claude-code')
     expect(result.model).toBe('claude-sonnet-4-20250514')
   })
 })

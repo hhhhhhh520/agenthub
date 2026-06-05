@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const { mockEnsureOrchestratorAgent, mockGetOrchestratorConfig, mockAgentFindFirst, mockSessionMemberUpdateMany, mockAgentFindById } = vi.hoisted(() => ({
   mockEnsureOrchestratorAgent: vi.fn().mockResolvedValue(undefined),
   mockGetOrchestratorConfig: vi.fn().mockResolvedValue({ apiKey: 'sk', model: 'test', baseUrl: '' }),
-  mockAgentFindFirst: vi.fn().mockResolvedValue({ id: 'orch-1', platform: 'llm', model: 'test', baseUrl: '', apiKey: 'sk' }),
+  mockAgentFindFirst: vi.fn().mockResolvedValue({ id: 'orch-1', platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' }),
   mockSessionMemberUpdateMany: vi.fn(),
   mockAgentFindById: vi.fn(),
 }))
@@ -63,7 +63,7 @@ import {
 beforeEach(() => {
   vi.clearAllMocks()
   mockEnsureOrchestratorAgent.mockResolvedValue(undefined)
-  mockAgentFindFirst.mockResolvedValue({ id: 'orch-1', platform: 'llm', model: 'test', baseUrl: '', apiKey: 'sk' })
+  mockAgentFindFirst.mockResolvedValue({ id: 'orch-1', platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' })
   mockAdapterConnect.mockResolvedValue(undefined)
   mockAdapterClose.mockResolvedValue(undefined)
   // Default: adapter yields one text chunk then closes
@@ -75,7 +75,7 @@ beforeEach(() => {
 describe('getOrchestratorAgent', () => {
   it('returns agent config from DB', async () => {
     const result = await getOrchestratorAgent()
-    expect(result.platform).toBe('llm')
+    expect(result.platform).toBe('claude-code')
     expect(result.model).toBe('test')
     expect(mockEnsureOrchestratorAgent).toHaveBeenCalled()
   })
@@ -84,7 +84,7 @@ describe('getOrchestratorAgent', () => {
     mockAgentFindFirst.mockResolvedValueOnce(null)
     mockGetOrchestratorConfig.mockResolvedValueOnce({ apiKey: 'cfg-key', model: 'cfg-model', baseUrl: 'cfg-url' })
     const result = await getOrchestratorAgent()
-    expect(result.platform).toBe('llm')
+    expect(result.platform).toBe('claude-code')
     expect(result.model).toBe('cfg-model')
     expect(result.apiKey).toBe('cfg-key')
   })
@@ -163,7 +163,7 @@ describe('getOrchestratorDecision', () => {
     mockAdapterSend.mockImplementation(async function* () {
       yield { type: 'text', content: JSON.stringify({ action: 'self', message: 'hi', reason: 'greeting' }) }
     })
-    const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'llm' }], 'context')
+    const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'claude-code' }], 'context')
     expect(result.action).toBe('self')
     expect(result.reason).toBe('greeting')
   })
@@ -172,7 +172,7 @@ describe('getOrchestratorDecision', () => {
 describe('generateRoles', () => {
   it('calls LLM and parses agents list', async () => {
     mockAdapterSend.mockImplementation(async function* () {
-      yield { type: 'text', content: JSON.stringify({ agents: [{ name: 'PM', expertise: 'product', systemPrompt: 'you are PM', platform: 'llm' }] }) }
+      yield { type: 'text', content: JSON.stringify({ agents: [{ name: 'PM', expertise: 'product', systemPrompt: 'you are PM', platform: 'claude-code' }] }) }
     })
     const result = await generateRoles('code', 'build a todo app')
     expect(result).toHaveLength(1)
@@ -194,7 +194,7 @@ describe('executeSingleAgent', () => {
     })
     const onChunk = vi.fn()
     const result = await executeSingleAgent(
-      { name: 'PM', systemPrompt: 'sp', platform: 'llm' },
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
       'do task', 'ctx', onChunk
     )
     expect(result.result).toBe('hello from agent')
@@ -207,7 +207,7 @@ describe('executeSingleAgent', () => {
       yield { type: 'text', content: 'done' }
     })
     const result = await executeSingleAgent(
-      { name: 'PM', systemPrompt: 'sp', platform: 'llm' },
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
       'task', '', vi.fn()
     )
     expect(result.sessionId).toBe('sess-123')
@@ -219,7 +219,7 @@ describe('executeSingleAgent', () => {
     })
     const onChunk = vi.fn()
     const result = await executeSingleAgent(
-      { name: 'PM', systemPrompt: 'sp', platform: 'llm' },
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
       'task', '', onChunk
     )
     expect(result.result).toBe('[Agent 未返回有效内容]')
@@ -230,7 +230,7 @@ describe('executeSingleAgent', () => {
       yield { type: 'text', content: 'ok' }
     })
     await executeSingleAgent(
-      { name: 'PM', systemPrompt: 'sp', platform: 'llm', tools: '["bash","read"]' },
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code', tools: '["bash","read"]' },
       'do it', '', vi.fn()
     )
     const sendCall = mockAdapterSend.mock.calls[0][0]
@@ -247,7 +247,7 @@ describe('executeTaskBatch', () => {
     const tasks = [
       { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
     ]
-    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'llm' }]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
     const { results, failedTaskIds } = await executeTaskBatch(tasks, agents, 'ctx', vi.fn())
     expect(results.get('t1')?.result).toBe('task result')
     expect(failedTaskIds).toEqual([])
@@ -258,7 +258,7 @@ describe('executeTaskBatch', () => {
     const tasks = [
       { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
     ]
-    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'llm' }]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
     const { failedTaskIds } = await executeTaskBatch(tasks, agents, 'ctx', vi.fn())
     expect(failedTaskIds).toContain('t1')
   })
@@ -273,7 +273,7 @@ describe('executeTaskBatch', () => {
       { id: 't1', description: 'first', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
       { id: 't2', description: 'second', assignedAgent: 'PM', dependencies: ['t1'], declaredFiles: [], batch: 1 },
     ]
-    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'llm' }]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
     await executeTaskBatch(tasks, agents, 'ctx', vi.fn())
     expect(callOrder.length).toBe(2)
   })
@@ -285,8 +285,8 @@ describe('runDiscussion', () => {
       yield { type: 'text', content: 'my opinion' }
     })
     const agents = [
-      { name: 'PM', systemPrompt: 'sp', platform: 'llm' },
-      { name: 'Arch', systemPrompt: 'sp2', platform: 'llm' },
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
+      { name: 'Arch', systemPrompt: 'sp2', platform: 'claude-code' },
     ]
     const opinions = await runDiscussion('topic', agents, 2, vi.fn())
     expect(opinions).toHaveLength(4) // 2 agents * 2 rounds
@@ -300,7 +300,7 @@ describe('runDiscussion', () => {
       if (callCount === 1) throw new Error('fail')
       yield { type: 'text', content: 'ok' }
     })
-    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'llm' }]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
     const opinions = await runDiscussion('topic', agents, 1, vi.fn())
     expect(opinions[0]).toContain('讨论出错')
   })

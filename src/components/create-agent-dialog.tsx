@@ -23,7 +23,20 @@ interface AgentData {
   apiKey?: string
   accentColor: string
   capabilities: string
+  tools?: string
 }
+
+const AVAILABLE_TOOLS = [
+  { name: 'Read', label: '读取文件', group: '文件' },
+  { name: 'Write', label: '写入文件', group: '文件' },
+  { name: 'Edit', label: '编辑文件', group: '文件' },
+  { name: 'Glob', label: '文件搜索', group: '文件' },
+  { name: 'Grep', label: '内容搜索', group: '文件' },
+  { name: 'Bash', label: '执行命令', group: '执行' },
+  { name: 'Agent', label: '子代理', group: '执行' },
+  { name: 'WebFetch', label: '网页抓取', group: '网络' },
+  { name: 'WebSearch', label: '网络搜索', group: '网络' },
+]
 
 interface Provider {
   id?: string
@@ -54,6 +67,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   const [accentColor, setAccentColor] = useState('#6366f1')
   const [capInput, setCapInput] = useState('')
   const [capabilities, setCapabilities] = useState<string[]>([])
+  const [tools, setTools] = useState<string[]>(AVAILABLE_TOOLS.map(t => t.name))
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [providers, setProviders] = useState<Provider[]>([])
@@ -74,6 +88,10 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
       setApiKey(editAgent.apiKey || '')
       setAccentColor(editAgent.accentColor || '#6366f1')
       try { setCapabilities(JSON.parse(editAgent.capabilities)) } catch { setCapabilities([]) }
+      try {
+        const parsed = JSON.parse(editAgent.tools || '[]')
+        setTools(Array.isArray(parsed) && parsed.length > 0 ? parsed : AVAILABLE_TOOLS.map(t => t.name))
+      } catch { setTools(AVAILABLE_TOOLS.map(t => t.name)) }
     }
   }, [open, editAgent])
 
@@ -108,6 +126,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     setApiKey('')
     setAccentColor('#6366f1')
     setCapabilities([])
+    setTools(AVAILABLE_TOOLS.map(t => t.name))
     setCapInput('')
     setError('')
     setShowProviders(false)
@@ -118,7 +137,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     setBaseUrl(p.baseUrl)
     setModel(p.model)
     setApiKey(p.apiKey)
-    setPlatform(p.agentType === 'claudecode' ? 'claude-code' : p.agentType === 'opencode' ? 'opencode' : 'llm')
+    setPlatform(p.agentType === 'opencode' ? 'opencode' : 'claude-code')
     setShowProviders(false)
   }
 
@@ -140,6 +159,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
         apiKey: apiKey || undefined,
         accentColor,
         capabilities,
+        tools,
       }
 
       const url = isEdit ? `/api/agents/${editAgent!.id}` : '/api/agents'
@@ -198,7 +218,6 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
             <select className="w-full rounded border px-3 py-2 text-sm" value={platform} onChange={e => setPlatform(e.target.value)}>
               <option value="claude-code">Claude Code CLI</option>
               <option value="opencode">OpenCode CLI</option>
-              <option value="llm">LLM API</option>
             </select>
           </div>
 
@@ -302,6 +321,35 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
                 ))}
               </div>
             )}
+          </div>
+          <div>
+            <label className="text-sm font-medium">可用工具</label>
+            <p className="text-xs text-gray-400 mb-2">未勾选的工具将被 CLI 硬限制禁止调用</p>
+            {['文件', '执行', '网络'].map(group => (
+              <div key={group} className="mb-2">
+                <span className="text-xs text-gray-500">{group}</span>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1">
+                  {AVAILABLE_TOOLS.filter(t => t.group === group).map(tool => (
+                    <label key={tool.name} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={tools.includes(tool.name)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setTools(prev => [...prev, tool.name])
+                          } else {
+                            setTools(prev => prev.filter(t => t !== tool.name))
+                          }
+                        }}
+                        className="accent-blue-500"
+                      />
+                      {tool.label}
+                      <span className="text-xs text-gray-400">({tool.name})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
           {error && <p className="text-sm text-red-500">{error}</p>}
         </div>

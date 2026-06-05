@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     orderBy: { updatedAt: 'desc' },
     include: {
       _count: { select: { messages: true, members: true } },
-      members: { select: { agentId: true } },
+      members: { select: { agentId: true, agent: { select: { name: true, accentColor: true } } } },
     },
   })
   return NextResponse.json(sessions)

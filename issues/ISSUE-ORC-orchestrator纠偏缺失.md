@@ -1,5 +1,5 @@
 # Orchestrator 纠错行为缺失问题
-> 创建时间: 2026-05-23 | 状态: 🟡部分解决
+> 创建时间: 2026-05-23 | 状态: 🟢已解决
 
 ## 问题描述
 
@@ -65,17 +65,24 @@ Orchestrator: 其他 Agent 有问题吗？
 - 现有保护已覆盖：120s 无输出超时 kill、事后 LLM 审查 + 纠偏重试（最多 2 次）+ 熔断器
 - 真正需要语义判断的"方向跑偏"只能靠 LLM，但事后审查已承担此职责
 
-### ISSUE-ORC-004: 阶段切换不显式
+### ISSUE-ORC-004: 阶段切换不显式 — 🟢已解决 (2026-06-04 验证)
 
-**位置**: `src/lib/orchestrator/index.ts:84-101` (`getOrchestratorDecision`)
+**位置**: `src/lib/orchestrator/index.ts:27` (`OrchestratorDecision`)
 
 设计要求主持人"控制阶段切换（对齐 → 执行）"
 
-**问题**：
+**原问题**：
 - 只有 `self/delegate/discuss/done` 四种决策模式
 - Session 表有 `phase` 和 `phaseStep` 字段，但没有显式的阶段控制逻辑
 - 用户说"确认"时没有推进到下一阶段的固定流程
 - Orchestrator 需要根据上下文"自主判断"当前阶段，容易出错
+
+**已解决**：
+- `OrchestratorDecision` 已扩展为 8 种 action：`self | delegate | discuss | align_confirm | align_decompose | align_qa | execute | done`
+- `Session` 表有 `phase`（idle/alignment/execution/done）和 `phaseStep`（pm_confirm/architect_plan/agent_qa）字段
+- `chat-router.ts` 的 `validateDecision()` 强制阶段转换规则：alignment 阶段禁止 done，execution 阶段禁止 align_*
+- `alignment.ts` 显式推进 pm_confirm → architect_plan → agent_qa → execution
+- 前端 `chat-area.tsx` 渲染阶段指示器
 
 ## 实现状态对照表
 

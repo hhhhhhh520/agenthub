@@ -41,7 +41,11 @@ vi.mock('@/lib/orchestrator/prompts', () => ({
   ORCHESTRATOR_DECISION_PROMPT: '',
 }))
 
-import { callLLMForAnalysis } from '@/lib/orchestrator'
+vi.mock('@/lib/mcp-config', () => ({
+  buildMCPConfig: vi.fn(),
+}))
+
+import { callLLMForAnalysis, runDiscussion } from '@/lib/orchestrator'
 
 describe('callLLMForAnalysis — chunk accumulation', () => {
   beforeEach(() => {
@@ -89,5 +93,46 @@ describe('callLLMForAnalysis — chunk accumulation', () => {
     mockChunks.push({ type: 'status', content: 'completed' })
 
     await expect(callLLMForAnalysis('test prompt')).rejects.toThrow('LLM returned empty response')
+  })
+})
+
+describe('runDiscussion — error chunk filtering (QA-18)', () => {
+  beforeEach(() => {
+    mockChunks.length = 0
+  })
+
+  it('should NOT include error chunks in discussion opinions', async () => {
+    mockChunks.push({ type: 'text', content: '我认为应该用 React' })
+    mockChunks.push({ type: 'error', content: 'API rate limit exceeded' })
+
+    const onChunk = vi.fn()
+    const opinions = await runDiscussion('test topic', [{ name: '前端工程师', systemPrompt: 'test' }], 1, onChunk)
+
+    expect(opinions[0]).toContain('我认为应该用 React')
+    expect(opinions[0]).not.toContain('API rate limit exceeded')
+  })
+
+  it('should use EMPTY_RESPONSE when only error chunks received', async () => {
+    mockChunks.push({ type: 'error', content: 'Connection timeout' })
+
+    const onChunk = vi.fn()
+    const opinions = await runDiscussion('test topic', [{ name: '测试工程师', systemPrompt: 'test' }], 1, onChunk)
+
+    expect(opinions[0]).not.toContain('Connection timeout')
+    expect(opinions[0]).toContain('测试工程师')
+  })
+
+  it('should still forward error chunks to onChunk for SSE display', async () => {
+    mockChunks.push({ type: 'text', content: '正常回复' })
+    mockChunks.push({ type: 'error', content: 'Some warning' })
+
+    const onChunk = vi.fn()
+    await runDiscussion('test topic', [{ name: '后端工程师', systemPrompt: 'test' }], 1, onChunk)
+
+    // error chunk is still forwarded via onChunk for real-time display
+    expect(onChunk).toHaveBeenCalledWith('后端工程师', { type: 'error', content: 'Some warning' })
+    // but NOT accumulated into the opinion
+    const textCalls = onChunk.mock.calls.filter(c => c[1].type === 'text')
+    expect(textCalls.length).toBe(1)
   })
 })

@@ -3,11 +3,6 @@ import { createAdapter } from '../src/lib/adapter'
 import { LLMAdapter } from '../src/lib/adapter/llm-adapter'
 
 describe('createAdapter', () => {
-  it('should create LLMAdapter for llm platform', () => {
-    const adapter = createAdapter({ platform: 'llm' })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
-  })
-
   it('should create ClaudeCodeAdapter for claude-code platform', () => {
     const adapter = createAdapter({ platform: 'claude-code' })
     expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
@@ -18,18 +13,18 @@ describe('createAdapter', () => {
     expect(adapter.constructor.name).toBe('OpenCodeAdapter')
   })
 
-  it('should default to LLMAdapter for unknown platform', () => {
+  it('should default to ClaudeCodeAdapter for unknown platform', () => {
     const adapter = createAdapter({ platform: 'unknown' as any })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
+    expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
   })
 
-  it('should default to LLMAdapter when platform is not specified', () => {
+  it('should default to ClaudeCodeAdapter when platform is not specified', () => {
     const adapter = createAdapter({ platform: undefined as any })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
+    expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
   })
 })
 
-describe('LLMAdapter', () => {
+describe('LLMAdapter (retained, not exposed via createAdapter)', () => {
   it('should implement AgentAdapter interface (connect/send/close)', () => {
     const adapter = new LLMAdapter()
     expect(typeof adapter.connect).toBe('function')
@@ -37,9 +32,9 @@ describe('LLMAdapter', () => {
     expect(typeof adapter.close).toBe('function')
   })
 
-  it('connect should accept AdapterConfig without throwing', async () => {
+  it('connect should accept config without throwing', async () => {
     const adapter = new LLMAdapter()
-    await expect(adapter.connect({ platform: 'llm', apiKey: 'test', model: 'gpt-4' })).resolves.toBeUndefined()
+    await expect(adapter.connect({ platform: 'claude-code', apiKey: 'test', model: 'gpt-4' })).resolves.toBeUndefined()
   })
 
   it('send should return an async iterable', () => {
@@ -59,26 +54,24 @@ describe('LLMAdapter', () => {
     for await (const chunk of adapter.send({ prompt: 'test' })) {
       chunks.push(chunk)
     }
-    // Should either yield an error chunk or complete without crashing
-    // The exact behavior depends on the AI SDK, but it should not hang
     expect(chunks.length).toBeGreaterThanOrEqual(0)
   })
 })
 
 describe('createAdapter — config passthrough', () => {
+  it('should create ClaudeCodeAdapter with workDir', () => {
+    const adapter = createAdapter({ platform: 'claude-code', workDir: '/project' })
+    expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
+  })
+
   it('should create adapter regardless of extra config fields', () => {
     const adapter = createAdapter({
-      platform: 'llm',
+      platform: 'claude-code',
       apiKey: 'sk-test',
-      model: 'gpt-4',
+      model: 'claude-sonnet-4-20250514',
       baseUrl: 'https://api.example.com',
       workDir: '/tmp',
     })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
-  })
-
-  it('should create ClaudeCodeAdapter with workDir', () => {
-    const adapter = createAdapter({ platform: 'claude-code', workDir: '/project' })
     expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
   })
 })

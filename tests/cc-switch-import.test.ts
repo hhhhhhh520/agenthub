@@ -351,7 +351,7 @@ describe('POST /api/providers/import — import to agent', () => {
 
   it('should create new agent when agentId is not provided', async () => {
     const { prisma } = await import('@/lib/db')
-    const mockAgent = { id: 'new-agent-456', name: 'test-provider', expertise: 'llm', platform: 'llm' }
+    const mockAgent = { id: 'new-agent-456', name: 'test-provider', expertise: 'llm', platform: 'claude-code' }
     ;(prisma.agent.create as any).mockResolvedValue(mockAgent)
 
     const { POST } = await import('@/app/api/providers/import/route')
