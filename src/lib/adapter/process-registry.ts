@@ -205,7 +205,12 @@ class ProcessRegistry {
       }
 
       if (config.model) {
-        args.push('--model', config.model)
+        // Strip bracket suffixes like [1m] that some providers add but APIs don't recognize
+        const cleanModel = config.model.replace(/\[.*?\]/g, '')
+        if (cleanModel !== config.model) {
+          console.log(`[ProcessRegistry] Model name cleaned: "${config.model}" → "${cleanModel}"`)
+        }
+        args.push('--model', cleanModel)
       }
 
       // 工具硬限制：通过 CLI 参数传递
