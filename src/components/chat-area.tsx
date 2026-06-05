@@ -11,6 +11,7 @@ import { MessageActionMenu } from '@/components/message-action-menu'
 import { WebPreview } from '@/components/web-preview'
 import { CodeDiff } from '@/components/code-diff'
 import { Shield, Pin } from 'lucide-react'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FileCard } from '@/components/file-card'
 import { AttachmentInput, type AttachmentPreview } from '@/components/attachment-input'
 
@@ -38,6 +39,8 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   const [replyTo, setReplyTo] = useState<{ id: string; rawContent: string; role: string } | null>(null)
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
   const [showCommands, setShowCommands] = useState(false)
+  const [showRecovery, setShowRecovery] = useState(false)
+  const [recoveredCount, setRecoveredCount] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -53,6 +56,16 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         })
         setAgentNames(names)
         setAgentColorMap(colorMap)
+      })
+      .catch(() => {})
+    // 断点续跑：检查是否有任务被恢复
+    fetch(`/api/sessions/${sessionId}`)
+      .then(r => r.json())
+      .then((session: { recoveredTaskCount?: number }) => {
+        if (session.recoveredTaskCount && session.recoveredTaskCount > 0) {
+          setRecoveredCount(session.recoveredTaskCount)
+          setShowRecovery(true)
+        }
       })
       .catch(() => {})
   }, [sessionId, loadMessages])
@@ -347,6 +360,20 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           )}
         </div>
       </div>
+      <Dialog open={showRecovery} onOpenChange={setShowRecovery}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>发现未完成的任务</DialogTitle>
+            <DialogDescription>
+              上次有 {recoveredCount} 个任务未完成，已自动恢复为待执行状态。是否继续执行？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRecovery(false)}>跳过</Button>
+            <Button onClick={() => { setShowRecovery(false); send('继续执行未完成的任务') }}>继续执行</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
