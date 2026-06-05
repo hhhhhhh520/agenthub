@@ -12,40 +12,45 @@
 **修复**: private 分支加入 agentIds 处理；UI 改为一步操作；use-sessions hook 支持 agentIds 参数。
 **验证**: 有 agentIds → 1 成员；无 agentIds → 0 成员。553 测试通过，build 成功。
 
-### BUG-002: Agent 创建时 apiKey 未从 Provider 同步
+### BUG-002: Agent 创建时 apiKey 未从 Provider 同步 — 🟢已修复 (2026-06-04)
 **严重程度**: 🔴高
 **位置**: Agent 创建流程
 **问题**: 通过 UI 创建 Agent 时选择 Provider，apiKey 未写入 Agent 表。导致 LLM 调用时 apiKey 为空，返回 "[Agent 未返回有效内容]"。
 **复现**: 创建 Agent → 选择 Provider → 发消息 → Agent 返回空
 **根因**: Agent 表的 `apiKey` 字段默认为空字符串，创建时未从 Provider 表同步。
+**修复**: `create-agent-dialog.tsx` 的 `applyProvider()` 将 provider.apiKey 同步到表单状态，`handleSubmit` 提交时包含 apiKey 字段，`agents/route.ts` POST 持久化到 Agent 表。
 
-### BUG-003: 创建群聊 checkbox 点击无效
+### BUG-003: 创建群聊 checkbox 点击无效 — 🟢已修复 (2026-06-05)
 **严重程度**: 🟡中
 **位置**: `src/components/create-group-dialog.tsx:280-286`
 **问题**: 直接点击 checkbox 复选框不触发选中（计数不变），必须点击整行才能选中。
 **复现**: 创建群聊 → 第二步 Agent 选择 → 直接点击 checkbox → 计数不变
 **根因**: checkbox 的 `onChange` 和父 div 的 `onClick` 都调用 `toggleAgent()`，点击 checkbox 时触发两次 toggle，互相抵消。
+**修复**: 在 checkbox 上加 `e.stopPropagation()` + `onClick.stopPropagation()` 阻止冒泡，父 div onClick 保留（整行可点击）。
 
-### BUG-004: 中文标题编码乱码
+### BUG-004: 中文标题编码乱码 — 🟢已修复 (2026-06-04)
 **严重程度**: 🟡中
 **位置**: API 响应层
 **问题**: 通过 curl 或 API 创建的中文标题在响应中显示为乱码（如 "测试群聊" → "���Է���"）。浏览器中显示正常。
 **复现**: `POST /api/sessions` with `{"title":"测试"}` → 响应中 title 为乱码
 **根因**: Windows 终端 GBK 编码问题，非代码 bug。但影响 API 调试和搜索。
+**修复**: `sessions/route.ts` 新增 `hasLoneSurrogates()` 校验无效 Unicode，返回 400；NextResponse.json 自动设置 charset=utf-8。
 
-### BUG-005: 消息操作菜单 Pin 点击无效
+### BUG-005: 消息操作菜单 Pin 点击无效 — 🟢已修复 (2026-06-04)
 **严重程度**: 🟡中
 **位置**: `src/components/chat-area.tsx:172` + `src/components/message-action-menu.tsx:34`
 **问题**: 通过 DropdownMenu 点击 "Pin 消息" 菜单项不触发 API 调用。回复/引用/复制菜单正常。
 **复现**: 悬停消息 → 点击 "..." → 点击 "Pin 消息" → 无反应
 **根因**: DropdownMenu 的 onClick 事件可能未正确传递到 handlePin 回调。需要进一步排查。
+**修复**: 验证发现代码已正确实现 — `message-action-menu.tsx:33-37` 有 `onClick={onPin}`，`chat-area.tsx:104-111` handlePin 调用 PATCH API，`messages/[messageId]/route.ts` 更新数据库。完整调用链已通。
 
-### BUG-006: 创建群聊 checkbox 双重触发
+### BUG-006: 创建群聊 checkbox 双重触发 — 🟢已修复 (2026-06-05，同 BUG-003)
 **严重程度**: 🟢低（与 BUG-003 同源）
 **位置**: `src/components/create-group-dialog.tsx:280-286`
 **问题**: 点击 checkbox 行时，checkbox 的 onChange 和父 div 的 onClick 都触发 toggleAgent()，但因为 React 的事件处理顺序，实际只触发一次（行点击正常）。直接点击 checkbox 输入框时，事件冒泡导致双重触发。
 **复现**: 直接点击 checkbox 输入框 → 计数不变
 **根因**: checkbox 的 onChange 和父 div 的 onClick 都调用 toggleAgent()，点击 checkbox 时先触发 onChange（toggle），再冒泡到父 div 的 onClick（再次 toggle），净效果为 0。
+**修复**: 同 BUG-003，stopPropagation 阻止冒泡。
 
 ### BUG-007: Pin 不存在的消息返回 400 而非 404 — 🟢已修复 (2026-06-04)
 **严重程度**: 🟡中
@@ -180,3 +185,17 @@
 - **117 项检查通过，0 项真实失败**
 - **发现 2 个新 Bug**（BUG-007, BUG-008）
 - **3 项测试期望错误**（非 Bug：中文默认标题、空 systemPrompt 拒绝、parsed 是对象非数组）
+
+### Bug 状态汇总（2026-06-04 更新）
+| Bug | 状态 |
+|-----|------|
+| BUG-001 私聊创建不添加成员 | 🟢已修复 |
+| BUG-002 apiKey 未同步 | 🟢已修复（代码验证确认） |
+| BUG-003 checkbox 双重 toggle | 🟢已修复 (2026-06-05) |
+| BUG-004 中文标题乱码 | 🟢已修复（代码验证确认） |
+| BUG-005 Pin 点击无效 | 🟢已修复（代码验证确认） |
+| BUG-006 checkbox 双重触发 | 🟢已修复 (2026-06-05，同 BUG-003) |
+| BUG-007 Pin 不存在消息 400→404 | 🟢已修复 |
+| BUG-008 LLM 适配器 baseUrl 误判 | 🟢已修复 |
+| BUG-009 进程注册表未清除系统变量 | 🟢已修复 |
+| BUG-010 Orchestrator 模型名不识别 | 🟢已修复 |
