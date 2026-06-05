@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-02
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-05
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
@@ -50,6 +50,11 @@
 | isPermanentError修复 | stderr捕获+alive检查+永久错误事件检测+send立即throw，isPermanentError路径从不可达变为完全可达，490测试 | 2026-06-02 |
 | Provider导入多源解析 | 新建provider-resolve.ts统一4源解析，修复providers/import和config/import-provider只读TOML的bug，7新测试，497测试 | 2026-06-02 |
 | 工具集硬限制 | Claude Code CLI参数(--allowedTools/--disallowedTools) + OpenCode临时配置文件(OPENCODE_CONFIG) + 工具名映射(edit覆盖write/apply_patch, Agent→task) + 进程key hash隔离 + OPENCODE_PERMISSION冲突处理，16新测试，553测试 | 2026-06-04 |
+| BUG-003修复 | 群聊checkbox双重toggle：onChange+onClick冲突，stopPropagation阻止冒泡（ISSUE-待办讨论结果） | 2026-06-05 |
+| 断点续跑 | GET session时自动重置in_progress任务为pending，返回recoveredTaskCount（ISSUE-待办讨论结果） | 2026-06-05 |
+| RECOVER-001 | 任务恢复提示UI：加载会话时弹Dialog提示"上次有N个任务未完成，是否继续？" | 2026-06-05 |
+| DIFF-001 | Accept前文件修改检测：md5对比，不一致返回409，前端弹确认框，8新测试 | 2026-06-05 |
+| FAIL-007 | 全链路trace：Task表加trace字段，execution.ts各关键节点写trace，前端可展开查看，4新测试，583测试 | 2026-06-05 |
 | 私聊创建成员修复 | route.ts private分支加agentIds处理 + use-sessions hook加agentIds参数 + UI一步操作 | 2026-06-04 |
 | provider-resolve类型修复 | parseConfigTomlProviders返回类型缺name字段，新增TomlProvider接口 | 2026-06-04 |
 | E2E端到端测试 | 16项功能验证：群聊/消息/@mention/Pin/归档/搜索/Agent CRUD/文件上传/权限/回复/Provider/配置API。发现5个Bug，修复1个 | 2026-06-04 |
@@ -58,20 +63,25 @@
 | BUG-008修复 | LLM适配器：新增detectUseAnthropic()URL检测，/anthropic路径用Anthropic SDK，Anthropic分支支持自定义baseUrl。18新测试，571测试 | 2026-06-04 |
 | BUG-009修复 | 进程注册表：无baseUrl时清除系统ANTHROPIC_BASE_URL，避免CLI用错误端点 | 2026-06-04 |
 | BUG-010修复 | app-config：Orchestrator默认model改为空字符串，CLI用自身默认模型 | 2026-06-04 |
+| 移除LLM平台 | 15个源码文件+12个测试+种子数据+Schema：类型移除'llm'、工厂移除LLMAdapter分支、所有fallback改'claude-code'、UI移除LLM选项、删除3个llm Agent。LLMAdapter代码保留备用。570测试通过 | 2026-06-04 |
+| BUG-002修复确认 | Agent创建时apiKey已从Provider同步：applyProvider()同步到表单+handleSubmit提交+API持久化 | 2026-06-04 |
+| BUG-004修复确认 | 中文标题编码：hasLoneSurrogates()校验+NextResponse.json自动charset=utf-8 | 2026-06-04 |
+| BUG-005修复确认 | Pin消息：message-action-menu.tsx onClick={onPin}已正确实现，完整调用链已通 | 2026-06-04 |
+| ISSUE-ORC-004确认 | 阶段切换已实现：8种action+phase/phaseStep字段+validateDecision()强制转换+alignment.ts显式推进 | 2026-06-04 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-04 更新）
+### 📋 待办（2026-06-05 更新）
 
-| 优先级 | 任务 | 说明 | ISSUE |
-|--------|------|------|-------|
-| 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 |
-| 🟡中 | 任务恢复提示 | 加载会话时不检查待处理任务 | RECOVER-001 |
-| 🟡中 | 全链路 trace | 无结构化执行日志 | FAIL-007 |
-| 🟢低 | 会话列表头像拼图 | 无 Agent 头像聚合展示 | UI-001 |
+| 优先级 | 任务 | 说明 | ISSUE | 状态 |
+|--------|------|------|-------|------|
+| 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 | ✅已解决 |
+| 🟡中 | 任务恢复提示 | 加载会话时不检查待处理任务 | RECOVER-001 | ✅已解决 |
+| 🟡中 | 全链路 trace | 无结构化执行日志 | FAIL-007 | ✅已解决 |
+| 🟢低 | 会话列表头像拼图 | 无 Agent 头像聚合展示 | UI-001 | 待定 |
 
 **已关闭（代码已实现但文档未更新）**：
 - ISSUE-ORC-001（对齐流程）— handlePMConfirm/handleArchitectPlan/handleAgentQA 已完整接入
