@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
+import { writeFile, mkdir, readFile } from 'fs/promises'
+import { createHash } from 'crypto'
 import { join, dirname, resolve } from 'path'
 
 const SENSITIVE_PATHS = ['.env', '.git', 'node_modules', '.next']
@@ -9,7 +10,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
-  const { filePath, content, target } = await request.json()
+  const { filePath, content, target, force } = await request.json()
 
   if (!filePath || content === undefined) {
     return NextResponse.json({ error: 'filePath and content are required' }, { status: 400 })
@@ -45,6 +46,23 @@ export async function POST(
   for (const part of parts) {
     if (SENSITIVE_PATHS.includes(part)) {
       return NextResponse.json({ error: 'Cannot write to sensitive path' }, { status: 403 })
+    }
+  }
+
+  // 文件修改检测：文件已存在时对比内容 hash
+  if (!force) {
+    try {
+      const currentContent = await readFile(fullPath, 'utf-8')
+      const currentHash = createHash('md5').update(currentContent).digest('hex')
+      const newHash = createHash('md5').update(content).digest('hex')
+      if (currentHash !== newHash) {
+        return NextResponse.json({
+          error: 'file_modified',
+          message: '文件已被外部修改，是否覆盖？',
+        }, { status: 409 })
+      }
+    } catch {
+      // 文件不存在，跳过检查（新文件正常写入）
     }
   }
 
