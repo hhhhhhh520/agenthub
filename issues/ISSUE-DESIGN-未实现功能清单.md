@@ -11,7 +11,7 @@
 
 详见 `issues/ISSUE-ORC-orchestrator纠偏缺失.md`
 
-**状态更新（2026-05-30 验证）**：ISSUE-ORC-001（对齐流程）已完整实现。ISSUE-ORC-002（纠偏范围）部分解决 — 批量执行中所有 Agent 都被审查，但单 Agent 调用路径无监控。ISSUE-ORC-003/004 仍待解决。
+**状态更新（2026-06-04 验证）**：ISSUE-ORC-001（对齐流程）已完整实现。ISSUE-ORC-002（纠偏范围）部分解决 — 批量执行中所有 Agent 都被审查，但单 Agent 调用路径无监控。ISSUE-ORC-003 不实施。ISSUE-ORC-004（阶段控制）已实现 — Session 表有 phase/phaseStep 字段，chat-router.ts 有 validateDecision() 强制阶段转换，OrchestratorDecision 有 8 种 action（含 align_confirm/align_decompose/align_qa/execute）。
 
 ---
 
@@ -131,7 +131,7 @@
 
 ---
 
-### ISSUE-FAIL-007: 全链路可观测未实现
+### ISSUE-FAIL-007: 全链路可观测 — 🟢已解决 (2026-06-05)
 
 **设计要求**（第 474-481 行）：
 - 任务为什么失败？（错误类型、错误信息）
@@ -139,9 +139,14 @@
 - 降级到哪个模型了？效果如何？
 - Orchestrator 为什么没发现跑偏？
 
-**实际状态**: ❌ 未实现
-- 没有结构化 trace 日志
-- 没有失败/重试/降级的记录
+**实际状态**: ✅ 已实现
+- Task 表新增 `trace` JSON 字段，记录结构化执行轨迹
+- 5 种事件类型：`start`（含 agent 名）、`error`（含错误信息）、`success`、`correction`（含 attempt 次数）、`blocked`（含原因）
+- `execution.ts` 各关键节点写入 trace（任务开始、成功、失败、纠偏、阻塞）
+- `agent-panel.tsx` Task 卡片可展开查看 trace 详情
+- 4 个针对性测试覆盖
+
+**相关文件**: `prisma/schema.prisma`, `src/lib/services/execution.ts`, `src/components/agent-panel.tsx`, `tests/execution-trace.test.ts`
 
 ---
 
@@ -239,15 +244,19 @@
 
 **设计文档位置**: 第 220 行
 
-### ISSUE-DIFF-001: Accept 前文件修改检测未实现
+### ISSUE-DIFF-001: Accept 前文件修改检测 — 🟢已解决 (2026-06-05)
 
 **设计要求**（第 220 行）：
 > Accept 前检查文件是否被用户手动修改过，不一致则提示"文件已被修改，是否覆盖？"
 
-**实际状态**: ❌ 未实现
-- `CodeDiff` 组件有 Accept/Reject 按钮（`src/components/code-diff.tsx:53-54`）
-- `accept` API 只写文件，没有检查是否被修改（`src/app/api/sessions/[id]/files/accept/route.ts`）
-- 没有文件版本/M5 时间戳比对
+**实际状态**: ✅ 已实现
+- `files/accept/route.ts` 写入前用 md5 对比当前文件内容与待写入内容
+- 不一致返回 `409 { error: 'file_modified' }`，前端弹确认框
+- 确认后带 `force: true` 重试跳过检查
+- 新文件（不存在）跳过检查
+- 8 个针对性测试覆盖
+
+**相关文件**: `src/app/api/sessions/[id]/files/accept/route.ts`, `src/components/chat-area.tsx`, `tests/api-files-accept.test.ts`
 
 ---
 
@@ -275,14 +284,17 @@
 
 **设计文档位置**: 第 148-149 行
 
-### ISSUE-RECOVER-001: 未完成任务恢复提示未实现
+### ISSUE-RECOVER-001: 未完成任务恢复提示 — 🟢已解决 (2026-06-05)
 
 **设计要求**（第 149 行）：
 > 用户重新打开会话时，检查有没有 `in_progress` 状态的任务，提示用户「上次有未完成的任务，是否继续？」
 
-**实际状态**: ❌ 未实现
-- 前端加载会话时没有检查任务状态
-- 没有恢复提示 UI
+**实际状态**: ✅ 已实现
+- GET `/api/sessions/[id]` 自动重置超过 5 分钟未更新的 `in_progress` 任务为 `pending`，返回 `recoveredTaskCount`
+- 前端 `chat-area.tsx` 收到 `recoveredTaskCount > 0` 时弹 Dialog："上次有 N 个任务未完成，是否继续执行？"
+- 点"继续执行"触发 `send()`，点"跳过"关闭弹窗
+
+**相关文件**: `src/app/api/sessions/[id]/route.ts`, `src/components/chat-area.tsx`
 
 ---
 
@@ -335,19 +347,19 @@
 | ISSUE-ORC-001 | 对齐流程（PM 确认、Agent 提问） | 第 61-93 行 | **高** | 🟢已解决 |
 | ISSUE-ORC-002 | 纠偏范围（批量执行已全平台，单 Agent 调用缺失） | route.ts:747-773 | **高** | 🟡部分解决 |
 | ISSUE-ORC-003 | 无持续监督机制，只在任务完成后审查 | 第 311-316 行 | 中 | ⚪不实施 |
-| ISSUE-ORC-004 | 无显式阶段切换控制 | 第 57-59 行 | 中 | ❌ |
+| ISSUE-ORC-004 | 无显式阶段切换控制 | 第 57-59 行 | 中 | 🟢已解决 |
 | ISSUE-FAIL-001 | CLI 进程崩溃重试（无错误分类/指数退避） | 第 400-408 行 | **高** | 🟢已解决 |
 | ISSUE-FAIL-002 | 无降级能力检查 | 第 410-418 行 | 中 | ❌ |
 | ISSUE-FAIL-003 | 无确定性质量检测机制 | 第 420-429 行 | 中 | ⚪不实施 |
 | ISSUE-FAIL-004 | 纠偏熔断器计数器未持久化 | 第 431-439 行 | 中 | 🟢已解决 |
 | ISSUE-FAIL-006 | 无用户操作面板（重试/跳过/回滚） | 第 463-472 行 | **高** | ❌ |
-| ISSUE-FAIL-007 | 无全链路可观测 trace | 第 474-481 行 | 中 | ❌ |
+| ISSUE-FAIL-007 | 无全链路可观测 trace | 第 474-481 行 | 中 | 🟢已解决 |
 | ISSUE-CTX-001 | Agent 级 pin 消息未实现 | 第 382 行 | **高** | 🟢已解决 |
 | ISSUE-TOOL-001 | 工具集硬限制 | 第 276 行 | 中 | 🟢已解决 |
 | ISSUE-TOOL-002 | Orchestrator 工具推荐 UI 缺失 | 第 277 行 | 中 | 🟡部分解决 |
-| ISSUE-DIFF-001 | Diff Accept 前无文件修改检测 | 第 220 行 | 中 | ❌ |
+| ISSUE-DIFF-001 | Diff Accept 前无文件修改检测 | 第 220 行 | 中 | 🟢已解决 |
 | ISSUE-CLI-001 | 长驻进程模式 | 第 135-138 行 | 低 | 🟢已解决 |
-| ISSUE-RECOVER-001 | 无未完成任务恢复提示 | 第 149 行 | 中 | ❌ |
+| ISSUE-RECOVER-001 | 无未完成任务恢复提示 | 第 149 行 | 中 | 🟢已解决 |
 | ISSUE-AGENT-001 | Agent 状态未在任务生命周期更新 | 第 305 行 | 低 | 🟢已解决 |
 | ISSUE-UI-001 | 会话列表无 Agent 头像拼图 | 第 303 行 | 低 | ❌ |
 
