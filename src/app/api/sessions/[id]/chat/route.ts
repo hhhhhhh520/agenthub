@@ -121,7 +121,7 @@ export async function POST(
             sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
 
             const { result } = await executeSingleAgent(
-              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'llm', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
+              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'claude-code', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
               original.rawContent,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),

@@ -1,5 +1,5 @@
 export interface AdapterConfig {
-  platform: 'llm' | 'claude-code' | 'opencode'
+  platform: 'claude-code' | 'opencode'
   apiKey?: string
   workDir?: string
   model?: string

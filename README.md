@@ -5,14 +5,14 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 ## 功能
 
 - **三栏 IM 布局** — 会话列表 | 聊天区 | Agent 面板
-- **拉群流程** — 描述任务 → LLM 推荐 Agent → 用户增减 → 确认建群
+- **拉群流程** — 描述任务 → AI 推荐 Agent → 用户增减 → 确认建群
 - **三种会话** — Orchestrator 主会话 | 群聊（多 Agent 协作） | 私聊（1v1）
 - **Orchestrator** — 系统级协调器，负责选人 + 拆任务 + 监督 + 纠偏
 - **对齐流程** — PM 确认需求 → 架构师确认技术方案+任务拆解 → 其他 Agent 提问
 - **Agent 预设池** — 6 个预设 Agent（架构师/前后端/测试/PM/设计师），全局复用
 - **多供应商** — 每个 Agent 可独立配置 model/baseUrl/apiKey，支持 CC-Switch 导入
-- **混合执行层** — Claude Code CLI / OpenCode CLI 优先，LLM API 兜底
-- **工具集硬限制** — Agent 工具白名单通过 CLI 参数（Claude Code）和配置文件（OpenCode）硬限制，LLM 无法绕过
+- **混合执行层** — Claude Code CLI / OpenCode CLI 双平台
+- **工具集硬限制** — Agent 工具白名单通过 CLI 参数（Claude Code）和配置文件（OpenCode）硬限制
 - **SSE 流式** — 实时推送 Agent 输出
 - **消息操作** — 回复引用、重新生成、复制代码、操作菜单
 - **产物内联** — 代码块、Web 预览、文件卡片、Diff 视图（Accept/Reject）
@@ -30,7 +30,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - TailwindCSS 4 + shadcn/ui
 - Prisma 7 + SQLite
 - Monaco Editor
-- Vercel AI SDK + Claude Code CLI + OpenCode CLI
+- Claude Code CLI + OpenCode CLI
 
 ## 快速开始
 
@@ -46,11 +46,11 @@ npm run dev
 ```
 src/app/api/         — REST API + SSE
 src/components/      — UI 组件
-src/lib/adapter/     — 适配器层（LLM / Claude Code CLI / OpenCode CLI）
+src/lib/adapter/     — 适配器层（Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（553 个测试）
+tests/               — Vitest 单元测试（586 个测试）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录

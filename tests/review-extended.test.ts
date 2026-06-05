@@ -38,8 +38,8 @@ import { delegateToAgent, runMultiAgentDiscussion } from '@/lib/services/review'
 
 const sendEvent = vi.fn()
 const agents = [
-  { id: 'a1', name: 'PM', systemPrompt: 'you are PM', platform: 'llm', expertise: 'product', model: 'm1', baseUrl: '', apiKey: '', tools: '[]' },
-  { id: 'a2', name: '架构师', systemPrompt: 'you are arch', platform: 'llm', expertise: 'arch', model: 'm2', baseUrl: '', apiKey: '', tools: '[]' },
+  { id: 'a1', name: 'PM', systemPrompt: 'you are PM', platform: 'claude-code', expertise: 'product', model: 'm1', baseUrl: '', apiKey: '', tools: '[]' },
+  { id: 'a2', name: '架构师', systemPrompt: 'you are arch', platform: 'claude-code', expertise: 'arch', model: 'm2', baseUrl: '', apiKey: '', tools: '[]' },
 ]
 
 beforeEach(() => {
@@ -63,7 +63,7 @@ describe('delegateToAgent', () => {
   it('calls executeSingleAgent with correct config', async () => {
     await delegateToAgent('PM', 'do task', 's1', agents, sendEvent)
     expect(mockExecuteSingleAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'PM', systemPrompt: 'you are PM', platform: 'llm', model: 'm1' }),
+      expect.objectContaining({ name: 'PM', systemPrompt: 'you are PM', platform: 'claude-code', model: 'm1' }),
       'do task',
       'context',
       expect.any(Function),

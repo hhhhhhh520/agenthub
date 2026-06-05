@@ -68,6 +68,10 @@
 | BUG-004修复确认 | 中文标题编码：hasLoneSurrogates()校验+NextResponse.json自动charset=utf-8 | 2026-06-04 |
 | BUG-005修复确认 | Pin消息：message-action-menu.tsx onClick={onPin}已正确实现，完整调用链已通 | 2026-06-04 |
 | ISSUE-ORC-004确认 | 阶段切换已实现：8种action+phase/phaseStep字段+validateDecision()强制转换+alignment.ts显式推进 | 2026-06-04 |
+| QA-16修复 | use-chat.ts网络异常catch块添加用户可见错误消息（之前只console.error） | 2026-06-05 |
+| QA-18修复 | runDiscussion过滤error chunk不拼入讨论摘要，error仍通过onChunk转发SSE | 2026-06-05 |
+| TOOL-002实现 | create-agent-dialog工具选择UI：9个工具分3组(文件/执行/网络)多选checkbox，默认全选，提交时传tools字段 | 2026-06-05 |
+| UI-001实现 | 会话列表Agent头像拼图：sessions API返回agent name/accentColor，sidebar显示首字母圆圈(最多3个+剩余数) | 2026-06-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
@@ -76,24 +80,13 @@
 
 ### 📋 待办（2026-06-05 更新）
 
-| 优先级 | 任务 | 说明 | ISSUE | 状态 |
-|--------|------|------|-------|------|
-| 🟡中 | Diff Accept 修改检测 | 写入前无 mtime/hash 对比 | DIFF-001 | ✅已解决 |
-| 🟡中 | 任务恢复提示 | 加载会话时不检查待处理任务 | RECOVER-001 | ✅已解决 |
-| 🟡中 | 全链路 trace | 无结构化执行日志 | FAIL-007 | ✅已解决 |
-| 🟢低 | 会话列表头像拼图 | 无 Agent 头像聚合展示 | UI-001 | 待定 |
-
-**已关闭（代码已实现但文档未更新）**：
-- ISSUE-ORC-001（对齐流程）— handlePMConfirm/handleArchitectPlan/handleAgentQA 已完整接入
-- ISSUE-CLI-001（长驻进程）— ProcessRegistry 进程池复用 + globalThis 持久化 + 10 分钟空闲回收
-- ISSUE-AGENT-001（状态同步）— idle→working→idle 生命周期 + 前端状态圆点
-- ISSUE-019（删除会话按钮）— 嵌套路由修复后已解决
-- FAIL-001（CLI 错误分类与指数退避）— 永久/瞬时错误分类 + 指数退避 1s→2s→4s
-- FAIL-004（纠偏计数器持久化）— Task.correctionCount 字段 + 重启不丢失
-- ORC-002（纠偏覆盖单 Agent）— 4路径审查 + quality 标记
-- CTX-001（Pin 消息）— Message.isPinned + 上下文优先 + 前端标记
+| 优先级 | 任务 | 说明 | 状态 |
+|--------|------|------|------|
+| 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
 
 **已评估不实施**：
-- ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高，现有事后审查+纠偏重试+熔断器已足够覆盖
-- FAIL-003（确定性质量检测）— 应由 Code Review Agent 在工作流中完成（编译/语法/测试），非平台职责；Orchestrator 拆任务时自动插入审查步骤即可
-- Skill 功能 — AgentSkill 多对多关联在磁盘共享机制下是伪概念；执行时写入多余；CC Switch 已有完善 Skill 管理；不在核心价值链上。详见 `docs/design/skill-feature-plan.md`
+- ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高
+- FAIL-003（确定性质量检测）— 应由 Code Review Agent 在工作流中完成
+- Skill 功能 — CC Switch 已有方案，不在核心价值链上
+- FAIL-005（上下文隔离回滚）— CLI 进程独立，上下文污染概率低
+- FAIL-006 跳过/手动修复 — 跳过=下游缺前置产出不可用

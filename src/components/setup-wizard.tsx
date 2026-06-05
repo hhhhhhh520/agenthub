@@ -102,7 +102,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
         await fetch('/api/config/orchestrator', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiKey, model, baseUrl, platform: 'llm' }),
+          body: JSON.stringify({ apiKey, model, baseUrl, platform: 'claude-code' }),
         })
       }
       const res = await fetch('/api/config/test-connection', { method: 'POST' })
@@ -120,7 +120,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
     setError('')
     try {
       // 保存配置到 Orchestrator Agent 和 AppConfig
-      const platform = detectedPlatform || 'llm'
+      const platform = detectedPlatform || 'claude-code'
       if (!imported) {
         await fetch('/api/config/orchestrator', {
           method: 'POST',
@@ -144,7 +144,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              platform: detectedPlatform ? detectedPlatform : 'llm',
+              platform: detectedPlatform || 'claude-code',
               model: orchData.model || model,
             }),
           })

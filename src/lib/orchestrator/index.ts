@@ -49,7 +49,7 @@ export async function getOrchestratorAgent(): Promise<{
 
   // 极端 fallback：Agent 创建失败，退回 AppConfig
   const config = await getOrchestratorConfig()
-  return { platform: 'llm', ...config }
+  return { platform: 'claude-code', ...config }
 }
 
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
@@ -244,7 +244,7 @@ export async function executeTaskBatch(
       await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'working')
 
       try {
-        const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+        const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
         const mcpConfig = chatSessionId
           ? buildMCPConfig(chatSessionId, agent.name, projectDir || '')
@@ -309,7 +309,7 @@ export async function executeSingleAgent(
   projectDir?: string,
   attachments?: TaskAttachment[]
 ): Promise<{ result: string; sessionId?: string }> {
-  const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+  const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
 
   // 解析工具配置
   let toolsList: string[] = []
@@ -395,14 +395,14 @@ export async function runDiscussion(
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 
       try {
-        const platform = (agent.platform || 'llm') as AdapterConfig['platform']
+        const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
         const mcpCfg = chatSessionId ? buildMCPConfig(chatSessionId, agent.name, projectDir || '') : undefined
         await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
 
         let result = ''
         for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-          if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+          if (chunk.type === 'text') result += chunk.content
           onChunk(agent.name, chunk)
         }
 

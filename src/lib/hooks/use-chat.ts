@@ -171,6 +171,12 @@ export function useChat(sessionId: string | null) {
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         console.error('Chat error:', err)
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'orchestrator',
+          rawContent: `Error: 网络请求失败，请检查连接后重试。(${(err as Error).message || 'Unknown error'})`,
+          createdAt: new Date().toISOString(),
+        }])
       }
     } finally {
       setLoading(false)

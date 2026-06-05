@@ -26,11 +26,11 @@ export async function GET() {
       apiKey: config.orchestrator_apiKey || '',
       model: config.orchestrator_model || 'claude-sonnet-4-20250514',
       baseUrl: config.orchestrator_baseUrl || '',
-      platform: 'llm',
+      platform: 'claude-code',
     })
   } catch (e) {
     console.error('[orchestrator] GET error:', e)
-    return NextResponse.json({ apiKey: '', model: 'claude-sonnet-4-20250514', baseUrl: '', platform: 'llm', hasApiKey: false })
+    return NextResponse.json({ apiKey: '', model: 'claude-sonnet-4-20250514', baseUrl: '', platform: 'claude-code', hasApiKey: false })
   }
 }
 

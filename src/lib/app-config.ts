@@ -40,7 +40,7 @@ export async function ensureOrchestratorAgent(): Promise<void> {
   if (existing) return
 
   const config = await getOrchestratorConfig()
-  const platform = detectCLIPlatform() || 'llm'
+  const platform = detectCLIPlatform() || 'claude-code'
 
   try {
     await prisma.agent.create({

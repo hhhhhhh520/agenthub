@@ -243,11 +243,10 @@ describe('ClaudeCode adapter — config flow', () => {
 // ─── createAdapter factory — completeness ────────────────────────────────────
 
 describe('createAdapter factory — all platforms', () => {
-  it('should return LLMAdapter for platform "llm"', async () => {
+  it('should return ClaudeCodeAdapter for platform "claude-code"', async () => {
     const { createAdapter } = await import('../src/lib/adapter')
-    const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
-    const adapter = createAdapter({ platform: 'llm' })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
+    const adapter = createAdapter({ platform: 'claude-code' })
+    expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
   })
 
   it('should return ClaudeCodeAdapter for platform "claude-code"', async () => {
@@ -262,11 +261,10 @@ describe('createAdapter factory — all platforms', () => {
     expect(adapter.constructor.name).toBe('OpenCodeAdapter')
   })
 
-  it('should default to LLMAdapter for unknown platform', async () => {
+  it('should default to ClaudeCodeAdapter for unknown platform', async () => {
     const { createAdapter } = await import('../src/lib/adapter')
-    const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = createAdapter({ platform: 'unknown' as any })
-    expect(adapter).toBeInstanceOf(LLMAdapter)
+    expect(adapter.constructor.name).toBe('ClaudeCodeAdapter')
   })
 
   it('should create independent instances on every call', async () => {
@@ -403,18 +401,18 @@ describe('Cross-platform adapter lifecycle', () => {
   it('LLMAdapter close aborts the controller', async () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = new LLMAdapter()
-    await adapter.connect({ platform: 'llm', apiKey: 'test' })
+    await adapter.connect({ platform: 'claude-code', apiKey: 'test' })
     await adapter.close()
   })
 
   it('multiple adapters of different types can coexist', async () => {
     const { createAdapter } = await import('../src/lib/adapter')
 
-    const llm = createAdapter({ platform: 'llm' })
+    const llm = createAdapter({ platform: 'claude-code' })
     const cc = createAdapter({ platform: 'claude-code' })
     const oc = createAdapter({ platform: 'opencode' })
 
-    await llm.connect({ platform: 'llm', apiKey: 'test' })
+    await llm.connect({ platform: 'claude-code', apiKey: 'test' })
     await cc.connect({ platform: 'claude-code', workDir: '/cc' })
     await oc.connect({ platform: 'opencode', workDir: '/oc' })
 
@@ -434,7 +432,7 @@ describe('LLMAdapter — SDK selection edge cases', () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = new LLMAdapter()
     await adapter.connect({
-      platform: 'llm',
+      platform: 'claude-code',
       apiKey: 'test',
       model: 'claude-sonnet-4-20250514',
       baseUrl: 'https://proxy.example.com',
@@ -448,7 +446,7 @@ describe('LLMAdapter — SDK selection edge cases', () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = new LLMAdapter()
     await adapter.connect({
-      platform: 'llm',
+      platform: 'claude-code',
       apiKey: 'test',
       model: 'claude-sonnet-4-20250514',
     })
@@ -461,7 +459,7 @@ describe('LLMAdapter — SDK selection edge cases', () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = new LLMAdapter()
     await adapter.connect({
-      platform: 'llm',
+      platform: 'claude-code',
       apiKey: 'test',
       model: 'gpt-4o',
     })
@@ -473,13 +471,13 @@ describe('LLMAdapter — SDK selection edge cases', () => {
   it('should use OpenAI SDK when model starts with o1- or o3-', async () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter1 = new LLMAdapter()
-    await adapter1.connect({ platform: 'llm', apiKey: 'test', model: 'o1-preview' })
+    await adapter1.connect({ platform: 'claude-code', apiKey: 'test', model: 'o1-preview' })
     const iter1 = adapter1.send({ prompt: 'test' })
     expect(iter1[Symbol.asyncIterator]).toBeDefined()
     await adapter1.close()
 
     const adapter2 = new LLMAdapter()
-    await adapter2.connect({ platform: 'llm', apiKey: 'test', model: 'o3-mini' })
+    await adapter2.connect({ platform: 'claude-code', apiKey: 'test', model: 'o3-mini' })
     const iter2 = adapter2.send({ prompt: 'test' })
     expect(iter2[Symbol.asyncIterator]).toBeDefined()
     await adapter2.close()
@@ -488,7 +486,7 @@ describe('LLMAdapter — SDK selection edge cases', () => {
   it('should default to claude-sonnet-4-20250514 when no model specified', async () => {
     const { LLMAdapter } = await import('../src/lib/adapter/llm-adapter')
     const adapter = new LLMAdapter()
-    await adapter.connect({ platform: 'llm', apiKey: 'test' })
+    await adapter.connect({ platform: 'claude-code', apiKey: 'test' })
     const iter = adapter.send({ prompt: 'test' })
     expect(iter[Symbol.asyncIterator]).toBeDefined()
     await adapter.close()

@@ -9,6 +9,7 @@ interface Session {
   createdAt: string
   updatedAt: string
   _count?: { messages: number; agents: number }
+  members?: Array<{ agentId: string; agent?: { name: string; accentColor: string } }>
 }
 
 export function useSessions() {

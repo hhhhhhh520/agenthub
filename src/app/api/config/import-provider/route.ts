@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     }
 
     // 更新 Orchestrator Agent 记录
-    const platform = detectCLIPlatform() || 'llm'
+    const platform = detectCLIPlatform() || 'claude-code'
     const orchAgent = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
     if (orchAgent) {
       await prisma.agent.update({

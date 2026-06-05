@@ -109,7 +109,7 @@ export default function AgentsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className="text-xs text-muted-foreground">{agent.platform === 'llm' ? 'LLM API' : agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</span>
+                    <span className="text-xs text-muted-foreground">{agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</span>
                   </td>
                 </tr>
               )

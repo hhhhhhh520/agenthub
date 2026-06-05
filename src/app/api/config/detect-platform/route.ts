@@ -5,12 +5,12 @@ export async function POST() {
   try {
     const platform = detectCLIPlatform()
     return NextResponse.json({
-      platform: platform || 'llm',
+      platform: platform || 'claude-code',
       cliAvailable: platform !== null,
     })
   } catch (e) {
     return NextResponse.json({
-      platform: 'llm',
+      platform: 'claude-code',
       cliAvailable: false,
       error: e instanceof Error ? e.message : String(e),
     })

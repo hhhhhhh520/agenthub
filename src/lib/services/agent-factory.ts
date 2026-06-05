@@ -10,7 +10,7 @@ export async function handleCreateAgent(
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '正在生成 Agent 配置...' })
 
   const configPrompt = `从用户消息中提取 Agent 配置，返回 JSON（不要其他话）：
-{"name":"角色名","expertise":"专长描述","systemPrompt":"系统提示词","platform":"llm或claude-code","capabilities":["标签1","标签2"],"accentColor":"#hex色"}
+{"name":"角色名","expertise":"专长描述","systemPrompt":"系统提示词","platform":"claude-code","capabilities":["标签1","标签2"],"accentColor":"#hex色"}
 
 用户消息：${message}`
 
