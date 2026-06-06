@@ -1,6 +1,6 @@
 # AgentHub 功能测试清单
 
-> 测试时间: 2026-05-23 (初版) | 最后更新: 2026-06-05 | 测试环境: Windows 11 + Node.js + SQLite
+> 测试时间: 2026-05-23 (初版) | 最后更新: 2026-06-06 | 测试环境: Windows 11 + Node.js + SQLite
 
 ## 测试状态符号
 - ⏳ 待测试
@@ -167,16 +167,16 @@
 
 **单元测试**: 48 文件，586 测试全部通过
 **E2E 测试**: `tests/e2e-full.mjs`，47 项 API 端到端检查全部通过
-**QA视觉测试**: /browse截图+视觉AI分析，12张截图，发现7个问题（3个已修复）
+**QA视觉测试**: /browse截图+视觉AI分析，12张截图，发现7个问题（5个已修复，2个非Bug）
 
 ### QA视觉测试发现的问题（2026-06-05）
 
 | ID | 严重程度 | 问题 | 状态 |
 |----|----------|------|------|
-| QA-V001 | High | 4个会话名乱码（E2E◆◆◆群◆等） | 待修 |
-| QA-V002 | High | Tasks面板为空（Orchestrator选delegate时跳过Task创建） | 设计如此 |
-| QA-V003 | Medium | Agent选择界面Orchestrator未自动选中 | 待评估 |
-| QA-V004 | Medium | Orchestrator名称大小写不一致（orchestrator vs Orchestrator） | 待修 |
-| QA-V005 | Medium | 创建群聊对话框无遮罩层 | 待修 |
-| QA-V006 | Low | 会话列表无时间分组 | 待评估 |
-| QA-V007 | Fixed | 模型名[1m]后缀导致API 400 | ✅ 已修复 |
+| QA-V001 | High | 4个会话名乱码（E2E◆◆◆群◆等） | ✅ 已修复 (2026-06-06，清理测试数据) |
+| QA-V002 | High | Tasks面板为空（Orchestrator选delegate时跳过Task创建） | ✅ 已修复 (2026-06-06，delegate→execute路由) |
+| QA-V003 | Medium | Agent选择界面Orchestrator未自动选中 | ✅ 已修复 (2026-06-06，recommend-agents始终包含) |
+| QA-V004 | Medium | Orchestrator名称大小写不一致（orchestrator vs Orchestrator） | ⚪非Bug (数据库和UI均为大写) |
+| QA-V005 | Medium | 创建群聊对话框无遮罩层 | ⚪非Bug (Dialog组件已有bg-black/50) |
+| QA-V006 | Low | 会话列表无时间分组 | ✅ 已修复 (2026-06-06，添加时间分组) |
+| QA-V007 | Fixed | 模型名[1m]后缀导致API 400 | ✅ 已修复 (2026-06-05) |

@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-05
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-06
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
@@ -74,6 +74,9 @@
 | UI-001实现 | 会话列表Agent头像拼图：sessions API返回agent name/accentColor，sidebar显示首字母圆圈(最多3个+剩余数) | 2026-06-05 |
 | 模型名后缀清理 | process-registry.ts: 传递--model前正则去除[xxx]后缀（如mimo-v2.5[1m]→mimo-v2.5），防止API 400 | 2026-06-05 |
 | QA视觉测试 | /browse截图+视觉AI分析：覆盖首页/创建群聊/Agent选择/聊天/Orchestrator响应/Tasks面板/Agent面板/服务商导入/响应式布局，发现7个问题 | 2026-06-05 |
+| Orchestrator自动选中 | recommend-agents API始终包含Orchestrator在推荐列表中，确保群聊协调能力 | 2026-06-06 |
+| 会话时间分组 | session-sidebar添加时间分组（今天/昨天/本周/更早），基于updatedAt字段 | 2026-06-06 |
+| delegate任务状态修复 | chat-router.ts: delegate行为存在pending任务时自动切换为execute，确保任务状态正确更新 | 2026-06-06 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
