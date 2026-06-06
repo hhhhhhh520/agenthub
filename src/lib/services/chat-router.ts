@@ -42,6 +42,15 @@ export async function handleOrchestratorDecision(
     }
   }
 
+  // If delegate is chosen but there are pending tasks, route to execution instead
+  // This ensures task statuses are properly tracked
+  if (decision.action === 'delegate') {
+    const pendingTasks = await prisma.task.count({ where: { sessionId, status: 'pending' } })
+    if (pendingTasks > 0) {
+      decision = { ...decision, action: 'execute', reason: '存在待执行任务，启动任务执行流程' }
+    }
+  }
+
   switch (decision.action) {
     case 'self':
       await handleOrchestratorChat(message, sessionId, sendEvent, agents)
