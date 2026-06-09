@@ -9,7 +9,7 @@ export async function GET() {
     if (orchAgent) {
       return NextResponse.json({
         apiKey: orchAgent.apiKey ? maskApiKey(orchAgent.apiKey) : '',
-        model: orchAgent.model || 'claude-sonnet-4-20250514',
+        model: orchAgent.model || '',
         baseUrl: orchAgent.baseUrl || '',
         platform: orchAgent.platform,
       })
@@ -24,13 +24,13 @@ export async function GET() {
     }
     return NextResponse.json({
       apiKey: config.orchestrator_apiKey || '',
-      model: config.orchestrator_model || 'claude-sonnet-4-20250514',
+      model: config.orchestrator_model || '',
       baseUrl: config.orchestrator_baseUrl || '',
       platform: 'claude-code',
     })
   } catch (e) {
     console.error('[orchestrator] GET error:', e)
-    return NextResponse.json({ apiKey: '', model: 'claude-sonnet-4-20250514', baseUrl: '', platform: 'claude-code', hasApiKey: false })
+    return NextResponse.json({ apiKey: '', model: '', baseUrl: '', platform: 'claude-code', hasApiKey: false })
   }
 }
 

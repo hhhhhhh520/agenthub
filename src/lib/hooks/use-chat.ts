@@ -28,6 +28,15 @@ interface SSEEvent {
   data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown> }
 }
 
+interface ToolCall {
+  id: string
+  agentId: string
+  toolName: string
+  toolInput: Record<string, unknown>
+  toolResult?: string
+  status: 'running' | 'completed'
+}
+
 export function useChat(sessionId: string | null) {
   const [messages, setMessages] = useState<Message[]>([])
   const [streaming, setStreaming] = useState<Record<string, string>>({})
@@ -40,6 +49,8 @@ export function useChat(sessionId: string | null) {
     toolInput: Record<string, unknown>
     agentId: string
   }>>([])
+  const [thinking, setThinking] = useState<Record<string, string>>({})
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
   const loadMessages = useCallback(async () => {
@@ -131,15 +142,21 @@ export function useChat(sessionId: string | null) {
                 createdAt: new Date().toISOString(),
               }])
             }
-            // Clear streaming
+            // Clear streaming, thinking, and toolCalls
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+            setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+            setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
           } else if (event.type === 'error') {
             setMessages(prev => [...prev, {
               id: crypto.randomUUID(),
               role: 'orchestrator',
-              rawContent: `Error: ${event.content}`,
+              rawContent: event.content,
               createdAt: new Date().toISOString(),
             }])
+            // 清除 streaming 状态，防止后续 text chunk 拼接到旧内容上
+            setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+            setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+            setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
           } else if (event.type === 'awaiting_user_input') {
             setAwaitingInput(event.content)
             setStreaming({})
@@ -160,6 +177,35 @@ export function useChat(sessionId: string | null) {
             }])
           } else if (event.type === 'permission_cancel') {
             setPendingPermissions(prev => prev.filter(p => p.requestId !== event.data?.requestId))
+          } else if (event.type === 'thinking') {
+            // 思考过程：累积到 thinking 状态
+            setThinking(prev => ({
+              ...prev,
+              [event.agentId]: (prev[event.agentId] || '') + event.content,
+            }))
+          } else if (event.type === 'tool_use') {
+            // 工具调用：添加到 toolCalls 列表
+            const toolCall: ToolCall = {
+              id: crypto.randomUUID(),
+              agentId: event.agentId,
+              toolName: event.data?.toolName || 'unknown',
+              toolInput: event.data?.toolInput || {},
+              status: 'running',
+            }
+            setToolCalls(prev => [...prev, toolCall])
+          } else if (event.type === 'tool_result') {
+            // 工具结果：更新最后一个匹配的 toolCall
+            setToolCalls(prev => {
+              const updated = [...prev]
+              // 找到最后一个同 agent 的 running 状态的 toolCall
+              for (let i = updated.length - 1; i >= 0; i--) {
+                if (updated[i].agentId === event.agentId && updated[i].status === 'running') {
+                  updated[i] = { ...updated[i], toolResult: event.content, status: 'completed' }
+                  break
+                }
+              }
+              return updated
+            })
           } else {
             setStreaming(prev => ({
               ...prev,
@@ -204,5 +250,5 @@ export function useChat(sessionId: string | null) {
     setPendingPermissions(prev => prev.filter(p => p.requestId !== requestId))
   }, [sessionId, pendingPermissions])
 
-  return { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission }
+  return { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission, thinking, toolCalls }
 }

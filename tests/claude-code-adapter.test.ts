@@ -73,7 +73,7 @@ describe('ClaudeCodeAdapter', () => {
     )
   })
 
-  it('send concatenates systemPrompt + context + prompt', async () => {
+  it('send concatenates systemPrompt + prompt (no context — CLI manages history)', async () => {
     const adapter = new ClaudeCodeAdapter()
     await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
     mockSend.mockImplementation(async function* () { yield { type: 'text', content: 'ok' } })
@@ -81,7 +81,7 @@ describe('ClaudeCodeAdapter', () => {
     await gen.next()
     expect(mockSend).toHaveBeenCalledWith(
       expect.anything(),
-      'you are PM\n\n---\n\n背景信息：\nsome context\n\n---\n\ndo it',
+      'you are PM\n\n---\n\ndo it',
       expect.anything(),
       []
     )

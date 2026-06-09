@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowLeft, Save } from "lucide-react"
+import { ArrowLeft, Save, Check } from "lucide-react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { useState, useEffect } from "react"
@@ -29,14 +29,61 @@ export default function AgentDetailPage() {
   const params = useParams()
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
+  const [defaultModel, setDefaultModel] = useState('')
+
+  // 受控字段
+  const [name, setName] = useState('')
+  const [model, setModel] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
+
+  // 保存状态
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     if (!params.id) return
     fetch(`/api/agents/${params.id}`)
       .then(r => r.json())
-      .then(data => { setAgent(data); setLoading(false) })
+      .then(data => {
+        setAgent(data)
+        setName(data.name || '')
+        setModel(data.model || '')
+        setSystemPrompt(data.systemPrompt || '')
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
+    // 检测 CLI 默认模型
+    fetch('/api/config/detect-platform', { method: 'POST' })
+      .then(r => r.json())
+      .then(data => { if (data.defaultModel) setDefaultModel(data.defaultModel) })
+      .catch(() => {})
   }, [params.id])
+
+  const handleSave = async () => {
+    if (!agent) return
+    setSaving(true)
+    setSaved(false)
+    try {
+      const res = await fetch(`/api/agents/${agent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, model, systemPrompt }),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setAgent(updated)
+        setName(updated.name)
+        setModel(updated.model || '')
+        setSystemPrompt(updated.systemPrompt || '')
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+      }
+    } catch (e) {
+      console.error('Save failed:', e)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center text-gray-400">加载中...</div>
@@ -46,6 +93,7 @@ export default function AgentDetailPage() {
   }
 
   const capabilities: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
+  const displayModel = agent.model || defaultModel || 'CLI 默认模型'
 
   return (
     <div className="flex flex-1 flex-col gap-6 p-6 max-w-4xl">
@@ -56,16 +104,16 @@ export default function AgentDetailPage() {
         </Link>
         <Avatar className="h-10 w-10">
           <AvatarFallback className="text-sm text-white" style={{ backgroundColor: agent.accentColor }}>
-            {agent.name.charAt(0)}
+            {name.charAt(0)}
           </AvatarFallback>
         </Avatar>
         <div className="flex-1">
-          <h1 className="text-lg font-semibold">{agent.name}</h1>
+          <h1 className="text-lg font-semibold">{name}</h1>
           <p className="text-xs text-muted-foreground">{agent.expertise}</p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-xs">{agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</Badge>
-          {agent.model && <Badge variant="outline" className="text-xs">{agent.model}</Badge>}
+          <Badge variant="outline" className="text-xs">{displayModel}</Badge>
         </div>
       </div>
 
@@ -77,11 +125,11 @@ export default function AgentDetailPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">名称</label>
-              <Input defaultValue={agent.name} className="h-8 text-sm" />
+              <Input value={name} onChange={e => setName(e.target.value)} className="h-8 text-sm" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">模型</label>
-              <Input defaultValue={agent.model} className="h-8 text-sm" />
+              <Input value={model} onChange={e => setModel(e.target.value)} placeholder={defaultModel || 'CLI 默认模型'} className="h-8 text-sm" />
             </div>
           </div>
         </section>
@@ -103,13 +151,14 @@ export default function AgentDetailPage() {
         <section>
           <h2 className="text-sm font-medium mb-3">System Prompt</h2>
           <Textarea
-            defaultValue={agent.systemPrompt || ""}
+            value={systemPrompt}
+            onChange={e => setSystemPrompt(e.target.value)}
             rows={6}
             className="text-sm font-mono"
           />
           <div className="flex justify-end mt-2">
-            <Button size="sm" className="gap-1">
-              <Save className="h-3 w-3" /> 保存
+            <Button size="sm" className="gap-1" onClick={handleSave} disabled={saving}>
+              {saved ? <><Check className="h-3 w-3" /> 已保存</> : saving ? '保存中...' : <><Save className="h-3 w-3" /> 保存</>}
             </Button>
           </div>
         </section>
@@ -124,7 +173,7 @@ export default function AgentDetailPage() {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">模型</label>
-              <div className="text-sm">{agent.model || "未配置"}</div>
+              <div className="text-sm">{displayModel}</div>
             </div>
           </div>
         </section>

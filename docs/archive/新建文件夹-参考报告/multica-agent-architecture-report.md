@@ -1,6 +1,6 @@
 # Multica 项目 Agent 机制代码级报告
 
-> 分析日期: 2026-06-03 | 项目路径: `D:\ai全栈挑战赛\multica`
+> 分析日期: 2026-06-03 | 项目路径: `D:\projects\multica`
 
 ---
 

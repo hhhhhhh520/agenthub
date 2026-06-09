@@ -138,8 +138,8 @@ describe('ClaudeCodeAdapter — extended coverage', () => {
     })
   })
 
-  describe('send — systemPrompt + context + attachments combined', () => {
-    it('builds full prompt with all parts', async () => {
+  describe('send — systemPrompt + attachments combined (no context — CLI manages history)', () => {
+    it('builds full prompt with systemPrompt and attachments', async () => {
       mockReadFileSync.mockReturnValue(Buffer.from('img'))
       const adapter = new ClaudeCodeAdapter()
       await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
@@ -157,8 +157,9 @@ describe('ClaudeCodeAdapter — extended coverage', () => {
 
       const prompt = mockSend.mock.calls[0][1]
       expect(prompt).toContain('you are a reviewer')
-      expect(prompt).toContain('背景信息：')
-      expect(prompt).toContain('project context')
+      // context 不再拼接到 prompt（CLI 通过 session 恢复管理历史）
+      expect(prompt).not.toContain('背景信息：')
+      expect(prompt).not.toContain('project context')
       expect(prompt).toContain('code.ts')
       expect(prompt).toContain('main task')
 

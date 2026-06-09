@@ -114,9 +114,9 @@ async function main() {
   section('3. SESSION MEMBERS');
   // ============================================================
 
-  // Add member
-  r = await req('POST', `/sessions/${groupSid}/members`, { agentId, role: 'member' });
-  check('3.1 POST member succeeds', r.agentId === agentId);
+  // Add member — use e2eAid (not preset agent) to avoid unique constraint conflict
+  r = await req('POST', `/sessions/${groupSid}/members`, { agentId: e2eAid, role: 'member' });
+  check('3.1 POST member succeeds', r.agentId === e2eAid);
 
   // List members
   const members = await req('GET', `/sessions/${groupSid}/members`);

@@ -44,10 +44,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const key = this.getRegistryKey()
 
-    // Build full prompt, including non-image attachment references
+    // Build full prompt (no context concatenation — CLI manages history via --resume)
     const parts: string[] = []
     if (task.systemPrompt) parts.push(task.systemPrompt)
-    if (task.context) parts.push(`背景信息：\n${task.context}`)
 
     // Add non-image file references to prompt
     const nonImageAttachments = task.attachments?.filter(a => !a.mimeType.startsWith('image/')) || []

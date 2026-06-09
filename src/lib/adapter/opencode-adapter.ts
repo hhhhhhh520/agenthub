@@ -1,4 +1,6 @@
 import { join } from 'path'
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
+import { tmpdir } from 'os'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 import { processRegistry } from './process-registry'
 
@@ -9,6 +11,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   private agentId: string | undefined
   private chatSessionId: string | undefined
   private allowedTools: string[] | undefined
+  private permissionMode: string = 'default'
 
   async connect(config: AdapterConfig): Promise<void> {
     this.config = config
@@ -17,6 +20,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.agentId = config.agentId
     this.chatSessionId = config.chatSessionId
     this.allowedTools = config.allowedTools
+    this.permissionMode = config.permissionMode || 'default'
   }
 
   private getRegistryKey(): string {
@@ -25,44 +29,161 @@ export class OpenCodeAdapter implements AgentAdapter {
     return `opencode:${sessionPart}:${agentPart}:${this.workDir}`
   }
 
+  /**
+   * 将 systemPrompt 写入 .opencode/agents/agenthub-{agentId}.md
+   * OpenCode 启动时自动加载该文件作为 agent 行为指令
+   */
+  private ensureAgentConfig(systemPrompt: string): void {
+    if (!this.agentId || !this.workDir) return
+
+    const agentDir = join(this.workDir, '.opencode', 'agents')
+    const agentFile = join(agentDir, `agenthub-${this.agentId}.md`)
+
+    const toolsYaml = this.buildToolsYaml()
+    const content = `---\ndescription: AgentHub Agent\n${toolsYaml}---\n${systemPrompt}`
+
+    // 检查是否需要更新（内容没变则跳过）
+    try {
+      const existing = readFileSync(agentFile, 'utf-8')
+      if (existing === content) return
+    } catch {
+      // 文件不存在，需要创建
+    }
+
+    mkdirSync(agentDir, { recursive: true })
+    writeFileSync(agentFile, content, 'utf-8')
+  }
+
+  /**
+   * 将 MCP 配置写入 opencode.json（项目级配置）
+   * OpenCode 启动时自动读取该文件作为 MCP server 配置
+   * 返回 XDG_CONFIG_HOME 目录路径（用于环境变量注入）
+   */
+  private ensureMcpConfig(mcpConfig: string): string | undefined {
+    if (!mcpConfig || !this.workDir) return undefined
+
+    try {
+      const config = JSON.parse(mcpConfig)
+      const mcpServers: Record<string, unknown> = {}
+
+      // 转换 Claude Code MCP 格式 → OpenCode MCP 格式
+      if (config.mcpServers) {
+        for (const [name, server] of Object.entries(config.mcpServers)) {
+          const s = server as { command: string; args: string[]; env?: Record<string, string> }
+          mcpServers[name] = {
+            type: 'local',
+            command: [s.command, ...s.args],
+            environment: s.env || {},
+            enabled: true,
+          }
+        }
+      }
+
+      if (Object.keys(mcpServers).length === 0) return undefined
+
+      // 使用 XDG_CONFIG_HOME 隔离每个 Agent 的配置（避免并发冲突）
+      const configDir = join(tmpdir(), `agenthub-oc-${this.agentId || 'default'}-${Date.now()}`)
+      const opencodeDir = join(configDir, 'opencode')
+      mkdirSync(opencodeDir, { recursive: true })
+
+      // 读取全局配置（providers 等）并合并 MCP 配置
+      let globalConfig: Record<string, unknown> = {}
+      try {
+        const globalConfigPath = join(process.env.HOME || process.env.USERPROFILE || '', '.config', 'opencode', 'opencode.json')
+        globalConfig = JSON.parse(readFileSync(globalConfigPath, 'utf-8'))
+      } catch {
+        // 全局配置不存在，只用 MCP 配置
+      }
+
+      const mergedConfig = { ...globalConfig, mcp: mcpServers }
+      writeFileSync(join(opencodeDir, 'opencode.json'), JSON.stringify(mergedConfig, null, 2), 'utf-8')
+
+      return configDir
+    } catch (err) {
+      console.error('[OpenCodeAdapter] Failed to write MCP config:', err)
+      return undefined
+    }
+  }
+
+  /**
+   * 将 allowedTools 映射为 OpenCode agent 配置的 tools YAML 字段
+   * 只在有限制时写入（空 allowedTools 时用 OPENCODE_PERMISSION 环境变量全部放行）
+   */
+  private buildToolsYaml(): string {
+    if (!this.allowedTools || this.allowedTools.length === 0) return ''
+
+    // AgentHub 工具名 → OpenCode 工具名映射
+    const TOOL_MAP: Record<string, string> = {
+      'Read': 'read',
+      'Write': 'write',
+      'Edit': 'edit',
+      'Bash': 'bash',
+      'Glob': 'glob',
+      'Grep': 'grep',
+      'WebFetch': 'webfetch',
+      'Agent': 'task',
+    }
+
+    const lines = ['tools:']
+    for (const [hubTool, ocTool] of Object.entries(TOOL_MAP)) {
+      const allowed = this.allowedTools.includes(hubTool)
+      lines.push(`  ${ocTool}: ${allowed}`)
+    }
+    return lines.join('\n') + '\n'
+  }
+
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const key = this.getRegistryKey()
 
-    // Build prompt: systemPrompt 拼接到消息中（opencode run 不支持 --prompt 标志）
-    const parts: string[] = []
-    if (task.systemPrompt) parts.push(task.systemPrompt)
-    if (task.context) parts.push(`Context:\n${task.context}`)
+    // System Prompt 写入 agent 配置文件，不拼接到 prompt
+    // 即使 systemPrompt 为空也要更新（tools 可能变化）
+    this.ensureAgentConfig(task.systemPrompt || '')
 
+    // 只传用户消息（systemPrompt 已通过 agent 配置文件注入）
+    const fullPrompt = task.prompt
+
+    // 构建 CLI 参数
+    const args = ['run', '--format', 'json']
+    if (this.agentId) args.push('--agent', `agenthub-${this.agentId}`)
+    if (this.sessionId) args.push('--session', this.sessionId)
+    if (this.config.model) args.push('--model', this.config.model)
+    if (this.workDir) args.push('--dir', this.workDir)
+    if (this.permissionMode === 'auto') args.push('--dangerously-skip-permissions')
+
+    // 附件：通过 --file 参数传递（图片和非图片都走 --file）
     if (task.attachments && task.attachments.length > 0) {
-      const fileList = task.attachments.map(a => `- ${a.filename}: ${a.path}`).join('\n')
-      parts.push(`用户附带了以下文件：\n${fileList}`)
+      for (const att of task.attachments) {
+        if (existsSync(att.path)) {
+          args.push('--file', att.path)
+        }
+      }
     }
 
-    parts.push(task.prompt)
-    const fullPrompt = parts.join('\n\n---\n\n')
-
-    // Build CLI args: opencode 无子命令，直接用根命令标志
-    // -p 触发非交互模式（prompt 通过 stdin 传递，与 Claude Code 一致）
-    const args = ['-p', '-f', 'json', '-c', this.workDir]
-    if (this.config.model) args.push('--model', this.config.model)
-    if (this.sessionId) args.push('--session', this.sessionId)
-
-    // Build env with provider config
+    // 构建环境变量（参照 cc-connect：用 ANTHROPIC_API_KEY）
     const env: Record<string, string> = {}
-    // 有工具限制时不设 OPENCODE_PERMISSION，避免覆盖 OPENCODE_CONFIG 的限制配置
     if (!this.allowedTools || this.allowedTools.length === 0) {
       env.OPENCODE_PERMISSION = '{"*":"allow"}'
     }
     if (this.config.apiKey) {
       env.ANTHROPIC_API_KEY = this.config.apiKey
-      env.OPENAI_API_KEY = this.config.apiKey
     }
     if (this.config.baseUrl) {
       env.ANTHROPIC_BASE_URL = this.config.baseUrl
-      env.OPENAI_BASE_URL = this.config.baseUrl
+    }
+    // 三重锚定：PWD 环境变量确保 OpenCode 正确发现 .opencode/ 目录
+    // 参照 multica 方案（MUL-2416 bug fix）
+    if (this.workDir) {
+      env.PWD = this.workDir
     }
 
-    // 通过 ProcessRegistry 执行（获得重试 + 超时 + 清理能力）
+    // MCP 配置：通过 XDG_CONFIG_HOME 注入（每个 Agent 独立配置目录，避免并发冲突）
+    if (this.config.mcpConfig) {
+      const configDir = this.ensureMcpConfig(this.config.mcpConfig)
+      if (configDir) {
+        env.XDG_CONFIG_HOME = configDir
+      }
+    }
+
     const spawnConfig = {
       workDir: this.workDir,
       command: 'opencode',
@@ -70,6 +191,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       format: 'ndjson' as const,
       env,
       allowedTools: this.allowedTools,
+      shell: true,
     }
 
     for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
@@ -85,6 +207,6 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async close(): Promise<void> {
-    // ProcessRegistry 的 ndjson 格式在 send() 后自动清理，无需手动 kill
+    // ProcessRegistry 的 ndjson 格式在 send() 后自动清理
   }
 }

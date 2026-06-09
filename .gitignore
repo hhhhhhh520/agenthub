@@ -56,3 +56,19 @@ workspaces/
 
 # Uploaded files
 uploads/
+
+# Logs
+*.log
+tailwindcss-*.log
+
+# Test output files
+test_agents.json
+test_agents_result.txt
+test_create_agent.json
+e2e-test-file.txt
+
+# Screenshots
+screenshots/
+
+# Claude Code
+.claude/

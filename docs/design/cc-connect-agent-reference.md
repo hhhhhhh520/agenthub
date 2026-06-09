@@ -1,6 +1,6 @@
 # cc-connect Agent 架构参考
 
-> 记录时间: 2026-06-03 | 参考项目: D:\ai全栈挑战赛\cc-connect
+> 记录时间: 2026-06-03 | 参考项目: D:\projects\cc-connect
 
 本文档记录 cc-connect 在 Agent 架构方面值得 agenthub 借鉴的技术手段，包含具体实现位置和现有差距分析。
 

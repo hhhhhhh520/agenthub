@@ -7,6 +7,16 @@ import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
+// 隐性行为准则：自动注入所有 Agent 的 System Prompt
+const AGENT_BEHAVIOR_RULES = `[行为准则] 以下规则自动生效，无需用户提醒：
+1. 你是独立 Agent，不要假设自己在某个项目中工作，等用户明确告知任务
+2. 未被要求时不要主动读取代码文件或项目结构
+3. 初次对话时简洁介绍自身能力，等待用户指令
+4. 不确定需求时先提问，不要猜测
+5. 被阻塞或无法完成时明确告知原因，不要编造结果
+6. 不要越界执行其他角色的职责
+7. 不要执行破坏性操作（删除文件、清空数据库等）未经用户确认`
+
 // Update agent status per-session (not global Agent.status)
 async function updateAgentSessionStatus(sessionId: string | undefined, agentId: string | undefined, agentName: string, status: string) {
   if (!sessionId) return
@@ -59,7 +69,7 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
   await adapter.connect({
     platform,
     apiKey: orch.apiKey || undefined,
-    model: orch.model,
+    model: orch.model || undefined,
     baseUrl: orch.baseUrl || undefined,
   })
 
@@ -82,13 +92,18 @@ async function callLLM(systemPrompt: string, userPrompt: string): Promise<string
   await adapter.connect({
     platform,
     apiKey: orch.apiKey || undefined,
-    model: orch.model,
+    model: orch.model || undefined,
     baseUrl: orch.baseUrl || undefined,
   })
 
   let result = ''
   for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-    if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+    if (chunk.type === 'text') {
+      result += chunk.content
+    } else if (chunk.type === 'error') {
+      await adapter.close()
+      throw new Error(chunk.content)
+    }
   }
   await adapter.close()
 
@@ -206,7 +221,6 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
   agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
-  context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
   chatSessionId?: string,
   projectDir?: string
@@ -228,13 +242,11 @@ export async function executeTaskBatch(
       const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
       if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
-      // 依赖任务的文本结果
+      // 依赖任务的文本结果（拼到 prompt 中，不走 context）
       const depContext = task.dependencies
         .map(depId => results.get(depId)?.result)
         .filter(Boolean)
         .join('\n\n')
-
-      const fullContext = [context, depContext].filter(Boolean).join('\n\n---\n\n')
 
       let result = ''
       let capturedSessionId: string | undefined
@@ -252,7 +264,7 @@ export async function executeTaskBatch(
         await adapter.connect({
           platform,
           workDir: projectDir,
-          model: agent.model,
+          model: agent.model || undefined,
           baseUrl: agent.baseUrl,
           apiKey: agent.apiKey,
           permissionMode: agent.permissionMode as AdapterConfig['permissionMode'],
@@ -261,16 +273,23 @@ export async function executeTaskBatch(
           chatSessionId: chatSessionId,
         })
 
+        // P0: 注入文件约束，防止越界修改
+        const fileConstraint = task.declaredFiles?.length > 0
+          ? `[任务边界] 只能修改: ${task.declaredFiles.join(', ')}。禁止修改其他文件。\n\n`
+          : ''
+        // 依赖任务结果作为 prompt 前缀
+        const depPrefix = depContext ? `[依赖任务结果]\n${depContext}\n\n` : ''
         for await (const chunk of adapter.send({
-          prompt: task.description,
-          context: fullContext,
-          systemPrompt: agent.systemPrompt,
+          prompt: depPrefix + fileConstraint + task.description,
+          context: '',  // 不传 context，CLI 通过 session 恢复管理历史
+          systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
         })) {
           if (chunk.type === 'session') {
             capturedSessionId = chunk.content
-          } else if (chunk.type === 'text' || chunk.type === 'error') {
+          } else if (chunk.type === 'text') {
             result += chunk.content
           }
+          // error chunk 不拼入 result，只通过 onChunk 发送给前端
           onChunk(task.id, chunk)
         }
 
@@ -337,7 +356,7 @@ export async function executeSingleAgent(
     await adapter.connect({
       platform,
       workDir: agent.workDir,
-      model: agent.model,
+      model: agent.model || undefined,
       baseUrl: agent.baseUrl,
       apiKey: agent.apiKey,
       sessionId: agent.sessionId,
@@ -353,14 +372,15 @@ export async function executeSingleAgent(
     for await (const chunk of adapter.send({
       prompt: effectivePrompt,
       context,
-      systemPrompt: agent.systemPrompt,
+      systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
       attachments,
     })) {
       if (chunk.type === 'session') {
         capturedSessionId = chunk.content
-      } else if (chunk.type === 'text' || chunk.type === 'error') {
+      } else if (chunk.type === 'text') {
         result += chunk.content
       }
+      // error chunk 不拼入 result，status chunk 也不拼入
       onChunk(agent.name, chunk)
     }
 
@@ -398,7 +418,7 @@ export async function runDiscussion(
         const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
         const mcpCfg = chatSessionId ? buildMCPConfig(chatSessionId, agent.name, projectDir || '') : undefined
-        await adapter.connect({ platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
+        await adapter.connect({ platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
 
         let result = ''
         for await (const chunk of adapter.send({ prompt: combinedPrompt })) {

@@ -34,12 +34,31 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 
 ## 快速开始
 
+**前置条件：** Node.js 18+，至少安装一个 AI CLI 平台：
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
+- [OpenCode CLI](https://open-code.ai)（`npm install -g @anthropic-ai/opencode`）
+
 ```bash
+# 克隆项目
+git clone <仓库地址>
+cd agenthub
+
+# 安装依赖
 npm install
+
+# 初始化数据库
+npx prisma db push
+
+# 填充预设数据（8个Agent）
+npx tsx prisma/seed.ts
+
+# 启动开发服务器
 npm run dev
 ```
 
 打开 http://localhost:3000，创建会话，开始对话。
+
+> 首次启动需要执行全部步骤。后续启动只需 `npm run dev`。
 
 ## 项目结构
 
@@ -50,7 +69,7 @@ src/lib/adapter/     — 适配器层（Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（586 个测试）
+tests/               — Vitest 单元测试（655 个测试）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
@@ -59,8 +78,8 @@ issues/              — 开发问题记录
 ## 文档
 
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md) — 当前架构设计
-- [Orchestrator 平台改造](docs/orchestrator-platform-refactor-已实施.md) — CLI-first 架构改造方案（已实施）
+- [Orchestrator 平台改造](docs/archive/orchestrator-platform-refactor-已实施.md) — CLI-first 架构改造方案（已实施）
 - [对齐流程实现](docs/design/alignment-flow-plan.md) — Orchestrator 智能编排实现计划
 - [Anthropic Managed Agents](docs/reference/anthropic-scaling-managed-agents.md) — 参考架构
 - [多 Agent 技术方案](docs/reference/multi-agent-reference.md) — 框架对比
-- [ChatFab 私聊计划](docs/plan-chatfab-private-chat.md) — 右下角私聊功能实现方案
+- [ChatFab 私聊计划](docs/archive/plan-chatfab-private-chat.md) — 右下角私聊功能实现方案

@@ -58,7 +58,7 @@ describe('ensureOrchestratorAgent', () => {
     await ensureOrchestratorAgent()
     expect(mockAgentCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        model: 'claude-sonnet-4-20250514',
+        model: '',
         apiKey: '',
         baseUrl: '',
       }),
@@ -85,6 +85,6 @@ describe('getOrchestratorConfig', () => {
   it('returns defaults for missing keys', async () => {
     mockQueryRaw.mockResolvedValueOnce([])
     const config = await getOrchestratorConfig()
-    expect(config).toEqual({ apiKey: '', model: 'claude-sonnet-4-20250514', baseUrl: '' })
+    expect(config).toEqual({ apiKey: '', model: '', baseUrl: '' })
   })
 })

@@ -19,6 +19,7 @@ interface ProcessEntry {
   pendingPermissions: Map<string, PendingPermission>
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
+  promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
 }
 
 interface PendingPermission {
@@ -44,6 +45,10 @@ interface SpawnConfig {
   // 工具硬限制
   allowedTools?: string[]       // CLI 工具白名单
   disallowedTools?: string[]    // CLI 工具黑名单
+  // OpenCode 模式：prompt 已作为 CLI 位置参数，不要写 stdin
+  promptAsArg?: boolean
+  // 禁用 shell 模式（用于 OpenCode 等需要传递多行 prompt 的场景）
+  shell?: boolean
 }
 
 const MAX_PROCESSES = 10
@@ -227,9 +232,8 @@ class ProcessRegistry {
     if (config.apiKey) providerEnv.ANTHROPIC_API_KEY = config.apiKey
     if (config.baseUrl) {
       providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
-    } else {
-      providerEnv.ANTHROPIC_BASE_URL = ''  // 清除系统环境变量，避免用错误端点
     }
+    // 不设 ANTHROPIC_BASE_URL 时保留系统环境变量（用户 CLI 配置）
     if (openCodeConfigFile) {
       providerEnv.OPENCODE_CONFIG = openCodeConfigFile
     }
@@ -253,7 +257,7 @@ class ProcessRegistry {
         LC_ALL: 'en_US.UTF-8',
       },
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
+      shell: config.shell !== false,  // 默认 true，OpenCode 可设为 false
     })
 
     const entry: ProcessEntry = {
@@ -271,6 +275,7 @@ class ProcessRegistry {
       pendingPermissions: new Map(),
       format: config.format || 'claude',
       stderrBuffer: '',
+      promptAsArg: config.promptAsArg || false,
     }
 
     proc.on('exit', () => {
@@ -285,6 +290,15 @@ class ProcessRegistry {
         console.error(`[ProcessRegistry ${key}] stderr:`, text)
       })
     }
+
+    // 诊断：记录进程生命周期
+    console.log(`[ProcessRegistry ${key}] Process spawned, pid=${proc.pid}`)
+    proc.on('exit', (code, signal) => {
+      console.log(`[ProcessRegistry ${key}] Process exited, code=${code}, signal=${signal}, stderr=${entry.stderrBuffer.slice(-500)}`)
+    })
+    proc.on('error', (err) => {
+      console.error(`[ProcessRegistry ${key}] Process error:`, err.message)
+    })
 
     this.registry.set(key, entry)
     return entry
@@ -412,6 +426,7 @@ class ProcessRegistry {
     const roundPromise = new Promise<void>((resolve) => {
       resolveRound = resolve
     })
+    const pendingPermissionPromises: Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>[] = []
     let bufferStr = ''
     let lastChunkTime = Date.now()
     const decoder = new TextDecoder()
@@ -430,6 +445,7 @@ class ProcessRegistry {
 
           if (event.session_id && !entry.sessionId) {
             entry.sessionId = event.session_id
+            chunkQueue.push({ type: 'session', content: event.session_id })
           }
 
           if (event.type === 'control_request' && event.request?.subtype === 'can_use_tool') {
@@ -453,6 +469,7 @@ class ProcessRegistry {
               }
               entry.pendingPermissions.set(requestId, pending)
           })
+            pendingPermissionPromises.push(permissionPromise)
           }
 
           if (event.type === 'control_cancel_request') {
@@ -473,6 +490,34 @@ class ProcessRegistry {
             for (const block of event.message.content) {
               if (block.type === 'text' && block.text) {
                 chunkQueue.push({ type: 'text', content: block.text })
+              }
+              // thinking 事件
+              if (block.type === 'thinking' && block.thinking) {
+                chunkQueue.push({ type: 'thinking', content: block.thinking })
+              }
+              // tool_use 事件
+              if (block.type === 'tool_use') {
+                chunkQueue.push({
+                  type: 'tool_use',
+                  content: `${block.name}: ${JSON.stringify(block.input)}`,
+                  data: { toolName: block.name, toolInput: block.input }
+                })
+              }
+            }
+          }
+
+          // tool_result 事件（在 user 消息中）
+          if (event.type === 'user' && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === 'tool_result') {
+                const resultContent = typeof block.content === 'string'
+                  ? block.content
+                  : JSON.stringify(block.content)
+                chunkQueue.push({
+                  type: 'tool_result',
+                  content: resultContent,
+                  data: { toolName: block.tool_use_id }
+                })
               }
             }
           }
@@ -511,14 +556,20 @@ class ProcessRegistry {
 
         // Check no-data timeout
         if (Date.now() - lastChunkTime > NO_DATA_TIMEOUT_MS) {
+          const elapsed = Math.round((Date.now() - lastChunkTime) / 1000)
+          const stderr = entry.stderrBuffer.trim()
+          console.error(`[ProcessRegistry ${key}] TIMEOUT: No data for ${elapsed}s, pid=${entry.process.pid}, exitCode=${entry.process.exitCode}, stderr=${stderr.slice(-300)}`)
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
-          throw new Error(`No data received for ${NO_DATA_TIMEOUT_MS / 1000}s, process appears stalled`)
+          throw new Error(`No data received for ${elapsed}s, process appears stalled. stderr: ${stderr.slice(-200)}`)
         }
 
         const waits: Promise<boolean>[] = [
           new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
         ]
         if (roundPromise) waits.push(roundPromise.then(() => true))
+        for (const permPromise of pendingPermissionPromises) {
+          waits.push(permPromise.then(() => false))
+        }
 
         const isDone = await Promise.race(waits)
 
@@ -550,7 +601,8 @@ class ProcessRegistry {
     entry.state = 'working'
 
     // stdin：直接写纯文本（不像 Claude 需要 JSON 包装）
-    if (entry.stdin) {
+    // 如果 promptAsArg 为 true（OpenCode 模式），prompt 已作为 CLI 位置参数，不写 stdin
+    if (entry.stdin && !entry.promptAsArg) {
       entry.stdin.write(Buffer.from(fullPrompt, 'utf-8'))
       entry.stdin.end()
     }
@@ -596,6 +648,27 @@ class ProcessRegistry {
           else if (event.type === 'step_finish' && event.part?.text) {
             chunkQueue.push({ type: 'text', content: event.part.text })
           }
+          // tool_use 事件（含内嵌 tool_result）
+          else if (event.type === 'tool_use' && event.part?.type === 'tool') {
+            const toolName = event.part.tool
+            const toolInput = event.part.state?.input
+            const toolOutput = event.part.state?.output
+            // tool_use（工具调用）
+            chunkQueue.push({
+              type: 'tool_use',
+              content: `${toolName}: ${JSON.stringify(toolInput)}`,
+              data: { toolName, toolInput }
+            })
+            // tool_result（工具输出，已在同一事件中）
+            if (toolOutput !== undefined) {
+              const outputStr = typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput)
+              chunkQueue.push({
+                type: 'tool_result',
+                content: outputStr,
+                data: { toolName }
+              })
+            }
+          }
           // error 事件
           else if (event.type === 'error') {
             const errorMsg = event.error?.data?.message || event.data?.message || event.message || 'Unknown error'
@@ -621,8 +694,9 @@ class ProcessRegistry {
 
     try {
       while (!streamClosed) {
-        // Check if process died
-        if (!entry.alive || entry.process.exitCode !== null) {
+        // Check if process died with non-zero exit code
+        // Exit code 0 is success - wait for stream to close naturally
+        if (!entry.alive || (entry.process.exitCode !== null && entry.process.exitCode !== 0)) {
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
           const exitCode = entry.process.exitCode
           const stderr = entry.stderrBuffer.trim()
@@ -634,8 +708,11 @@ class ProcessRegistry {
 
         // Check no-data timeout
         if (Date.now() - lastChunkTime > NO_DATA_TIMEOUT_MS) {
+          const elapsed = Math.round((Date.now() - lastChunkTime) / 1000)
+          const stderr = entry.stderrBuffer.trim()
+          console.error(`[ProcessRegistry ${key}] TIMEOUT (ndjson): No data for ${elapsed}s, pid=${entry.process.pid}, exitCode=${entry.process.exitCode}, stderr=${stderr.slice(-300)}`)
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
-          throw new Error(`No data received for ${NO_DATA_TIMEOUT_MS / 1000}s, process appears stalled`)
+          throw new Error(`No data received for ${elapsed}s, process appears stalled. stderr: ${stderr.slice(-200)}`)
         }
 
         const waits: Promise<boolean>[] = [

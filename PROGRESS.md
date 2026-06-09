@@ -1,8 +1,8 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-06
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-08 (Bug修复+乱码清理)
 
 ## 项目概述
-**项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
+**项目地址**: D:\projects\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
 
 ## 当前进度
 
@@ -77,17 +77,52 @@
 | Orchestrator自动选中 | recommend-agents API始终包含Orchestrator在推荐列表中，确保群聊协调能力 | 2026-06-06 |
 | 会话时间分组 | session-sidebar添加时间分组（今天/昨天/本周/更早），基于updatedAt字段 | 2026-06-06 |
 | delegate任务状态修复 | chat-router.ts: delegate行为存在pending任务时自动切换为execute，确保任务状态正确更新 | 2026-06-06 |
+| Agent越界防护P0 | orchestrator/index.ts: executeTaskBatch prompt注入declaredFiles约束，Agent只能修改声明文件 | 2026-06-06 |
+| Agent越界防护P1 | execution.ts: 纠偏重试时从trace提取correction信息注入prompt，避免重复越界 | 2026-06-06 |
+| 文档整理 | 归档5个已解决issues+7个已完成design docs，更新docs/README.md索引 | 2026-06-06 |
+| 模型显示修复 | seed.ts预设Agent model改空+detect-platform返回defaultModel+详情页显示实际CLI模型 | 2026-06-06 |
+| Agent详情页保存 | 受控组件+PUT API+保存状态反馈，名称/模型/SystemPrompt可编辑保存 | 2026-06-06 |
+| 空字符串model bug | orchestrator/execution/chat 6处model: x.model改为\|\| undefined，防止400错误 | 2026-06-06 |
+| ANTHROPIC_BASE_URL修复 | process-registry.ts: 无baseUrl时不再注入空字符串覆盖系统配置 | 2026-06-06 |
+| 隐性行为准则 | AGENT_BEHAVIOR_RULES自动注入System Prompt：不假设项目、不主动读代码、简洁介绍等7条 | 2026-06-06 |
+| Playwright E2E测试 | 真实浏览器验证：ChatFab完整流程✅、代码块渲染✅、消息菜单CSS限制、斜杠命令React限制 | 2026-06-07 |
+| 核心逻辑审查修复 | 19个bug验证，10个修复：BUG-17(delegate转execute)、BUG-6(用户信息截断)、BUG-11(permission未await)、BUG-5(解析失败两次发言)、BUG-14(stuck task误重置)、BUG-16(SSE超时锁占用)、BUG-8/10(git快照误报)、BUG-15(空成员会话)、BUG-3(依赖ID静默忽略)、BUG-4(PM fallback缺prompt)。586测试全通过 | 2026-06-07 |
+| QA视觉测试+修复 | Playwright截图QA：发现3个问题并修复——API Error友好提示(route.ts)、streaming状态清除防completed拼接(use-chat.ts)、创建Agent表单实时验证(create-agent-dialog.tsx)。586测试通过 | 2026-06-07 |
+| API Error根因修复 | 3处修复：chat-router.ts onChunk拦截error转友好提示、orchestrator/index.ts error chunk不拼入result(防completed拼接)、config/orchestrator/route.ts移除硬编码model fallback。655测试通过 | 2026-06-07 |
+| 硬编码模型fallback清理 | 移除config/orchestrator/route.ts 3处+app-config.ts 1处'claude-sonnet-4-20250514'硬编码，model为空时返回空字符串让CLI用环境默认值 | 2026-06-07 |
+| status chunk过滤 | chat-router.ts+review.ts过滤status chunk不发送给前端(防completed拼接)，orchestrator/index.ts executeSingleAgent error chunk不拼入result | 2026-06-07 |
+| 进程超时诊断日志 | process-registry.ts添加pid/stderr/exitCode详细日志，超时时输出完整诊断信息 | 2026-06-07 |
+| 综合E2E测试(45项) | Session管理(8/8)+Agent管理(7/7)+Chat功能(6/6)+权限系统(1/1)+UI组件(6/6)+API层(12/17)。通过率88.9%，发现2个Bug | 2026-06-08 |
+| GBK编码排查 | 确认非项目Bug：Python测试脚本在Windows GBK环境下写入U+FFFD脏数据，浏览器创建的Agent编码正确 | 2026-06-08 |
+| AI协作流程文档 | docs/AI协作流程介绍.md：六步协作法、关键协作习惯、多Agent实践、协作工具链、协作效果 | 2026-06-08 |
+| SSE超时锁泄漏修复 | chat/route.ts: 超时后streamClosed标志位防止往已关闭controller写入，避免后续请求被锁阻塞 | 2026-06-08 |
+| 文档整理(二) | README.md测试数586→655+死链修正，docs/README.md移除4个不存在QA报告链接 | 2026-06-08 |
+| Playwright E2E测试 | 13个无头浏览器测试：首页(6)+路由(3)+API(3)+交互(1)，全部通过 | 2026-06-08 |
+| 视觉审查(4页面) | 首页/聊天/项目/智能体截图审查，发现Emoji乱码+重复会话+API 400错误 | 2026-06-08 |
+| API 400根因修复 | Orchestrator model="test"→""，Setup Wizard CLI模式下默认值覆盖bug定位 | 2026-06-08 |
+| Setup Wizard全流程测试 | 欢迎→CLI检测→测试连接→Agent平台设置→完成，发现model覆盖bug | 2026-06-08 |
+| 群聊创建+@Agent测试 | 创建群聊→选择Agent→@后端工程师路由→代码生成+Orchestrator审偏 | 2026-06-08 |
+| @所有人讨论测试 | 3轮×3Agent讨论：后端/Orchestrator/前端达成稳定性加固共识 | 2026-06-08 |
+| 文件附件测试 | txt+png上传下载验证通过，10MB限制+白名单mimeType | 2026-06-08 |
+| Bug1 Setup Wizard model覆盖修复 | setup-wizard.tsx: model默认值改空+CLI模式不发送model，3处修改 | 2026-06-08 |
+| Bug2 群聊委派模糊匹配修复 | review.ts: delegateToAgent+runMultiAgentDiscussion精确匹配→模糊匹配+错误提示含可用Agent列表 | 2026-06-08 |
+| Bug4 Agent编辑UI刷新修复 | agents/[id]/page.tsx: setAgent后同步name/model/systemPrompt受控状态+model空值传递 | 2026-06-08 |
+| Bug5 数据库乱码清理 | 修复前端工程师expertise/systemPrompt+删除乱码自定义Agent+重命名3个乱码session+删除2个空session | 2026-06-08 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-05 更新）
+### 📋 待办（2026-06-08 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
+| ~~🔴高~~ | ~~Setup Wizard model覆盖~~ | ~~CLI模式下隐藏输入框但默认值仍发送~~ | ✅已修复 |
+| ~~🔴高~~ | ~~群聊委派不执行~~ | ~~Orchestrator返回delegate决策后未调用delegateToAgent()~~ | ✅已修复 |
+| ~~🟡中~~ | ~~项目详情页路由~~ | ~~缓存问题，重启后正常~~ | ✅已解决 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
+| ~~🟢低~~ | ~~Agent编辑保存刷新~~ | ~~修改名称后UI未刷新显示新名称~~ | ✅已修复 |
 
 **已评估不实施**：
 - ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高

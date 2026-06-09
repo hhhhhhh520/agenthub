@@ -1,6 +1,6 @@
 # CC-Connect Agent 架构 — 代码级报告
 
-> 生成时间: 2026-06-03 | 参考项目: D:\ai全栈挑战赛\cc-connect
+> 生成时间: 2026-06-03 | 参考项目: D:\projects\cc-connect
 
 ---
 

@@ -73,6 +73,7 @@ model SessionMember {
   id        String   @id @default(uuid())
   sessionId String
   agentId   String
+  cliSessionId String?                      // CLI Agent sessionID，用于会话恢复
   joinedAt  DateTime @default(now())
   role      String   @default("member") // member | orchestrator
   status    String   @default("idle")   // idle | working | done | error (per-session)
