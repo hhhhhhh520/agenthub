@@ -312,7 +312,7 @@ tests/
 ## 运行测试
 
 ```bash
-cd <repo>
+cd D:\projects\agenthub
 
 # 安装测试依赖
 npm install -D vitest @vitest/coverage-v8

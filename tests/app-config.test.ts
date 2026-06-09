@@ -89,7 +89,7 @@ describe('getOrchestratorConfig', () => {
   it('uses default model when not in database', async () => {
     mockQueryRaw.mockResolvedValueOnce([])
     const config = await appConfig.getOrchestratorConfig()
-    expect(config.model).toBe('claude-sonnet-4-20250514')
+    expect(config.model).toBe('')
   })
 
   it('returns empty string for missing apiKey and baseUrl', async () => {

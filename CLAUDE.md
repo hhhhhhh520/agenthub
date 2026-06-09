@@ -60,26 +60,22 @@ prisma/
 - schema generator：`provider = "prisma-client"`（不是 `prisma-client-js`）
 - SQLite 需要 `@prisma/adapter-libsql` + `@libsql/client`
 - **外键约束**：`db.ts` 和 `mcp-server/index.ts` 都必须设 `PRAGMA foreign_keys=ON`，否则 `onDelete: Cascade` 不生效
-- 详见 `issues/ISSUE-001-agent-creation-parse-failure-已解决` 和 `issues/ISSUE-002-prisma-generated-path-已解决`
 
 ### 数据模型（v2）
 
 - **Session**：`projectDir`（项目目录）、`permissionMode`（`default` | `auto`）、`isPinned`/`isArchived`（置顶/归档）
 - **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
-- **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`
+- **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`；预设 Agent 的 model 默认为空（使用 CLI 默认模型，页面显示实际模型）
 - **Provider**：已保存的服务商配置模板（`name` 唯一、`baseUrl`、`apiKey`、`model`、`category`）。Agent 选中后复制字段，不是 FK
 - **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）；`trace` JSON 数组记录执行轨迹（start/error/success/correction/blocked）
-- **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status
+- **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status；`cliSessionId` 存储 CLI session ID 用于会话恢复
 - **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
 - **Attachment**：用户上传的图片/文件（`messageId` 可空，先上传后关联；`sessionId` 方便孤儿清理；`onDelete: Cascade` 只删 DB 记录，需 `cleanupAttachmentFiles()` 删磁盘文件）
-- ⚠️ **`_count` 不可用**：`/api/sessions/[id]` 不返回 `_count`，项目详情页用 `session.messages.length` 而非 `session._count.messages`（2026-05-29 踩坑修复）
-- 详见 `prisma/schema.prisma`
 
 ### Next.js 16
 
 - 动态路由 `params` 是 `Promise`，必须 `await`
 - 签名：`{ params }: { params: Promise<{ id: string }> }`
-- 详见 `issues/ISSUE-004-nextjs16-params-promise-已解决`
 
 ### Claude Code CLI 集成
 
@@ -89,7 +85,6 @@ prisma/
 - **禁止使用 `--dangerously-skip-permissions`** — 会导致 CLI 卡住
 - **中文编码**：stdin.write 必须使用 `Buffer.from(text, 'utf-8')`，否则 Windows 下中文变乱码
 - **进程清理**：使用 `taskkill /pid <PID> /T /F` 杀掉整个进程树，避免残留
-- 详见 `issues/ISSUE-005-cli-system-prompt-ignored-已解决` ~ `ISSUE-008-cli-enoent-windows-已解决`、`issues/ISSUE-011-cli-process-tree-cleanup-已解决`
 
 ### 安全红线
 
@@ -115,26 +110,39 @@ prisma/
 - **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
 - `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
-  - **无 run 子命令**：opencode 直接用根命令标志 `-p -f json -c <workDir>`，不是 `run --format json --dir`
-  - **systemPrompt 拼接**：opencode 不支持 `--prompt` 标志，systemPrompt 拼接到消息头部（与 ClaudeCodeAdapter 同构）
+  - **prompt 通过 CLI 参数传递**：只传用户消息，systemPrompt 通过配置文件注入
+  - **System Prompt 注入**：写入 `.opencode/agents/agenthub-{agentId}.md`，通过 `--agent` 参数选择
+  - **MCP 配置注入**：通过 `XDG_CONFIG_HOME` 环境变量注入独立配置目录，每个 Agent 独立配置避免并发冲突
+  - **附件支持**：通过 `--file` 参数传递附件路径（图片和非图片都走 `--file`）
+  - **工具限制**：配置文件 `tools` 字段映射（Read→read, Write→write 等），`OPENCODE_PERMISSION` 作为 fallback（无限制时全部放行）
+  - **权限模式**：`--dangerously-skip-permissions` 标志（auto 模式）
+  - **工作目录**：三重锚定（`--dir` + `cmd.Dir` + `PWD` 环境变量），确保正确发现 `.opencode/` 目录
+  - **环境变量**：`ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`（非 OPENAI_*）
+  - **模型名格式**：`provider/model`（如 `mimo/mimo-v2.5-pro`），通过 `opencode models` 命令动态发现
   - **错误路径**：opencode error 事件结构为 `event.error?.data?.message`，不是 `event.data?.message`
+  - **tool_use 事件结构**：`event.type === 'tool_use'`，`event.part.type === 'tool'`，工具名在 `event.part.tool`，输入在 `event.part.state.input`，输出在 `event.part.state.output`（内嵌在同一事件中，无单独 tool_result）
 - Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
 - **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
+- **禁止硬编码模型 fallback**：`config/orchestrator/route.ts`、`app-config.ts` 中 model 为空时返回空字符串，不 fallback 到 `'claude-sonnet-4-20250514'`；CLI 会使用环境变量 `ANTHROPIC_MODEL` 作为默认值
 - **CLI 自动检测**：`detectCLIPlatform()` 按优先级检测 claude-code → opencode，结果持久化到 Orchestrator Agent 记录
-- **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text' || type === 'error'`，不累加 status chunk；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
+- **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text'`，不累加 status chunk；**error chunk 不拼入 result**（callLLM 中 throw、executeSingleAgent 中仅通过 onChunk 发送给前端）；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
 - **SSE 错误处理**：`use-chat.ts` fetch 后必须检查 `res.ok`，4xx/5xx 时解析错误信息显示给用户，不静默失败
-- **MCP 协作**：ClaudeCodeAdapter 支持 `--mcp-config` 参数，MCP 配置写入临时文件避免 shell 转义问题。MCP Server 给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）
+- **MCP 协作**：两个适配器都支持 MCP Server，给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）
+  - **ClaudeCodeAdapter**：通过 `--mcp-config` 参数传递，MCP 配置写入临时文件避免 shell 转义问题
+  - **OpenCodeAdapter**：通过 `XDG_CONFIG_HOME` 环境变量注入独立配置目录，每个 Agent 独立配置避免并发冲突。配置格式从 Claude Code MCP 格式自动转换为 OpenCode MCP 格式（`type: 'local'`, `command: [cmd, ...args]`, `environment: {}`）
   - **路径安全**：`isPathSafe()` 用 `realpathSync` 解析后比较 `REAL_WORK_DIR + sep`，防 symlink 和前缀目录绕过；文件不存在时 fallback 到 `resolve + startsWith(WORK_DIR + sep)`
 - **LLM fallback 已移除**：CLI 不可用时直接报错，不静默降级到 LLM API
-- **图片附件支持**：ClaudeCodeAdapter 读取图片文件转 base64，通过 stream-json 的 `type: 'image'` content block 传给 CLI（需视觉模型如 mimo-v2.5）。非图片附件在 prompt 中加路径引用，CLI 的 Read 工具自行读取
+- **附件支持**：两个适配器都支持文件附件
+  - **ClaudeCodeAdapter**：图片读取转 base64，通过 stream-json 的 `type: 'image'` content block 传给 CLI（需视觉模型）。非图片附件在 prompt 中加路径引用，CLI 的 Read 工具自行读取
+  - **OpenCodeAdapter**：通过 `--file` 参数传递附件路径（图片和非图片都走 `--file`），需视觉模型（如 `opencode/mimo-v2.5-free`）才能识别图片内容
 
 ### 多供应商配置
 
 - Agent 表有 `model`/`baseUrl`/`apiKey` 字段，支持不同 Agent 使用不同供应商
 - **Provider 表**：已保存的服务商配置模板，创建 Agent 时选中后复制到 Agent 自身字段（不是 FK，运行时不引用）
-- **ClaudeCodeAdapter provider 注入**：`spawnProcess` 将 Agent 的 `apiKey` → `ANTHROPIC_API_KEY`，`baseUrl` → `ANTHROPIC_BASE_URL`，`model` → `--model` CLI 参数。**无 baseUrl 时显式注入空字符串清除系统 ANTHROPIC_BASE_URL**（防止继承系统环境的错误端点）。model 为空时不传 `--model`（CLI 用默认模型）。per-agent per-session 独立进程，天然并发隔离
-- **OpenCodeAdapter**：通过环境变量传递 `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL`
+- **ClaudeCodeAdapter provider 注入**：`spawnProcess` 将 Agent 的 `apiKey` → `ANTHROPIC_API_KEY`，`baseUrl` → `ANTHROPIC_BASE_URL`，`model` → `--model` CLI 参数。**无 baseUrl 时不覆盖系统 ANTHROPIC_BASE_URL**（保留用户 CLI 配置）。model 为空时不传 `--model`（CLI 用默认模型）。per-agent per-session 独立进程，天然并发隔离
+- **OpenCodeAdapter**：通过环境变量传递 `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`
 - **4 个 Provider 数据源**（GET `/api/providers` 合并返回，按 baseUrl 去重，高优先级覆盖低优先级）：
   1. `database` — Provider 表（apiKey 完整返回）
   2. `cc-switch-db` — CC-Switch SQLite DB `~/.cc-switch/cc-switch.db`（apiKey 完整返回）
@@ -167,9 +175,19 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 ### CLI 会话恢复
 
-- ClaudeCodeAdapter 支持 `--resume sessionId` 参数恢复上下文
-- 执行后提取 `session_id` 并保存到 Task 表 `cliSessionId` 字段
-- 类型定义：`StreamChunk.type` 新增 `'session'` 类型
+- **统一机制**：Claude Code 用 `--resume`，OpenCode 用 `--session`，两个平台都通过 CLI 原生 session 恢复管理历史
+- **不拼接 context**：上下文由 CLI 自己管理，AgentHub 只传当前消息，不手动拼接历史消息
+- **SessionMember.cliSessionId**：存储每个 Agent 的 CLI session ID，用于会话恢复
+- **Task.cliSessionId**：存储任务执行时的 CLI session ID
+- 执行后提取 `session_id` 并保存到对应表
+- 类型定义：`StreamChunk.type` 包含 `'session'` 类型
+
+### 事件类型
+
+- **StreamChunk.type**：`'text' | 'thinking' | 'tool_use' | 'tool_result' | 'status' | 'error' | 'session' | 'permission_request' | 'permission_cancel'`
+- **Claude Code 事件**：`assistant` 消息中的 `text`/`thinking`/`tool_use` block，`user` 消息中的 `tool_result` block
+- **OpenCode 事件**：`type: 'tool_use'` 事件包含 `part.tool`（工具名）、`part.state.input`（输入）、`part.state.output`（输出，内嵌在同一事件中）
+- **前端展示**：`thinking` → 灰色斜体，`tool_use` → 代码块（⚙️），`tool_result` → 代码块（✅）
 
 ### 工作区与权限模式
 
@@ -203,6 +221,13 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - 未初始化 Git 的项目 fallback 到无检测
 - 实现：`src/lib/services/git-utils.ts` 中的 `getGitSnapshot` / `getChangedFiles`
 
+### Agent 边界防护
+
+- **P0 Prompt 注入**：`executeTaskBatch` 构建 prompt 时自动追加 `[任务边界] 只能修改: [declaredFiles]`，Agent 执行前即知文件约束
+- **P1 纠偏加强**：重试时从 `trace` 中提取最近 `correction` 事件的 `message`，注入 `[上次问题] ...` 到 prompt，避免重复越界
+- **隐性行为准则**：`AGENT_BEHAVIOR_RULES` 自动注入所有 Agent 的 System Prompt，约束：不假设项目、不主动读代码、简洁介绍、先问后做、不越界、不破坏
+- **流程**：检测越界 → LLM 审查 → 状态改回 pending → 注入纠偏信息重试（最多 2 次）
+
 ### Chat API Session Lock
 
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
@@ -210,7 +235,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - 实现：`src/lib/session-lock.ts` → `acquireSessionLock()`，chat route 和 redo API 共用
 - **超时保护**：等待前一个请求超过 60 秒则跳过等待继续执行
 - **abort 监听**：客户端断开时自动 release 锁
-- **SSE 全局超时**：5 分钟无响应则强制关闭流
+- **SSE 全局超时**：5 分钟无响应则强制关闭流；`streamClosed` 标志位防止超时后往已关闭的 controller 写入（避免锁泄漏）
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
 - **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态
 
@@ -232,53 +257,23 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 详见 `issues/ISSUE-DESIGN-未实现功能清单.md`
 
-## API 路由
+## API 路由（核心）
 
 | 方法 | 路径 | 功能 |
 |------|------|------|
-| GET | `/api/sessions` | 会话列表（默认过滤归档，`?archived=true` 查看归档） |
-| POST | `/api/sessions` | 创建会话（自动添加预设 Agent） |
-| GET | `/api/sessions/[id]` | 会话详情 |
-| PUT | `/api/sessions/[id]` | 更新会话 |
-| DELETE | `/api/sessions/[id]` | 删除会话 |
-| GET | `/api/sessions/[id]/messages` | 消息列表 |
-| POST | `/api/sessions/[id]/messages` | 创建消息 |
-| PATCH | `/api/sessions/[id]/messages/[messageId]` | Pin/取消 Pin 消息（isPinned boolean，每会话最多 10 条） |
-| GET | `/api/sessions/[id]/agents` | 会话 Agent 列表（仅 Agent 对象） |
-| GET | `/api/sessions/[id]/members` | 会话成员列表（含 role/joinedAt） |
-| POST | `/api/sessions/[id]/members` | 添加成员到会话 |
-| DELETE | `/api/sessions/[id]/members` | 移除会话成员 |
-| GET | `/api/sessions/[id]/tasks` | Task 列表 |
-| POST | `/api/sessions/[id]/tasks/[taskId]/redo` | 重做失败/阻塞任务（编辑描述+重新执行+级联下游） |
-| GET | `/api/sessions/[id]/files/[filename]` | 读取工作区文件 |
+| GET/POST/PUT/DELETE | `/api/sessions` | 会话 CRUD |
 | POST | `/api/sessions/[id]/chat` | SSE 流式聊天（per-session lock） |
-| POST | `/api/sessions/[id]/permission` | 权限交互回应（允许/拒绝 CLI 工具调用） |
-| POST | `/api/sessions/recommend-agents` | 推荐 Agent（LLM 分析任务） |
-| GET | `/api/agents` | 全局 Agent 列表 |
-| POST | `/api/agents` | 创建 Agent |
-| PUT | `/api/agents/[id]` | 更新 Agent |
-| DELETE | `/api/agents/[id]` | 删除 Agent |
-| GET | `/api/providers` | 服务商列表（合并 4 源：database + cc-switch-db + cc-connect TOML + settings.json） |
-| POST | `/api/providers/import` | 导入服务商配置（传 provider name，后端从 4 源解析 apiKey：database → cc-switch-db → TOML → settings.json） |
-| GET | `/api/providers/db` | Provider 表列表（含完整 apiKey） |
-| POST | `/api/providers/db` | 创建 Provider |
-| GET | `/api/providers/db/[id]` | 单个 Provider |
-| PUT | `/api/providers/db/[id]` | 更新 Provider（空 apiKey 不覆盖） |
-| DELETE | `/api/providers/db/[id]` | 删除 Provider |
-| POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更写入文件（409=文件已被外部修改，`force: true` 跳过检查） |
-| POST | `/api/sessions/[id]/attachments` | 上传附件（FormData，10MB 限制，mimeType 白名单） |
-| GET | `/api/attachments/[id]` | 读取附件文件（路径遍历防护，图片 inline 其他 attachment） |
-| GET | `/api/config` | 通用配置读取（key 查询） |
-| POST | `/api/config` | 通用配置写入（key-value） |
-| GET | `/api/config/orchestrator` | Orchestrator 配置（apiKey/model/baseUrl） |
-| POST | `/api/config/orchestrator` | 更新 Orchestrator 配置 |
-| POST | `/api/config/test-connection` | 连接测试（CLI 检测 + LLM 测试） |
-| POST | `/api/config/import-provider` | 导入服务商配置到 Orchestrator（同 `/api/providers/import`，4 源解析） |
-| POST | `/api/config/detect-platform` | CLI 平台检测（claude-code/opencode） |
-| POST | `/api/deploy` | 模拟部署 |
-| GET | `/api/recent-dirs` | 最近打开的目录列表 |
-| POST | `/api/recent-dirs` | 添加最近目录 |
-| DELETE | `/api/recent-dirs` | 删除最近目录 |
+| POST | `/api/sessions/[id]/permission` | 权限交互回应 |
+| GET/POST/PUT/DELETE | `/api/agents` | Agent CRUD |
+| GET/POST | `/api/providers` | 服务商列表/导入 |
+| GET/POST/PUT/DELETE | `/api/providers/db` | Provider 表 CRUD |
+| GET/POST | `/api/config` | 通用配置 |
+| GET/POST | `/api/config/orchestrator` | Orchestrator 配置 |
+| POST | `/api/config/test-connection` | 连接测试 |
+| POST | `/api/sessions/[id]/files/accept` | 接受 Diff 变更 |
+| GET | `/api/opencode/models` | OpenCode 可用模型列表 |
+
+完整路由详见 `src/app/api/` 目录结构。
 
 ## 运行
 

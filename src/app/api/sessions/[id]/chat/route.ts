@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion } from '@/lib/orchestrator'
 import { acquireSessionLock } from '@/lib/session-lock'
-import { buildContextFromHistory } from '@/lib/services/context-builder'
 import { reviewResult } from '@/lib/services/review'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleOrchestratorChat } from '@/lib/services/chat-router'
@@ -95,12 +94,18 @@ export async function POST(
   const SSE_TIMEOUT_MS = 5 * 60_000
   const stream = new ReadableStream({
     async start(controller) {
+      let streamClosed = false
+
       function sendEvent(data: { agentId: string; type: string; content: string; messageId?: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) {
+        if (streamClosed) return
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
       }
 
       const sseTimeout = setTimeout(() => {
-        sendEvent({ agentId: 'orchestrator', type: 'error', content: '请求超时（5分钟），请重试' })
+        streamClosed = true
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（5分钟），请重试' })}\n\n`))
+        } catch {}
         controller.close()
       }, SSE_TIMEOUT_MS)
 
@@ -121,7 +126,7 @@ export async function POST(
             sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
 
             const { result } = await executeSingleAgent(
-              { name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'claude-code', model: agent?.model, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
+              { id: agent?.id, name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'claude-code', model: agent?.model || undefined, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
               original.rawContent,
               '',
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
@@ -138,7 +143,7 @@ export async function POST(
 
           const opinions = await runDiscussion(
             message,
-            existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model, baseUrl: a.baseUrl, apiKey: a.apiKey })),
+            existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model || undefined, baseUrl: a.baseUrl, apiKey: a.apiKey })),
             3,
             (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data })
           )
@@ -151,19 +156,28 @@ export async function POST(
           if (!agent) {
             sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
           } else {
-            const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
-            const context = buildContextFromHistory(history)
+            // 从 SessionMember 读取 cliSessionId 用于会话恢复
+            const member = await prisma.sessionMember.findUnique({
+              where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+            })
 
             sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
-            const { result } = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode },
+            const { result, sessionId: cliSessionId } = await executeSingleAgent(
+              { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode, sessionId: member?.cliSessionId || undefined },
               message,
-              context,
+              '',  // 不传 context，CLI 通过 session 恢复管理历史
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
               sessionId,
               workDir,
               msgAttachments
             )
+            // 保存 cliSessionId 到 SessionMember
+            if (cliSessionId) {
+              await prisma.sessionMember.update({
+                where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+                data: { cliSessionId },
+              })
+            }
             await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
             const { quality: mentionQuality } = await reviewResult(result, message, sessionId, sendEvent)
             sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality: mentionQuality } })
@@ -171,16 +185,28 @@ export async function POST(
         } else if (session.type === 'private' && existingAgents.length > 0) {
           const agent = existingAgents[0]
           try {
+            // 从 SessionMember 读取 cliSessionId 用于会话恢复
+            const member = await prisma.sessionMember.findUnique({
+              where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+            })
+
             sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
-            const { result } = await executeSingleAgent(
-              { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode },
+            const { result, sessionId: cliSessionId } = await executeSingleAgent(
+              { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode, sessionId: member?.cliSessionId || undefined },
               message,
-              '',
+              '',  // 不传 context，CLI 通过 session 恢复管理历史
               (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
-              undefined,
-              undefined,
+              sessionId,
+              workDir,
               msgAttachments
             )
+            // 保存 cliSessionId 到 SessionMember
+            if (cliSessionId) {
+              await prisma.sessionMember.update({
+                where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+                data: { cliSessionId },
+              })
+            }
             await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
             const { quality: privQuality } = await reviewResult(result, message, sessionId, sendEvent)
             sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality: privQuality } })
@@ -197,11 +223,23 @@ export async function POST(
           }
         }
       } catch (error) {
-        sendEvent({ agentId: 'orchestrator', type: 'error', content: String(error) })
+        console.error('[Chat API] Error:', error)
+        const errMsg = error instanceof Error ? error.message : String(error)
+        // 对用户友好的提示，隐藏技术细节
+        if (errMsg.includes('400') || errMsg.includes('Param')) {
+          sendEvent({ agentId: 'orchestrator', type: 'error', content: 'AI 服务暂时不可用，请检查 API 配置后重试' })
+        } else if (errMsg.includes('timeout') || errMsg.includes('超时')) {
+          sendEvent({ agentId: 'orchestrator', type: 'error', content: '请求超时，请稍后重试' })
+        } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch')) {
+          sendEvent({ agentId: 'orchestrator', type: 'error', content: '无法连接到 AI 服务，请检查网络连接' })
+        } else {
+          sendEvent({ agentId: 'orchestrator', type: 'error', content: '处理消息时出错，请稍后重试' })
+        }
       } finally {
         clearTimeout(sseTimeout)
         controller.close()
-        releaseLock()
+        // 超时场景下后台操作可能仍在运行，用setTimeout确保锁不被阻塞
+        setTimeout(() => releaseLock(), 0)
       }
     },
   })

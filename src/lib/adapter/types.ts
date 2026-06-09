@@ -29,12 +29,13 @@ export interface AgentTask {
 }
 
 export interface StreamChunk {
-  type: 'text' | 'code' | 'file' | 'status' | 'error' | 'session' | 'permission_request' | 'permission_cancel'
+  type: 'text' | 'thinking' | 'tool_use' | 'tool_result' | 'code' | 'file' | 'status' | 'error' | 'session' | 'permission_request' | 'permission_cancel'
   content: string
   data?: {
     requestId?: string
     toolName?: string
     toolInput?: Record<string, unknown>
+    toolResult?: string
     retry?: number
     quality?: string
   }

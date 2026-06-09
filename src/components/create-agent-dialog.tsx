@@ -1,10 +1,11 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { CreateProviderDialog } from '@/components/create-provider-dialog'
+import { ChevronDown, Cpu, Loader2, Check, Search } from 'lucide-react'
 
 const PRESET_COLORS = [
   '#6366f1', '#10b981', '#f59e0b', '#ef4444',
@@ -74,6 +75,12 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   const [showProviders, setShowProviders] = useState(false)
   const [selectedProviderId, setSelectedProviderId] = useState('')
   const [showCreateProvider, setShowCreateProvider] = useState(false)
+  const [touched, setTouched] = useState<Record<string, boolean>>({})
+  const [ocModels, setOcModels] = useState<Array<{ id: string; provider: string }>>([])
+  const [ocModelsLoading, setOcModelsLoading] = useState(false)
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const modelDropdownRef = useRef<HTMLDivElement>(null)
 
   const isEdit = !!editAgent
 
@@ -104,6 +111,29 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     }
   }, [open])
 
+  // Fetch OpenCode models when platform is opencode
+  useEffect(() => {
+    if (platform !== 'opencode' || ocModels.length > 0) return
+    setOcModelsLoading(true)
+    fetch('/api/opencode/models')
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data.models)) setOcModels(data.models) })
+      .catch(() => {})
+      .finally(() => setOcModelsLoading(false))
+  }, [platform, ocModels.length])
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    if (!modelDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [modelDropdownOpen])
+
   const addCap = () => {
     const v = capInput.trim()
     if (v && !capabilities.includes(v)) {
@@ -131,7 +161,21 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     setError('')
     setShowProviders(false)
     setSelectedProviderId('')
+    setOcModels([])
+    setModelSearch('')
+    setTouched({})
   }
+
+  const markTouched = (field: string) => setTouched(prev => ({ ...prev, [field]: true }))
+
+  const fieldError = (field: string, value: string) => {
+    if (!touched[field]) return ''
+    if (!value.trim()) return '此项为必填'
+    return ''
+  }
+
+  const inputClass = (field: string, value: string) =>
+    `w-full rounded border px-3 py-2 text-sm ${touched[field] && !value.trim() ? 'border-red-500 focus:ring-red-500' : ''}`
 
   const applyProvider = (p: Provider) => {
     setBaseUrl(p.baseUrl)
@@ -142,6 +186,8 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   }
 
   const handleSubmit = async () => {
+    // 标记所有必填字段为已触碰，显示验证错误
+    setTouched({ name: true, expertise: true, systemPrompt: true })
     if (!name.trim() || !expertise.trim() || !systemPrompt.trim()) {
       setError('名称、专长、System Prompt 为必填项')
       return
@@ -189,6 +235,28 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     }
   }
 
+  // Group OpenCode models by provider
+  const groupedModels = useMemo(() => {
+    const groups: Record<string, Array<{ id: string; provider: string }>> = {}
+    for (const m of ocModels) {
+      const key = m.provider || 'other'
+      if (!groups[key]) groups[key] = []
+      groups[key].push(m)
+    }
+    return groups
+  }, [ocModels])
+
+  const filteredModels = useMemo(() => {
+    if (!modelSearch.trim()) return groupedModels
+    const q = modelSearch.toLowerCase()
+    const out: Record<string, Array<{ id: string; provider: string }>> = {}
+    for (const [provider, list] of Object.entries(groupedModels)) {
+      const matches = list.filter(m => m.id.toLowerCase().includes(q))
+      if (matches.length > 0) out[provider] = matches
+    }
+    return out
+  }, [groupedModels, modelSearch])
+
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v) }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
@@ -198,20 +266,36 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
         <div className="space-y-3">
           <div>
             <label className="text-sm font-medium">名称 *</label>
-            <Input value={name} onChange={e => setName(e.target.value)} placeholder="如：前端工程师" />
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onBlur={() => markTouched('name')}
+              placeholder="如：前端工程师"
+              className={inputClass('name', name)}
+            />
+            {fieldError('name', name) && <p className="text-xs text-red-500 mt-1">{fieldError('name', name)}</p>}
           </div>
           <div>
             <label className="text-sm font-medium">专长 *</label>
-            <Input value={expertise} onChange={e => setExpertise(e.target.value)} placeholder="如：React、TypeScript、CSS" />
+            <Input
+              value={expertise}
+              onChange={e => setExpertise(e.target.value)}
+              onBlur={() => markTouched('expertise')}
+              placeholder="如：React、TypeScript、CSS"
+              className={inputClass('expertise', expertise)}
+            />
+            {fieldError('expertise', expertise) && <p className="text-xs text-red-500 mt-1">{fieldError('expertise', expertise)}</p>}
           </div>
           <div>
             <label className="text-sm font-medium">System Prompt *</label>
             <textarea
-              className="w-full rounded border px-3 py-2 text-sm min-h-[80px]"
+              className={`w-full rounded border px-3 py-2 text-sm min-h-[80px] ${inputClass('systemPrompt', systemPrompt)}`}
               value={systemPrompt}
               onChange={e => setSystemPrompt(e.target.value)}
+              onBlur={() => markTouched('systemPrompt')}
               placeholder="定义 Agent 的角色和行为规范..."
             />
+            {fieldError('systemPrompt', systemPrompt) && <p className="text-xs text-red-500 mt-1">{fieldError('systemPrompt', systemPrompt)}</p>}
           </div>
           <div>
             <label className="text-sm font-medium">执行平台</label>
@@ -262,7 +346,87 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
 
           <div>
             <label className="text-sm font-medium">模型</label>
-            <Input value={model} onChange={e => setModel(e.target.value)} placeholder="如：claude-sonnet-4-20250514" />
+            {platform === 'opencode' ? (
+              <div className="relative" ref={modelDropdownRef}>
+                <button
+                  type="button"
+                  className="w-full rounded border px-3 py-2 text-sm text-left flex items-center gap-2 hover:bg-gray-50"
+                  onClick={() => { setModelDropdownOpen(!modelDropdownOpen); setModelSearch('') }}
+                >
+                  <Cpu className="h-4 w-4 text-gray-400 shrink-0" />
+                  <span className="flex-1 truncate">{model || '选择模型（可搜索）'}</span>
+                  {ocModelsLoading && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+                  <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${modelDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {modelDropdownOpen && (
+                  <div className="absolute z-50 mt-1 w-full rounded border bg-white shadow-lg">
+                    <div className="p-2 border-b">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <input
+                          autoFocus
+                          className="w-full rounded border px-3 py-1.5 pl-8 text-sm"
+                          placeholder="搜索模型..."
+                          value={modelSearch}
+                          onChange={e => setModelSearch(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto p-1">
+                      {ocModelsLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-6 text-sm text-gray-400">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          发现模型中...
+                        </div>
+                      ) : Object.keys(filteredModels).length === 0 && !modelSearch.trim() ? (
+                        <div className="px-3 py-6 text-center text-sm text-gray-400">未发现可用模型</div>
+                      ) : (
+                        Object.entries(filteredModels).map(([provider, list]) => (
+                          <div key={provider} className="mb-1">
+                            <div className="px-2 pt-1.5 pb-0.5 text-xs font-medium uppercase tracking-wide text-gray-400">
+                              {provider}
+                            </div>
+                            {list.map(m => (
+                              <button
+                                key={m.id}
+                                type="button"
+                                className={`w-full text-left px-3 py-2 text-sm rounded flex items-center gap-2 ${m.id === model ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                                onClick={() => { setModel(m.id); setModelDropdownOpen(false); setModelSearch('') }}
+                              >
+                                <span className="flex-1 truncate">{m.id}</span>
+                                {m.id === model && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                              </button>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                      {modelSearch.trim() && !ocModels.some(m => m.id === modelSearch.trim()) && (
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded flex items-center gap-2"
+                          onClick={() => { setModel(modelSearch.trim()); setModelDropdownOpen(false); setModelSearch('') }}
+                        >
+                          + 使用自定义模型: {modelSearch.trim()}
+                        </button>
+                      )}
+                    </div>
+                    {model && (
+                      <div className="border-t p-1">
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-50 rounded"
+                          onClick={() => { setModel(''); setModelDropdownOpen(false) }}
+                        >
+                          清除选择
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Input value={model} onChange={e => setModel(e.target.value)} placeholder="如：claude-sonnet-4-20250514" />
+            )}
           </div>
           <div>
             <label className="text-sm font-medium">Base URL</label>

@@ -65,7 +65,7 @@ describe('OpenCode adapter — argument building', () => {
     expect(config.env.OPENAI_API_KEY).toBeUndefined()
   })
 
-  it('should NOT set BASE_URL env vars when baseUrl is undefined', async () => {
+  it('should NOT set ANTHROPIC_BASE_URL when baseUrl is undefined', async () => {
     const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', apiKey: 'sk-test', workDir: '/dir' })
@@ -102,7 +102,7 @@ describe('OpenCode adapter — argument building', () => {
     expect(config.workDir).toContain('opencode-')
   })
 
-  it('should set both ANTHROPIC and OPENAI env vars when both apiKey and baseUrl provided', async () => {
+  it('should set ANTHROPIC env vars (not OPENAI) when apiKey and baseUrl provided', async () => {
     const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
     const adapter = new OpenCodeAdapter()
     await adapter.connect({
@@ -117,9 +117,40 @@ describe('OpenCode adapter — argument building', () => {
 
     const config = mockSend.mock.calls[0][2]
     expect(config.env.ANTHROPIC_API_KEY).toBe('sk-full')
-    expect(config.env.OPENAI_API_KEY).toBe('sk-full')
     expect(config.env.ANTHROPIC_BASE_URL).toBe('https://proxy.example.com')
-    expect(config.env.OPENAI_BASE_URL).toBe('https://proxy.example.com')
+    // 不应该设置 OPENAI 环境变量
+    expect(config.env.OPENAI_API_KEY).toBeUndefined()
+    expect(config.env.OPENAI_BASE_URL).toBeUndefined()
+  })
+
+  it('should NOT set promptAsArg (prompt goes via stdin)', async () => {
+    const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
+    const adapter = new OpenCodeAdapter()
+    await adapter.connect({ platform: 'opencode', workDir: '/dir' })
+
+    const gen = adapter.send({ prompt: 'test' })
+    for await (const _ of gen) { /* consume */ }
+
+    const config = mockSend.mock.calls[0][2]
+    // promptAsArg 不应该为 true（prompt 通过 stdin 传递）
+    expect(config.promptAsArg).toBeFalsy()
+  })
+
+  it('should pass prompt via stdin, not as positional argument', async () => {
+    const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
+    const adapter = new OpenCodeAdapter()
+    await adapter.connect({ platform: 'opencode', workDir: '/dir' })
+
+    const gen = adapter.send({ prompt: 'hello world' })
+    for await (const _ of gen) { /* consume */ }
+
+    const config = mockSend.mock.calls[0][2]
+    // prompt 不应该在 args 里
+    expect(config.args).not.toContain('hello world')
+    expect(config.args).not.toContain('--prompt')
+    // prompt 通过 stdin 传递（mockSend 的第二个参数）
+    const fullPrompt = mockSend.mock.calls[0][1]
+    expect(fullPrompt).toBe('hello world')
   })
 })
 
@@ -194,7 +225,7 @@ describe('ClaudeCode adapter — config flow', () => {
     )
   })
 
-  it('send concatenates systemPrompt + context + prompt', async () => {
+  it('send concatenates systemPrompt + prompt (no context — CLI manages history)', async () => {
     const { ClaudeCodeAdapter } = await import('../src/lib/adapter/claude-code-adapter')
     const adapter = new ClaudeCodeAdapter()
     await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
@@ -204,7 +235,7 @@ describe('ClaudeCode adapter — config flow', () => {
 
     expect(mockSend).toHaveBeenCalledWith(
       expect.anything(),
-      'you are PM\n\n---\n\n背景信息：\nsome context\n\n---\n\ndo it',
+      'you are PM\n\n---\n\ndo it',
       expect.anything(),
       []
     )
@@ -342,6 +373,9 @@ describe('ProcessRegistry — env merge for Claude Code and OpenCode', () => {
     expect(config.env.ANTHROPIC_API_KEY).toBe('sk-oc-key')
     expect(config.env.ANTHROPIC_BASE_URL).toBe('https://oc.proxy.com')
     expect(config.env.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    // 不应该设置 OPENAI 环境变量
+    expect(config.env.OPENAI_API_KEY).toBeUndefined()
+    expect(config.env.OPENAI_BASE_URL).toBeUndefined()
   })
 
   it('two adapters with different configs should pass different spawnConfigs', async () => {
@@ -375,8 +409,9 @@ describe('ProcessRegistry — env merge for Claude Code and OpenCode', () => {
     const ocCall = mockSend.mock.calls[sendCallsBefore]
     expect(ocCall[0]).toContain('opencode:')  // registry key
     expect(ocCall[2]).toBeDefined()
-    // OpenCodeAdapter puts apiKey in env, not as direct spawnConfig field
+    // OpenCodeAdapter puts apiKey in ANTHROPIC_API_KEY env var
     expect(ocCall[2].env.ANTHROPIC_API_KEY).toBe('sk-oc')
+    expect(ocCall[2].env.OPENAI_API_KEY).toBeUndefined()
     expect(ocCall[2].command).toBe('opencode')
   })
 })

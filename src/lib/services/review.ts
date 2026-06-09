@@ -1,7 +1,6 @@
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion, callLLMForAnalysis } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
-import { buildContextFromHistory } from './context-builder'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
@@ -39,27 +38,36 @@ export async function delegateToAgent(
   sendEvent: SendEvent,
   attachments?: TaskAttachment[]
 ) {
-  const agent = agents.find(a => a.name === agentName)
+  let agent = agents.find(a => a.name === agentName)
   if (!agent) {
-    sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${agentName} 的 Agent` })
+    agent = agents.find(a => a.name.includes(agentName) || agentName.includes(a.name))
+  }
+  if (!agent) {
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为「${agentName}」的 Agent。可用：${agents.map(a => a.name).join('、')}` })
     return
   }
 
   sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
-
-  const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
-  const context = buildContextFromHistory(history)
 
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   const workDir = session?.projectDir && session.projectDir.trim()
     ? session.projectDir.trim()
     : process.cwd()
 
+  // 从 SessionMember 读取 cliSessionId 用于会话恢复
+  const member = await prisma.sessionMember.findUnique({
+    where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+  })
+
   const { result } = await executeSingleAgent(
-    { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode: session?.permissionMode || 'default' },
+    { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode: session?.permissionMode || 'default', sessionId: member?.cliSessionId || undefined },
     taskMessage,
-    context,
-    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
+    '',  // 不传 context，CLI 通过 session 恢复管理历史
+    (agentId, chunk) => {
+      // status chunk 不发送给前端（如 "completed"）
+      if (chunk.type === 'status') return
+      sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+    },
     sessionId,
     workDir,
     attachments
@@ -81,12 +89,18 @@ export async function runMultiAgentDiscussion(
   sendEvent: SendEvent
 ) {
   const discussionAgents = agentNames
-    .map(name => agents.find(a => a.name === name))
+    .map(name => {
+      let found = agents.find(a => a.name === name)
+      if (!found) {
+        found = agents.find(a => a.name.includes(name) || name.includes(a.name))
+      }
+      return found
+    })
     .filter(Boolean)
     .map(a => ({ name: a!.name, systemPrompt: a!.systemPrompt, platform: a!.platform, model: a!.model, baseUrl: a!.baseUrl, apiKey: a!.apiKey }))
 
   if (discussionAgents.length === 0) {
-    sendEvent({ agentId: 'orchestrator', type: 'error', content: '未找到参与讨论的 Agent' })
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到参与讨论的 Agent。请求：${agentNames.join('、')}，可用：${agents.map(a => a.name).join('、')}` })
     return
   }
 

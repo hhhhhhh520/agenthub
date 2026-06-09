@@ -42,12 +42,11 @@ export async function handleOrchestratorDecision(
     }
   }
 
-  // If delegate is chosen but there are pending tasks, route to execution instead
-  // This ensures task statuses are properly tracked
+  // If delegate is chosen but there are pending tasks, append a note but don't override the action
   if (decision.action === 'delegate') {
     const pendingTasks = await prisma.task.count({ where: { sessionId, status: 'pending' } })
     if (pendingTasks > 0) {
-      decision = { ...decision, action: 'execute', reason: '存在待执行任务，启动任务执行流程' }
+      decision = { ...decision, reason: `${decision.reason}（另有${pendingTasks}个待执行任务）` }
     }
   }
 
@@ -75,7 +74,7 @@ export async function handleOrchestratorDecision(
       await handleAgentQA(message, sessionId, agents, sendEvent)
       break
     case 'execute':
-      await transitionToExecution(sessionId, agents, sendEvent)
+      await transitionToExecution(sessionId, agents, sendEvent, message)
       break
     case 'done':
       await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
@@ -152,7 +151,25 @@ ${agentList || '（无）'}
     },
     message,
     '',
-    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+    (agentId, chunk) => {
+      // status chunk 不发送给前端（如 "completed"）
+      if (chunk.type === 'status') return
+
+      if (chunk.type === 'error') {
+        const errMsg = chunk.content
+        let friendlyMsg = '处理消息时出错，请稍后重试'
+        if (errMsg.includes('400') || errMsg.includes('Param')) {
+          friendlyMsg = 'AI 服务暂时不可用，请检查 API 配置后重试'
+        } else if (errMsg.includes('timeout') || errMsg.includes('超时')) {
+          friendlyMsg = '请求超时，请稍后重试'
+        } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch')) {
+          friendlyMsg = '无法连接到 AI 服务，请检查网络连接'
+        }
+        sendEvent({ agentId, type: 'error', content: friendlyMsg })
+      } else {
+        sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+      }
+    }
   )
 
   await prisma.message.create({

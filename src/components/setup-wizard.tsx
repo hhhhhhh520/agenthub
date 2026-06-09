@@ -13,7 +13,7 @@ interface Props {
 export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
   const [step, setStep] = useState<'welcome' | 'config' | 'agents' | 'done'>('welcome')
   const [apiKey, setApiKey] = useState('')
-  const [model, setModel] = useState('claude-sonnet-4-20250514')
+  const [model, setModel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [providers, setProviders] = useState<{ name: string; displayName: string; baseUrl: string; model: string }[]>([])
   const [showProviders, setShowProviders] = useState(false)
@@ -33,7 +33,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
     if (!open) {
       setStep('welcome')
       setApiKey('')
-      setModel('claude-sonnet-4-20250514')
+      setModel('')
       setBaseUrl('')
       setShowProviders(false)
       setTestResult(null)
@@ -127,7 +127,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             apiKey: detectedPlatform ? '' : apiKey,
-            model,
+            model: detectedPlatform ? '' : model,
             baseUrl: detectedPlatform ? '' : baseUrl,
             platform,
           }),

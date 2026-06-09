@@ -32,7 +32,7 @@ const COMMANDS = [
 ]
 
 export function ChatArea({ sessionId, sessionType }: { sessionId: string | null; sessionType?: string }) {
-  const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission } = useChat(sessionId)
+  const { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission, thinking, toolCalls } = useChat(sessionId)
   const [input, setInput] = useState('')
   const [agentNames, setAgentNames] = useState<string[]>([])
   const [agentColorMap, setAgentColorMap] = useState<Record<string, string>>({})
@@ -259,6 +259,46 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
               </div>
             )
           })}
+          {/* Thinking 展示 */}
+          {Object.entries(thinking).map(([agentId, text]) => {
+            if (!text) return null
+            const style = getAgentStyle(agentId, agentColorMap[agentId])
+            return (
+              <div key={`thinking-${agentId}`} className="flex gap-2 max-w-[80%]">
+                <Avatar size="sm">
+                  <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
+                </Avatar>
+                <div className="rounded-lg p-3 bg-gray-50 border border-gray-200">
+                  <div className="text-xs font-medium mb-1 text-gray-400">💭 {agentId} 思考中...</div>
+                  <div className="text-sm text-gray-500 italic whitespace-pre-wrap">{text}</div>
+                </div>
+              </div>
+            )
+          })}
+          {/* Tool Calls 展示 */}
+          {toolCalls.map(tc => (
+            <div key={tc.id} className="flex gap-2 max-w-[80%] ml-8">
+              <div className={`rounded-lg p-2 text-xs font-mono border ${tc.status === 'running' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+                <div className="flex items-center gap-1 mb-1">
+                  {tc.status === 'running' ? (
+                    <span className="animate-spin">⚙️</span>
+                  ) : (
+                    <span>✅</span>
+                  )}
+                  <span className="font-semibold">{tc.toolName}</span>
+                </div>
+                {tc.toolInput && Object.keys(tc.toolInput).length > 0 && (
+                  <pre className="text-xs overflow-x-auto max-w-md">{JSON.stringify(tc.toolInput, null, 2)}</pre>
+                )}
+                {tc.toolResult && (
+                  <div className="mt-1 pt-1 border-t border-gray-200">
+                    <pre className="text-xs overflow-x-auto max-w-md max-h-32 overflow-y-auto">{tc.toolResult}</pre>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {/* Streaming 文本展示 */}
           {Object.entries(streaming).map(([agentId, text]) => {
             const style = getAgentStyle(agentId, agentColorMap[agentId])
             return (

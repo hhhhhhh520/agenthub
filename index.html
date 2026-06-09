@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo List 待办事项</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 标题区域 -->
+        <h1 class="app-title">📝 Todo List</h1>
+
+        <!-- 输入区域：输入框 + 添加按钮 -->
+        <div class="input-area">
+            <input
+                type="text"
+                id="todoInput"
+                class="todo-input"
+                placeholder="添加新的待办事项..."
+                autocomplete="off"
+            >
+            <button id="addBtn" class="add-btn">添加</button>
+        </div>
+
+        <!-- 待办事项列表容器 -->
+        <ul id="todoList" class="todo-list">
+            <!-- JS 会动态渲染待办事项到此处 -->
+        </ul>
+
+        <!-- 空状态提示 -->
+        <div id="emptyState" class="empty-state">
+            🎉 暂无待办事项，添加一个吧！
+        </div>
+
+        <!-- 统计信息 -->
+        <div id="stats" class="stats">
+            <span id="totalCount">共 0 项</span>
+            <span id="doneCount">已完成 0 项</span>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

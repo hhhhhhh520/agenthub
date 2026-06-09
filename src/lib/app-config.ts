@@ -25,7 +25,7 @@ export async function getOrchestratorConfig(): Promise<{ apiKey: string; model: 
   }
   return {
     apiKey: config.orchestrator_apiKey || '',
-    model: config.orchestrator_model || 'claude-sonnet-4-20250514',
+    model: config.orchestrator_model || '',
     baseUrl: config.orchestrator_baseUrl || '',
   }
 }

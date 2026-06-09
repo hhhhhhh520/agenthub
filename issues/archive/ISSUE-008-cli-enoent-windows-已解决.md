@@ -5,7 +5,7 @@
 在 Windows 上通过 Node.js 的 `spawn('claude', args)` 启动 Claude Code CLI 时报错：`Error: spawn claude ENOENT`。
 
 ## 出现原因
-`claude` 命令实际是 `claude.cmd`（位于 `C:\Users\<user>\AppData\Roaming\npm\`）。Node.js 的 `spawn` 在 Windows 上需要 `.cmd` 扩展名或使用 `shell: true`。
+`claude` 命令实际是 `claude.cmd`（位于 npm 全局目录）。Node.js 的 `spawn` 在 Windows 上需要 `.cmd` 扩展名或使用 `shell: true`。
 
 ## 解决方案
 添加 `shell: true` 选项：

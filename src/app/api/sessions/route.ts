@@ -46,16 +46,20 @@ export async function POST(request: Request) {
 
   // Private sessions: only add explicit agentIds, no auto-add preset agents
   if (type === 'private') {
-    if (Array.isArray(agentIds) && agentIds.length > 0) {
-      const agents = await prisma.agent.findMany({ where: { id: { in: agentIds } } })
-      await prisma.sessionMember.createMany({
-        data: agents.map(agent => ({
-          sessionId: session.id,
-          agentId: agent.id,
-          role: 'member',
-        })),
-      })
+    if (!Array.isArray(agentIds) || agentIds.length === 0) {
+      return NextResponse.json({ error: 'Private session requires at least one agentId' }, { status: 400 })
     }
+    const agents = await prisma.agent.findMany({ where: { id: { in: agentIds } } })
+    if (agents.length === 0) {
+      return NextResponse.json({ error: 'No valid agents found for provided agentIds' }, { status: 400 })
+    }
+    await prisma.sessionMember.createMany({
+      data: agents.map(agent => ({
+        sessionId: session.id,
+        agentId: agent.id,
+        role: 'member',
+      })),
+    })
     return NextResponse.json(session)
   }
 

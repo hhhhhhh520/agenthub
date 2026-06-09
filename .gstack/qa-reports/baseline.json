@@ -1,22 +1,35 @@
 {
-  "date": "2026-06-04",
-  "url": "http://localhost:3099",
-  "healthScore": 87,
+  "date": "2026-06-08",
+  "url": "http://localhost:3000",
+  "healthScore": 90,
   "issues": [
-    { "id": "ISSUE-001", "title": "Send button click unreliable", "severity": "medium", "category": "functional" },
-    { "id": "ISSUE-002", "title": "Pin button requires wizard dismissal", "severity": "low", "category": "ux" },
-    { "id": "ISSUE-003", "title": "@所有人 API errors for unconfigured agents", "severity": "medium", "category": "functional" },
-    { "id": "ISSUE-004", "title": "Session sidebar doesn't refresh after navigation", "severity": "low", "category": "ux" },
-    { "id": "ISSUE-005", "title": "Agent creation button selector ambiguous", "severity": "low", "category": "ux" }
+    {
+      "id": "ISSUE-001",
+      "title": "用户消息编码乱码",
+      "severity": "medium",
+      "category": "content"
+    },
+    {
+      "id": "ISSUE-002",
+      "title": "Orchestrator 输出显示原始 JSON",
+      "severity": "low",
+      "category": "functional"
+    },
+    {
+      "id": "ISSUE-003",
+      "title": "创建群聊对话框缺少标题输入",
+      "severity": "low",
+      "category": "ux"
+    }
   ],
   "categoryScores": {
     "console": 100,
     "links": 100,
-    "visual": 100,
+    "visual": 90,
     "functional": 85,
-    "ux": 80,
+    "ux": 90,
     "performance": 90,
-    "content": 90,
-    "accessibility": 75
+    "content": 80,
+    "accessibility": 85
   }
 }

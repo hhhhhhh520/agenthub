@@ -9,6 +9,16 @@ export interface ScheduledTask {
 
 export function topologicalSort(tasks: ScheduledTask[]): ScheduledTask[] {
   const taskMap = new Map(tasks.map(t => [t.id, t]))
+
+  // Validate all dependency IDs exist
+  for (const task of tasks) {
+    for (const depId of task.dependencies) {
+      if (!taskMap.has(depId)) {
+        throw new Error(`Task "${task.id}" depends on non-existent task "${depId}"`)
+      }
+    }
+  }
+
   const batches = new Map<string, number>()
 
   function getBatch(taskId: string): number {

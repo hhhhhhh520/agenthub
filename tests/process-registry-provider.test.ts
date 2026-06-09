@@ -62,14 +62,24 @@ describe('ProcessRegistry provider env injection', () => {
     expect(capturedArgs[modelIndex + 1]).toBe('claude-sonnet-4-20250514')
   })
 
-  it('should clear ANTHROPIC_BASE_URL when config has no baseUrl (avoid inheriting wrong endpoint)', () => {
+  it('should inherit system ANTHROPIC_BASE_URL when config has no baseUrl', () => {
     const key = `test-${Date.now()}-noprovider`
+    const original = process.env.ANTHROPIC_BASE_URL
+    process.env.ANTHROPIC_BASE_URL = 'https://system-endpoint.example.com'
+
     processRegistry.getOrCreate(key, {
       workDir: '/tmp/test',
     })
 
-    // Without baseUrl config, ANTHROPIC_BASE_URL is cleared to avoid inheriting system endpoint
-    expect(capturedEnv.ANTHROPIC_BASE_URL).toBe('')
+    // Without baseUrl config, should inherit from system environment
+    expect(capturedEnv.ANTHROPIC_BASE_URL).toBe('https://system-endpoint.example.com')
+
+    // Restore
+    if (original !== undefined) {
+      process.env.ANTHROPIC_BASE_URL = original
+    } else {
+      delete process.env.ANTHROPIC_BASE_URL
+    }
   })
 
   it('should NOT add --model arg when model is not provided', () => {

@@ -3,7 +3,6 @@ import { executeTaskBatch, callLLMForAnalysis } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './git-utils'
-import { buildContextFromHistory } from './context-builder'
 import type { SendEvent } from './review'
 
 interface TraceEntry {
@@ -41,15 +40,10 @@ export async function handleExecution(
     return
   }
 
-  const allMessages = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
-  const context = buildContextFromHistory(allMessages)
-
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   const projectRoot = session?.projectDir && session.projectDir.trim()
     ? session.projectDir.trim()
     : process.cwd()
-
-  const gitBefore = getGitSnapshot(projectRoot)
 
   const scheduledTasks = tasks.map(t => ({
     id: t.id,
@@ -92,6 +86,9 @@ export async function handleExecution(
 
     if (readyTasks.length === 0) break
 
+    // Create git snapshot at batch level for boundary detection
+    const gitBefore = getGitSnapshot(projectRoot)
+
     for (const task of readyTasks) {
       const startTrace = appendTrace(task.trace || '[]', {
         ts: new Date().toISOString(), event: 'start', agent: agents.find(a => a.id === task.assignedAgentId)?.name,
@@ -102,32 +99,50 @@ export async function handleExecution(
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
 
+    // Heartbeat: update updatedAt every 60s to prevent stuck task reset
+    const heartbeats = new Map<string, NodeJS.Timeout>()
+    for (const task of readyTasks) {
+      const heartbeat = setInterval(async () => {
+        try { await prisma.task.update({ where: { id: task.id }, data: { updatedAt: new Date() } }) }
+        catch {}
+      }, 60_000)
+      heartbeats.set(task.id, heartbeat)
+    }
+
     let results: Map<string, { result: string; sessionId?: string }>
     let batchFailedIds: string[] = []
     try {
       const batchOutcome = await executeTaskBatch(
-        readyTasks.map(t => ({
-          id: t.id,
-          description: t.description,
-          assignedAgent: agents.find(a => a.id === t.assignedAgentId)?.name || '',
-          dependencies: JSON.parse(t.dependencies || '[]'),
-          declaredFiles: JSON.parse(t.declaredFiles || '[]'),
-          batch: 0,
-        })),
+        readyTasks.map(t => {
+          // P1: 纠偏重试时注入越界信息
+          let desc = t.description
+          if (t.correctionCount > 0) {
+            const trace = JSON.parse(t.trace || '[]')
+            const last = trace.filter((tr: any) => tr.event === 'correction').pop()
+            if (last?.message) desc = `[上次问题] ${last.message}\n请避免重复此错误。\n\n${desc}`
+          }
+          return {
+            id: t.id,
+            description: desc,
+            assignedAgent: agents.find(a => a.id === t.assignedAgentId)?.name || '',
+            dependencies: JSON.parse(t.dependencies || '[]'),
+            declaredFiles: JSON.parse(t.declaredFiles || '[]'),
+            batch: 0,
+          }
+        }),
         agents.map(a => {
           const task = tasks.find(t => t.assignedAgentId === a.id)
           return {
             name: a.name,
             systemPrompt: a.systemPrompt,
             platform: a.platform,
-            model: a.model,
+            model: a.model || undefined,
             baseUrl: a.baseUrl,
             apiKey: a.apiKey,
             sessionId: task?.cliSessionId || undefined,
             permissionMode: session?.permissionMode || 'default',
           }
         }),
-        context,
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content, data: chunk.data }),
         sessionId,
         projectRoot
@@ -144,6 +159,11 @@ export async function handleExecution(
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
       }
       results = new Map()
+    } finally {
+      // Clear all heartbeats
+      for (const heartbeat of heartbeats.values()) {
+        clearInterval(heartbeat)
+      }
     }
 
     for (const taskId of batchFailedIds) {
