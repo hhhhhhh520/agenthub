@@ -72,3 +72,11 @@ screenshots/
 
 # Claude Code
 .claude/
+
+# Temporary/test files
+backend/
+calculator.py
+palindrome.py
+test-results/
+.opencode/
+.gstack/
