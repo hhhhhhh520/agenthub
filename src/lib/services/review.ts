@@ -9,7 +9,14 @@ export async function reviewResult(
   result: string,
   taskDescription: string,
   sessionId: string,
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  retryContext?: {
+    agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; id?: string; tools?: string }
+    maxRetries?: number
+    currentRetry?: number
+    chatSessionId?: string
+    projectDir?: string
+  }
 ): Promise<{ quality: string }> {
   try {
     const monitoringPrompt = buildMonitoringPrompt(taskDescription, result, [], { declared: [], undeclared: [] }, 'single')
@@ -22,6 +29,48 @@ export async function reviewResult(
         const correctionMsg = `Orchestrator 纠偏：${review.correctionNote}`
         await prisma.message.create({ data: { role: 'orchestrator', rawContent: correctionMsg, sessionId } })
         sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg, data: { quality: 'poor' } })
+
+        // 如果有重试上下文且未超过最大重试次数，自动重新执行 Agent
+        const maxRetries = retryContext?.maxRetries ?? 3
+        const currentRetry = retryContext?.currentRetry ?? 0
+
+        if (retryContext?.agent && currentRetry < maxRetries) {
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: `正在要求 Agent 改进（第 ${currentRetry + 1}/${maxRetries} 次重试）...` })
+
+          const retryPrompt = `之前的结果有问题：${review.correctionNote}\n\n原始任务：${taskDescription}\n\n请重新完成任务，确保修复上述问题。`
+
+          try {
+            const { result: retryResult } = await executeSingleAgent(
+              {
+                ...retryContext.agent,
+                workDir: retryContext.projectDir,
+              },
+              retryPrompt,
+              '',
+              (agentId, chunk) => {
+                if (chunk.type === 'status') return
+                sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
+              },
+              retryContext.chatSessionId,
+              retryContext.projectDir,
+            )
+
+            // 保存重试结果
+            await prisma.message.create({
+              data: { role: 'agent', rawContent: retryResult, sessionId, agentId: retryContext.agent.name },
+            })
+
+            // 递归检查重试结果
+            return reviewResult(retryResult, taskDescription, sessionId, sendEvent, {
+              ...retryContext,
+              currentRetry: currentRetry + 1,
+            })
+          } catch {
+            // 重试失败，明确标记为差
+            return { quality: 'poor' }
+          }
+        }
+
         return { quality: review.quality || 'poor' }
       }
       return { quality: review.quality || 'good' }
@@ -77,7 +126,13 @@ export async function delegateToAgent(
     data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
   })
 
-  const { quality } = await reviewResult(result, taskMessage, sessionId, sendEvent)
+  const { quality } = await reviewResult(result, taskMessage, sessionId, sendEvent, {
+    agent: { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, id: agent.id, tools: agent.tools },
+    maxRetries: 3,
+    currentRetry: 0,
+    chatSessionId: sessionId,
+    projectDir: workDir,
+  })
   sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality } })
 }
 

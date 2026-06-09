@@ -11,6 +11,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     message: { findMany: mockMessageFindMany, create: mockMessageCreate },
     session: { findUnique: mockSessionFindUnique },
+    sessionMember: { findUnique: vi.fn().mockResolvedValue(null) },
   },
 }))
 
@@ -55,7 +56,7 @@ describe('delegateToAgent', () => {
     await delegateToAgent('不存在', 'task', 's1', agents, sendEvent)
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({
       type: 'error',
-      content: '未找到名为 不存在 的 Agent',
+      content: expect.stringContaining('未找到名为「不存在」的 Agent'),
     }))
     expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
   })
@@ -65,7 +66,7 @@ describe('delegateToAgent', () => {
     expect(mockExecuteSingleAgent).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'PM', systemPrompt: 'you are PM', platform: 'claude-code', model: 'm1' }),
       'do task',
-      'context',
+      '',
       expect.any(Function),
       's1',
       '/dir',
@@ -103,7 +104,7 @@ describe('runMultiAgentDiscussion', () => {
     await runMultiAgentDiscussion(['不存在'], 'topic', 's1', agents, sendEvent)
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({
       type: 'error',
-      content: '未找到参与讨论的 Agent',
+      content: expect.stringContaining('未找到参与讨论的 Agent'),
     }))
     expect(mockRunDiscussion).not.toHaveBeenCalled()
   })

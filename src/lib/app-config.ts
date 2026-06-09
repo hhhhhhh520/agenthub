@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { detectCLIPlatform } from '@/lib/cli-detect'
+import { readCCSwitchProviders } from '@/lib/cc-switch-reader'
 
 export async function getConfig(key: string): Promise<string> {
   const rows = await prisma.$queryRaw<Array<{ value: string }>>
@@ -17,17 +18,38 @@ export async function isSetupCompleted(): Promise<boolean> {
 }
 
 export async function getOrchestratorConfig(): Promise<{ apiKey: string; model: string; baseUrl: string }> {
+  // 1. 先从 AppConfig 表读取
   const rows = await prisma.$queryRaw<Array<{ key: string; value: string }>>
     `SELECT key, value FROM AppConfig WHERE key IN ('orchestrator_apiKey', 'orchestrator_model', 'orchestrator_baseUrl')`
   const config: Record<string, string> = {}
   for (const row of rows) {
     config[row.key] = row.value
   }
-  return {
+
+  const result = {
     apiKey: config.orchestrator_apiKey || '',
     model: config.orchestrator_model || '',
     baseUrl: config.orchestrator_baseUrl || '',
   }
+
+  // 2. 如果 AppConfig 没有 API Key，尝试从 CC-Switch 读取当前 Provider
+  if (!result.apiKey) {
+    try {
+      const providers = await readCCSwitchProviders()
+      // readCCSwitchProviders 按 is_current DESC 排序，第一个就是当前使用的
+      const current = providers[0]
+      if (current?.apiKey) {
+        result.apiKey = current.apiKey
+        result.baseUrl = current.baseUrl
+        result.model = current.model
+        console.log('[app-config] Using CC-Switch provider:', current.name)
+      }
+    } catch (e) {
+      console.error('[app-config] Failed to read CC-Switch:', e)
+    }
+  }
+
+  return result
 }
 
 /**

@@ -75,9 +75,12 @@ describe('LLMAdapter — uncovered paths', () => {
   it('close aborts the controller', async () => {
     const adapter = new LLMAdapter()
     await adapter.connect({ platform: 'claude-code', apiKey: 'sk-test' })
+    // spy on abortController.abort
+    const abortSpy = vi.spyOn((adapter as any).abortController, 'abort')
     await adapter.close()
-    // After close, send should not produce new chunks (abort signal is set)
-    // We just verify close doesn't throw
-    expect(true).toBe(true)
+    // 验证 abort 被调用
+    expect(abortSpy).toHaveBeenCalledOnce()
+    // 验证 abortSignal 已触发
+    expect((adapter as any).abortController.signal.aborted).toBe(true)
   })
 })

@@ -44,8 +44,21 @@ export async function readCCSwitchProviders(): Promise<CCProvider[]> {
         baseUrl = env.ANTHROPIC_BASE_URL || ''
         model = env.ANTHROPIC_MODEL || ''
         apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || ''
+      } else if (appType === 'opencode') {
+        // OpenCode providers: config.options.apiKey, config.options.baseURL
+        const options = (config.options || {}) as Record<string, string>
+        apiKey = options.apiKey || ''
+        baseUrl = options.baseURL || ''
+        // Get first model from config.models
+        const models = config.models as Record<string, { name?: string }> | undefined
+        if (models) {
+          const modelNames = Object.keys(models)
+          if (modelNames.length > 0) {
+            model = modelNames[0]
+          }
+        }
       } else {
-        // Skip non-claude types (codex opencode etc need complex TOML parsing)
+        // Skip other types (codex etc)
         continue
       }
 
@@ -58,7 +71,7 @@ export async function readCCSwitchProviders(): Promise<CCProvider[]> {
         baseUrl,
         model,
         apiKey,
-        agentType: 'claudecode',
+        agentType: appType === 'opencode' ? 'opencode' : 'claudecode',
         source: 'cc-switch-db',
       })
     }

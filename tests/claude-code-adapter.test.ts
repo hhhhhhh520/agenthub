@@ -105,11 +105,13 @@ describe('ClaudeCodeAdapter', () => {
     expect((adapter as any).sessionId).toBe('sess-123')
   })
 
-  it('close is a no-op', async () => {
+  it('close is a no-op — does not call registry methods', async () => {
     const adapter = new ClaudeCodeAdapter()
     await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
+    vi.clearAllMocks() // 清除 connect 期间的调用记录
     await adapter.close()
-    // No kill calls should be made
-    expect(true).toBe(true)
+    // close() 是 no-op，不应该调用任何 registry 方法
+    expect(mockGetOrCreate).not.toHaveBeenCalled()
+    expect(mockSend).not.toHaveBeenCalled()
   })
 })

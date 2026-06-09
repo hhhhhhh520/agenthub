@@ -153,11 +153,13 @@ describe('OpenCodeAdapter', () => {
     expect(adapter.getSessionId()).toBe('sess-123')
   })
 
-  it('close is a no-op', async () => {
+  it('close is a no-op — does not call registry send', async () => {
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', workDir: '/dir' })
+    vi.clearAllMocks() // 清除 connect 期间的调用记录
     await adapter.close()
-    expect(true).toBe(true)
+    // close() 是 no-op，不应该调用 registry.send
+    expect(mockSend).not.toHaveBeenCalled()
   })
 
   it('send adds --file args for attachments', async () => {

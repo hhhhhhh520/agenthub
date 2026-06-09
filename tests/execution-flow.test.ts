@@ -49,7 +49,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate },
     agent: { findUnique: mockAgentFindUnique, create: mockAgentCreate },
-    sessionMember: { findMany: mockSessionMemberFindMany, create: mockSessionMemberCreate, updateMany: vi.fn() },
+    sessionMember: { findMany: mockSessionMemberFindMany, create: mockSessionMemberCreate, updateMany: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
     task: { findMany: mockTaskFindMany, create: mockTaskCreate, update: mockTaskUpdate, count: mockTaskCount },
     message: { findMany: mockMessageFindMany, create: mockMessageCreate },
   },
@@ -147,7 +147,7 @@ describe('1. align_confirm — PM确认需求', () => {
     expect(mockExecuteSingleAgent).toHaveBeenCalledWith(
       expect.objectContaining({ name: '产品经理' }),
       expect.stringContaining('确认需求'),
-      'context',
+      '',
       expect.any(Function),
       'session-1',
       expect.any(String),

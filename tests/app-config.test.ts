@@ -15,6 +15,12 @@ vi.mock('@/lib/cli-detect', () => ({
   detectCLIPlatform: () => 'claude-code',
 }))
 
+// Mock @/lib/cc-switch-reader (used by getOrchestratorConfig fallback)
+const mockReadCCSwitchProviders = vi.fn().mockResolvedValue([])
+vi.mock('@/lib/cc-switch-reader', () => ({
+  readCCSwitchProviders: () => mockReadCCSwitchProviders(),
+}))
+
 // Import AFTER mocks are set up
 const appConfig = await import('../src/lib/app-config')
 
@@ -72,6 +78,8 @@ describe('isSetupCompleted', () => {
 describe('getOrchestratorConfig', () => {
   beforeEach(() => {
     mockQueryRaw.mockReset()
+    mockReadCCSwitchProviders.mockReset()
+    mockReadCCSwitchProviders.mockResolvedValue([])
   })
 
   it('returns config from database rows', async () => {
@@ -97,6 +105,35 @@ describe('getOrchestratorConfig', () => {
     const config = await appConfig.getOrchestratorConfig()
     expect(config.apiKey).toBe('')
     expect(config.baseUrl).toBe('')
+  })
+
+  it('falls back to CC-Switch when AppConfig is empty', async () => {
+    mockQueryRaw.mockResolvedValueOnce([])
+    mockReadCCSwitchProviders.mockResolvedValueOnce([{
+      name: 'Xiaomi MiMo',
+      apiKey: 'tp-test-key',
+      baseUrl: 'https://test.com/anthropic',
+      model: 'mimo-v2.5-pro',
+    }])
+    const config = await appConfig.getOrchestratorConfig()
+    expect(config.apiKey).toBe('tp-test-key')
+    expect(config.baseUrl).toBe('https://test.com/anthropic')
+    expect(config.model).toBe('mimo-v2.5-pro')
+  })
+
+  it('does not override AppConfig with CC-Switch when AppConfig has values', async () => {
+    mockQueryRaw.mockResolvedValueOnce([
+      { key: 'orchestrator_apiKey', value: 'sk-ant-123' },
+    ])
+    mockReadCCSwitchProviders.mockResolvedValueOnce([{
+      name: 'Xiaomi MiMo',
+      apiKey: 'tp-other-key',
+      baseUrl: 'https://other.com',
+      model: 'other-model',
+    }])
+    const config = await appConfig.getOrchestratorConfig()
+    expect(config.apiKey).toBe('sk-ant-123')
+    expect(mockReadCCSwitchProviders).not.toHaveBeenCalled()
   })
 })
 

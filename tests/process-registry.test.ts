@@ -230,10 +230,13 @@ describe('ProcessRegistry', () => {
   })
 
   describe('gracefulShutdown', () => {
-    it('returns early when registry is empty', () => {
+    it('returns early when registry is empty — no spawn calls', () => {
+      // 确保 registry 为空
+      expect((globalThis as any).__processRegistry.size).toBe(0)
+      vi.clearAllMocks() // 清除之前的 spawn 调用记录
       processRegistry.gracefulShutdown()
-      // No spawn calls for kill
-      expect(true).toBe(true)
+      // registry 为空时直接返回，不应该调用 spawn（用于 taskkill）
+      expect(mockSpawn).not.toHaveBeenCalled()
     })
   })
 })

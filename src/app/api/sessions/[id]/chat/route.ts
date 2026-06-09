@@ -91,7 +91,7 @@ export async function POST(
   }
 
   const encoder = new TextEncoder()
-  const SSE_TIMEOUT_MS = 5 * 60_000
+  const SSE_TIMEOUT_MS = 60 * 60_000
   const stream = new ReadableStream({
     async start(controller) {
       let streamClosed = false
@@ -104,7 +104,7 @@ export async function POST(
       const sseTimeout = setTimeout(() => {
         streamClosed = true
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（5分钟），请重试' })}\n\n`))
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（60分钟），请重试' })}\n\n`))
         } catch {}
         controller.close()
       }, SSE_TIMEOUT_MS)
