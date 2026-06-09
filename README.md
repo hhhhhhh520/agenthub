@@ -78,8 +78,7 @@ issues/              — 开发问题记录
 ## 文档
 
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md) — 当前架构设计
-- [Orchestrator 平台改造](docs/archive/orchestrator-platform-refactor-已实施.md) — CLI-first 架构改造方案（已实施）
 - [对齐流程实现](docs/design/alignment-flow-plan.md) — Orchestrator 智能编排实现计划
-- [Anthropic Managed Agents](docs/reference/anthropic-scaling-managed-agents.md) — 参考架构
-- [多 Agent 技术方案](docs/reference/multi-agent-reference.md) — 框架对比
-- [ChatFab 私聊计划](docs/archive/plan-chatfab-private-chat.md) — 右下角私聊功能实现方案
+- [已实施方案](docs/archive/已实施/) — CLI-first 改造、ChatFab 私聊、SSE 超时等
+- [参考报告](docs/archive/参考报告/) — AI 协作流程、多 Agent 架构对比
+- [开发问题记录](issues/) — 已解决问题和设计验收清单
