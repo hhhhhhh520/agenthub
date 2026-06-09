@@ -17,6 +17,11 @@ vi.mock('@/lib/cli-detect', () => ({
   detectCLIPlatform: vi.fn().mockReturnValue('claude-code'),
 }))
 
+const mockReadCCSwitchProviders = vi.fn().mockResolvedValue([])
+vi.mock('@/lib/cc-switch-reader', () => ({
+  readCCSwitchProviders: () => mockReadCCSwitchProviders(),
+}))
+
 import { ensureOrchestratorAgent, getOrchestratorConfig } from '@/lib/app-config'
 
 beforeEach(() => {
@@ -72,6 +77,11 @@ describe('ensureOrchestratorAgent', () => {
 })
 
 describe('getOrchestratorConfig', () => {
+  beforeEach(() => {
+    mockReadCCSwitchProviders.mockReset()
+    mockReadCCSwitchProviders.mockResolvedValue([])
+  })
+
   it('returns config from rows', async () => {
     mockQueryRaw.mockResolvedValueOnce([
       { key: 'orchestrator_apiKey', value: 'sk' },

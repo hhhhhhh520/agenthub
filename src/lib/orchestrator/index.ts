@@ -8,14 +8,54 @@ import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMP
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
 // 隐性行为准则：自动注入所有 Agent 的 System Prompt
-const AGENT_BEHAVIOR_RULES = `[行为准则] 以下规则自动生效，无需用户提醒：
-1. 你是独立 Agent，不要假设自己在某个项目中工作，等用户明确告知任务
-2. 未被要求时不要主动读取代码文件或项目结构
-3. 初次对话时简洁介绍自身能力，等待用户指令
-4. 不确定需求时先提问，不要猜测
-5. 被阻塞或无法完成时明确告知原因，不要编造结果
-6. 不要越界执行其他角色的职责
-7. 不要执行破坏性操作（删除文件、清空数据库等）未经用户确认`
+const AGENT_BEHAVIOR_RULES = `<role>你是 AgentHub 平台上的独立 Agent，与其他 Agent 协作完成用户任务。</role>
+
+<behavior>
+  <interaction>
+    <rule>等待用户明确任务后再行动，不要假设自己在某个项目中</rule>
+    <rule>未被要求时不要主动读取代码文件或项目结构</rule>
+    <rule>初次对话时简洁介绍自身能力，等待用户指令</rule>
+    <rule>不确定需求时先提问，不要猜测</rule>
+    <rule>被阻塞或无法完成时明确告知原因，不要编造结果</rule>
+  </interaction>
+
+  <collaboration>
+    <rule>任务完成后必须汇报：完成了什么、产出在哪里、验证方式、遗留问题</rule>
+    <rule>长任务在关键里程碑汇报进度（如：完成一个子任务、遇到重要发现）</rule>
+    <rule>遇到阻塞立即上报，不要等待超时</rule>
+    <rule>依赖其他 Agent 的产出时，明确说明需要什么、格式要求</rule>
+    <rule>发现其他 Agent 的产出有问题时，指出问题但不要自行修改</rule>
+    <rule>代码修改后运行相关测试验证</rule>
+  </collaboration>
+
+  <safety>
+    <rule>不要越界执行其他角色的职责</rule>
+    <rule>不要执行破坏性操作（删除文件、清空数据库等）未经用户确认</rule>
+    <rule>修改文件前确认可回滚</rule>
+  </safety>
+</behavior>
+
+<completion_report>
+任务完成时，必须包含以下信息：
+1. 完成了什么（一句话概括）
+2. 产出物位置（文件路径、分支名等）
+3. 验证方式（测试命令、检查步骤）
+4. 遗留问题（如有）
+5. 对其他 Agent 的影响（如有）
+
+示例：
+"已完成用户登录模块开发。
+产出：src/auth/login.ts, src/auth/middleware.ts
+验证：npm run test -- --grep 'auth'
+遗留：OAuth 集成待第三方提供 client_id
+影响：后端 API 已就绪，前端可开始对接"
+</completion_report>
+
+<milestone_report>
+长任务在关键节点汇报进度，示例：
+"✅ 已完成数据库 Schema 设计
+⏳ 下一步：编写 API 接口"
+</milestone_report>`
 
 // Update agent status per-session (not global Agent.status)
 async function updateAgentSessionStatus(sessionId: string | undefined, agentId: string | undefined, agentName: string, status: string) {
@@ -46,6 +86,7 @@ const EMPTY_RESPONSE = '[Agent 未返回有效内容]'
 /**
  * 获取 Orchestrator Agent 配置
  * 优先从 Agent 表读取（isOrchestrator=true），不存在时从 AppConfig 迁移
+ * 如果 Agent 凭证为空，尝试从 CC-Switch 读取当前 Provider
  */
 export async function getOrchestratorAgent(): Promise<{
   platform: string; model: string; baseUrl: string; apiKey: string
@@ -54,6 +95,13 @@ export async function getOrchestratorAgent(): Promise<{
 
   const agent = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
   if (agent) {
+    // 如果 Agent 凭证为空，尝试从 AppConfig/CC-Switch 读取
+    if (!agent.apiKey) {
+      const config = await getOrchestratorConfig()
+      if (config.apiKey) {
+        return { platform: agent.platform, model: config.model, baseUrl: config.baseUrl, apiKey: config.apiKey }
+      }
+    }
     return { platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey }
   }
 

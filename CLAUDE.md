@@ -123,7 +123,7 @@ prisma/
   - **tool_use 事件结构**：`event.type === 'tool_use'`，`event.part.type === 'tool'`，工具名在 `event.part.tool`，输入在 `event.part.state.input`，输出在 `event.part.state.output`（内嵌在同一事件中，无单独 tool_result）
 - Orchestrator 是特殊 Agent 记录（`isOrchestrator: true`），使用 CLI 适配器
 - 每个 Agent 可独立选择执行平台，各自配置 model/baseUrl/apiKey
-- **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
+- **Orchestrator 配置统一**：`getOrchestratorAgent()` 从 Agent 表读取；若 Agent 凭证为空，自动从 AppConfig/CC-Switch 读取当前 Provider 作为 fallback；`callLLM`/`callLLMForAnalysis` 使用 Orchestrator Agent 的 platform/model/baseUrl/apiKey
 - **禁止硬编码模型 fallback**：`config/orchestrator/route.ts`、`app-config.ts` 中 model 为空时返回空字符串，不 fallback 到 `'claude-sonnet-4-20250514'`；CLI 会使用环境变量 `ANTHROPIC_MODEL` 作为默认值
 - **CLI 自动检测**：`detectCLIPlatform()` 按优先级检测 claude-code → opencode，结果持久化到 Orchestrator Agent 记录
 - **chunk 累加过滤**：所有 adapter chunk 累加（callLLM/callLLMForAnalysis/executeSingleAgent/executeTaskBatch/runDiscussion）必须过滤 `type === 'text'`，不累加 status chunk；**error chunk 不拼入 result**（callLLM 中 throw、executeSingleAgent 中仅通过 onChunk 发送给前端）；claude-code-adapter 的 result 事件只发 status，增量文本已通过 assistant 事件输出
@@ -145,7 +145,7 @@ prisma/
 - **OpenCodeAdapter**：通过环境变量传递 `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`
 - **4 个 Provider 数据源**（GET `/api/providers` 合并返回，按 baseUrl 去重，高优先级覆盖低优先级）：
   1. `database` — Provider 表（apiKey 完整返回）
-  2. `cc-switch-db` — CC-Switch SQLite DB `~/.cc-switch/cc-switch.db`（apiKey 完整返回）
+  2. `cc-switch-db` — CC-Switch SQLite DB `~/.cc-switch/cc-switch.db`（apiKey 完整返回，支持 Claude 和 OpenCode 类型）
   3. `cc-connect` — `~/.cc-connect/config.toml`（apiKey mask）
   4. `settings.json` — `~/.claude/settings.json`（apiKey mask）
 - **PUT 不覆盖空值**：`apiKey`/`baseUrl` 用 `&&` 判断，空字符串不覆盖已有值
@@ -167,6 +167,8 @@ Orchestrator 自主决定流程，支持 8 种 action：
 安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。**execute 前置检查**：如果数据库中无 Task 记录，强制重定向到 `align_decompose`（架构师拆解），防止跳步。**delegate 前置检查**：如果数据库中存在 pending 任务，自动切换为 `execute`，确保任务状态正确更新（防止 delegate 直接执行但不更新 Task 状态）。
 
 决策函数：`src/lib/orchestrator/index.ts` → `getOrchestratorDecision()`
+
+**自动纠偏**：`delegateToAgent` 路径下，`reviewResult` 发现质量问题时自动重新执行 Agent（最多 3 次）。重试时注入纠偏信息到 prompt，重试失败返回 `quality: 'poor'`。实现：`src/lib/services/review.ts` → `reviewResult()` 的 `retryContext` 参数。
 
 ### 消息解析器
 
@@ -225,7 +227,11 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 - **P0 Prompt 注入**：`executeTaskBatch` 构建 prompt 时自动追加 `[任务边界] 只能修改: [declaredFiles]`，Agent 执行前即知文件约束
 - **P1 纠偏加强**：重试时从 `trace` 中提取最近 `correction` 事件的 `message`，注入 `[上次问题] ...` 到 prompt，避免重复越界
-- **隐性行为准则**：`AGENT_BEHAVIOR_RULES` 自动注入所有 Agent 的 System Prompt，约束：不假设项目、不主动读代码、简洁介绍、先问后做、不越界、不破坏
+- **隐性行为准则**：`AGENT_BEHAVIOR_RULES` 自动注入所有 Agent 的 System Prompt，XML 结构化，包含三个维度：
+  - **交互规范**：不假设项目、不主动读代码、简洁介绍、先问后做、不编造
+  - **协作规范**：任务完成必须汇报、里程碑进度汇报、阻塞立即上报、依赖明确说明、代码修改后测试
+  - **安全边界**：不越界、不破坏、修改前确认可回滚
+  - **汇报模板**：任务完成时必须包含（完成内容、产出位置、验证方式、遗留问题、影响范围）
 - **流程**：检测越界 → LLM 审查 → 状态改回 pending → 注入纠偏信息重试（最多 2 次）
 
 ### Chat API Session Lock
@@ -235,7 +241,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - 实现：`src/lib/session-lock.ts` → `acquireSessionLock()`，chat route 和 redo API 共用
 - **超时保护**：等待前一个请求超过 60 秒则跳过等待继续执行
 - **abort 监听**：客户端断开时自动 release 锁
-- **SSE 全局超时**：5 分钟无响应则强制关闭流；`streamClosed` 标志位防止超时后往已关闭的 controller 写入（避免锁泄漏）
+- **SSE 全局超时**：60 分钟无响应则强制关闭流；`streamClosed` 标志位防止超时后往已关闭的 controller 写入（避免锁泄漏）
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
 - **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态
 

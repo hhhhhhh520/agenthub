@@ -17,7 +17,7 @@ vi.mock('@/lib/app-config', () => ({
 vi.mock('@/lib/db', () => ({
   prisma: {
     agent: { findFirst: mockAgentFindFirst },
-    sessionMember: { updateMany: mockSessionMemberUpdateMany },
+    sessionMember: { updateMany: mockSessionMemberUpdateMany, findUnique: vi.fn().mockResolvedValue(null) },
   },
 }))
 
@@ -248,7 +248,7 @@ describe('executeTaskBatch', () => {
       { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
     ]
     const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
-    const { results, failedTaskIds } = await executeTaskBatch(tasks, agents, 'ctx', vi.fn())
+    const { results, failedTaskIds } = await executeTaskBatch(tasks, agents, vi.fn())
     expect(results.get('t1')?.result).toBe('task result')
     expect(failedTaskIds).toEqual([])
   })
@@ -259,7 +259,7 @@ describe('executeTaskBatch', () => {
       { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
     ]
     const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
-    const { failedTaskIds } = await executeTaskBatch(tasks, agents, 'ctx', vi.fn())
+    const { failedTaskIds } = await executeTaskBatch(tasks, agents, vi.fn())
     expect(failedTaskIds).toContain('t1')
   })
 

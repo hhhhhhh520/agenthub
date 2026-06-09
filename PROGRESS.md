@@ -1,8 +1,8 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-08 (Bug修复+乱码清理)
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-09 (Playwright QA测试90/100)
 
 ## 项目概述
-**项目地址**: D:\projects\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI | **目标**: IM 风格多 Agent 协作平台
+**项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
 
 ## 当前进度
 
@@ -108,13 +108,25 @@
 | Bug2 群聊委派模糊匹配修复 | review.ts: delegateToAgent+runMultiAgentDiscussion精确匹配→模糊匹配+错误提示含可用Agent列表 | 2026-06-08 |
 | Bug4 Agent编辑UI刷新修复 | agents/[id]/page.tsx: setAgent后同步name/model/systemPrompt受控状态+model空值传递 | 2026-06-08 |
 | Bug5 数据库乱码清理 | 修复前端工程师expertise/systemPrompt+删除乱码自定义Agent+重命名3个乱码session+删除2个空session | 2026-06-08 |
+| Session恢复统一 | 移除context拼接，Claude Code用--resume、OpenCode用--session，两个平台都通过CLI原生session恢复管理历史 | 2026-06-09 |
+| StreamChunk事件补全 | 新增thinking/tool_use/tool_result三种事件类型，Claude Code和OpenCode解析逻辑都补全，前端展示thinking和toolCalls | 2026-06-09 |
+| OpenCode适配5项修复 | Prompt传递(stdin只传用户消息)、SystemPrompt写入配置文件+--agent参数、工具限制(buildToolsYaml映射)、权限模式(--dangerously-skip-permissions)、工作目录(PWD三重锚定) | 2026-06-09 |
+| OpenCode MCP集成 | ensureMcpConfig()将Claude Code MCP格式转换为OpenCode格式，通过XDG_CONFIG_HOME环境变量注入独立配置目录 | 2026-06-09 |
+| OpenCode文件附件 | 通过--file参数传递附件路径，图片和非图片都走--file | 2026-06-09 |
+| AGENT_BEHAVIOR_RULES重写 | XML结构化(role/behavior/interaction/collaboration/safety)，新增协作规则(任务完成汇报+里程碑汇报+阻塞上报+依赖说明+修改后测试)，含汇报模板和示例 | 2026-06-09 |
+| 测试修复 | 12个测试更新(prisma mock+参数期望+错误消息)，658测试全部通过 | 2026-06-09 |
+| SSE超时延长 | 5分钟→60分钟，支持复杂任务和多次重试 | 2026-06-09 |
+| Orchestrator自动纠偏 | reviewResult新增retryContext参数，delegateToAgent路径自动重试(最多3次)，重试失败返回quality:'poor'，4新测试，664测试通过 | 2026-06-09 |
+| Playwright QA测试 | 无头浏览器测试：Provider导入✅、同平台多Agent协作✅、跨平台协作✅、消息发送✅，健康评分90/100 | 2026-06-09 |
+| 文档分类整理 | 按受众和生命周期分类：reports/新建、archive/三子目录、移动12个文件、删除课题.txt | 2026-06-09 |
+| 弱断言测试修复 | 4个`expect(true).toBe(true)`改为验证具体行为：close()不调用registry、abort被触发、gracefulShutdown不调用spawn | 2026-06-09 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-08 更新）
+### 📋 待办（2026-06-09 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|

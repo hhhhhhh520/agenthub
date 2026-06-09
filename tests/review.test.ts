@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { mockCallLLMForAnalysis, mockMessageCreate } = vi.hoisted(() => ({
+const { mockCallLLMForAnalysis, mockMessageCreate, mockExecuteSingleAgent } = vi.hoisted(() => ({
   mockCallLLMForAnalysis: vi.fn(),
   mockMessageCreate: vi.fn(),
+  mockExecuteSingleAgent: vi.fn(),
 }))
 
 vi.mock('@/lib/orchestrator', () => ({
   callLLMForAnalysis: mockCallLLMForAnalysis,
+  executeSingleAgent: mockExecuteSingleAgent,
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -67,5 +69,93 @@ describe('reviewResult', () => {
     expect(result).toEqual({ quality: 'good' })
     expect(sendEvent).not.toHaveBeenCalled()
     expect(mockMessageCreate).not.toHaveBeenCalled()
+  })
+
+  it('should not retry when retryContext is not provided', async () => {
+    mockCallLLMForAnalysis.mockResolvedValueOnce(
+      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
+    )
+
+    const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent)
+
+    expect(result).toEqual({ quality: 'poor' })
+    expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+  })
+
+  it('should retry when needsCorrection is true and retryContext is provided', async () => {
+    mockCallLLMForAnalysis
+      .mockResolvedValueOnce(
+        JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
+      )
+      .mockResolvedValueOnce(
+        JSON.stringify({ needsCorrection: false, quality: 'good' })
+      )
+
+    mockExecuteSingleAgent.mockResolvedValueOnce({ result: 'improved output' })
+
+    const retryContext = {
+      agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
+      maxRetries: 3,
+      currentRetry: 0,
+      chatSessionId: 'session-1',
+      projectDir: '/test',
+    }
+
+    const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent, retryContext)
+
+    expect(result).toEqual({ quality: 'good' })
+    expect(mockExecuteSingleAgent).toHaveBeenCalledWith(
+      { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code', workDir: '/test' },
+      expect.stringContaining('缺少错误处理'),
+      '',
+      expect.any(Function),
+      'session-1',
+      '/test',
+    )
+    expect(sendEvent).toHaveBeenCalledWith({
+      agentId: 'orchestrator',
+      type: 'text',
+      content: '正在要求 Agent 改进（第 1/3 次重试）...',
+    })
+  })
+
+  it('should not retry when currentRetry >= maxRetries', async () => {
+    mockCallLLMForAnalysis.mockResolvedValueOnce(
+      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
+    )
+
+    const retryContext = {
+      agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
+      maxRetries: 3,
+      currentRetry: 3,
+      chatSessionId: 'session-1',
+      projectDir: '/test',
+    }
+
+    const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent, retryContext)
+
+    expect(result).toEqual({ quality: 'poor' })
+    expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+  })
+
+  it('should return quality poor when executeSingleAgent fails during retry', async () => {
+    mockCallLLMForAnalysis.mockResolvedValueOnce(
+      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
+    )
+
+    mockExecuteSingleAgent.mockRejectedValueOnce(new Error('CLI crashed'))
+
+    const retryContext = {
+      agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
+      maxRetries: 3,
+      currentRetry: 0,
+      chatSessionId: 'session-1',
+      projectDir: '/test',
+    }
+
+    const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent, retryContext)
+
+    expect(result).toEqual({ quality: 'poor' })
+    expect(mockExecuteSingleAgent).toHaveBeenCalled()
   })
 })
