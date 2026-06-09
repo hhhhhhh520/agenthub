@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-09 (Playwright QA测试90/100)
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-09 (GitHub上传完成)
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -120,6 +120,10 @@
 | Playwright QA测试 | 无头浏览器测试：Provider导入✅、同平台多Agent协作✅、跨平台协作✅、消息发送✅，健康评分90/100 | 2026-06-09 |
 | 文档分类整理 | 按受众和生命周期分类：reports/新建、archive/三子目录、移动12个文件、删除课题.txt | 2026-06-09 |
 | 弱断言测试修复 | 4个`expect(true).toBe(true)`改为验证具体行为：close()不调用registry、abort被触发、gracefulShutdown不调用spawn | 2026-06-09 |
+| 死代码识别 | workspace.ts(工作空间沙箱+审计)和llm-adapter.ts(直接API调用)确认未被引用，保留备用 | 2026-06-09 |
+| 测试覆盖率报告 | 84.89% Statements / 74.75% Branches / 81.36% Functions / 86.03% Lines，664测试全通过 | 2026-06-09 |
+| GitHub上传 | 独立仓库 https://github.com/hhhhhhh520/agenthub ，77 commits完整历史，排除敏感文件(.env/dev.db/uploads/.opencode/.gstack) | 2026-06-09 |
+| 文档清理 | README.md修复2个失效链接，PROGRESS.md补充最新变更记录 | 2026-06-09 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
