@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-11
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-10
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -131,7 +131,7 @@
 | executeTaskBatch agentId隔离 | execution.ts: agents映射补传id字段，orchestrator/index.ts: agents类型加id、移除as any强转；修复并行Agent共享CLI进程导致输出相同的bug | 2026-06-10 |
 | 8项核心Bug修复 | 讨论自问自答+进程共享+workDir断链+上下文丢失+MCP转圈+auto模式+白屏+迁移缺失，详见下方说明 | 2026-06-10 |
 | getOrchestratorDecision permissionMode | 补传permissionMode参数，确保auto模式下MCP工具自动批准 | 2026-06-10 |
-| Playwright E2E测试(无头浏览器) | 16张截图验证：首页/详情页/讨论/任务拆解/执行，发现3个新Bug | 2026-06-11 |
+| Playwright E2E测试(无头浏览器) | 16张截图验证：首页/详情页/讨论/任务拆解/执行，发现3个新Bug | 2026-06-10 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
@@ -148,7 +148,7 @@
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-11 更新）
+### 📋 待办（2026-06-10 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
