@@ -222,10 +222,11 @@ export async function analyzeScene(userMessage: string): Promise<{ type: string;
 export async function getOrchestratorDecision(
   userMessage: string,
   agents: Array<{ name: string; expertise: string; platform: string }>,
-  context: string
-): Promise<OrchestratorDecision> {
+  context: string,
+  workDir?: string
+): Promise<{ decision: OrchestratorDecision; sessionId?: string }> {
   const agentList = agents.map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
-  const prompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
+  const systemPrompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
 
   const fullPrompt = `用户消息：${userMessage}
 
@@ -234,8 +235,23 @@ ${context}
 
 请决定下一步该谁发言。`
 
-  const response = await callLLM(prompt, fullPrompt)
-  return parseJSON(response, ['action', 'message', 'reason'])
+  const orch = await getOrchestratorAgent()
+  const { result: response, sessionId } = await executeSingleAgent(
+    {
+      name: 'Orchestrator',
+      systemPrompt,
+      platform: orch.platform,
+      model: orch.model || undefined,
+      baseUrl: orch.baseUrl || undefined,
+      apiKey: orch.apiKey || undefined,
+      workDir,
+    },
+    fullPrompt,
+    '',
+    () => {},
+  )
+
+  return { decision: parseJSON(response, ['action', 'message', 'reason']), sessionId }
 }
 
 export async function generateRoles(taskType: string, taskDescription: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {

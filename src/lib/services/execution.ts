@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { executeTaskBatch, callLLMForAnalysis } from '@/lib/orchestrator'
+import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './git-utils'
@@ -28,7 +28,8 @@ export async function handleExecution(
   message: string,
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  orchSessionId?: string
 ) {
   const tasks = await prisma.task.findMany({
     where: { sessionId },
@@ -225,7 +226,25 @@ export async function handleExecution(
 
       try {
         const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
-        const reviewResult = await callLLMForAnalysis(monitoringPrompt)
+        const orch = await getOrchestratorAgent()
+        const { result: reviewResult } = await executeSingleAgent(
+          {
+            name: 'Orchestrator',
+            systemPrompt: '你是代码审查专家，负责检查 Agent 输出质量。返回 JSON 格式的审查结果。',
+            platform: orch.platform,
+            model: orch.model || undefined,
+            baseUrl: orch.baseUrl || undefined,
+            apiKey: orch.apiKey || undefined,
+            sessionId: orchSessionId,
+            workDir: projectRoot,
+            permissionMode: 'auto',
+          },
+          monitoringPrompt,
+          '',
+          () => {},
+          sessionId,
+          projectRoot
+        )
         const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
         if (jsonMatch) {

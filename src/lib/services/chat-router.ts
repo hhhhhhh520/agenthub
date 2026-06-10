@@ -12,7 +12,8 @@ export async function handleOrchestratorDecision(
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
   sessionPhase: string,
-  attachments?: TaskAttachment[]
+  attachments?: TaskAttachment[],
+  workDir?: string
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
@@ -20,12 +21,16 @@ export async function handleOrchestratorDecision(
   const context = buildContextFromHistory(history)
 
   let decision: { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string }
+  let orchSessionId: string | undefined
   try {
-    decision = await getOrchestratorDecision(
+    const result = await getOrchestratorDecision(
       message,
       agents.map(a => ({ name: a.name, expertise: a.expertise, platform: a.platform })),
-      context
+      context,
+      workDir
     )
+    decision = result.decision
+    orchSessionId = result.sessionId
   } catch {
     await handleOrchestratorChat(message, sessionId, sendEvent, agents)
     return
@@ -52,11 +57,11 @@ export async function handleOrchestratorDecision(
 
   switch (decision.action) {
     case 'self':
-      await handleOrchestratorChat(message, sessionId, sendEvent, agents)
+      await handleOrchestratorChat(message, sessionId, sendEvent, agents, orchSessionId)
       break
     case 'delegate':
       if (decision.target) {
-        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent, attachments)
+        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent, attachments, orchSessionId)
       }
       break
     case 'discuss':
@@ -74,7 +79,7 @@ export async function handleOrchestratorDecision(
       await handleAgentQA(message, sessionId, agents, sendEvent)
       break
     case 'execute':
-      await transitionToExecution(sessionId, agents, sendEvent, message)
+      await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId)
       break
     case 'done':
       await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
@@ -119,7 +124,8 @@ export async function handleOrchestratorChat(
   message: string,
   sessionId: string,
   sendEvent: SendEvent,
-  agents?: Array<{ name: string; expertise: string; platform: string }>
+  agents?: Array<{ name: string; expertise: string; platform: string }>,
+  orchSessionId?: string
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
@@ -148,6 +154,7 @@ ${agentList || '（无）'}
       model: orchConfig.model,
       baseUrl: orchConfig.baseUrl || undefined,
       workDir, permissionMode: session?.permissionMode || 'default',
+      sessionId: orchSessionId,
     },
     message,
     '',
@@ -169,7 +176,9 @@ ${agentList || '（无）'}
       } else {
         sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data })
       }
-    }
+    },
+    sessionId,
+    workDir
   )
 
   await prisma.message.create({

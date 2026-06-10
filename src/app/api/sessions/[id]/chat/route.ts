@@ -114,7 +114,7 @@ export async function POST(
           where: { sessionId },
           include: { agent: true },
         })
-        const existingAgents = existingMembers.map(m => m.agent)
+        const existingAgents = existingMembers.filter(m => !m.agent.isOrchestrator).map(m => m.agent)
 
         if (regenerate) {
           const original = await prisma.message.findUnique({ where: { id: regenerate }, include: { attachments: true } })
@@ -145,7 +145,9 @@ export async function POST(
             message,
             existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model || undefined, baseUrl: a.baseUrl, apiKey: a.apiKey })),
             3,
-            (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data })
+            (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data }),
+            sessionId,
+            workDir
           )
 
           const summary = opinions.join('\n\n')
@@ -219,7 +221,7 @@ export async function POST(
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent)
           } else {
-            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments)
+            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments, workDir)
           }
         }
       } catch (error) {

@@ -110,50 +110,50 @@ describe('validateDecision', () => {
 
 describe('handleOrchestratorDecision', () => {
   it('sends "思考中" status first', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'self', message: 'hi', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'self', message: 'hi', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ content: '思考中...' }))
   })
 
   it('action=delegate → calls delegateToAgent', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'delegate', target: 'PM', message: 'do it', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'delegate', target: 'PM', message: 'do it', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
-    expect(mockDelegateToAgent).toHaveBeenCalledWith('PM', 'do it', 's1', agents, sendEvent, undefined)
+    expect(mockDelegateToAgent).toHaveBeenCalledWith('PM', 'do it', 's1', agents, sendEvent, undefined, 'orch-ses')
   })
 
   it('action=discuss → calls runMultiAgentDiscussion', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'discuss', targets: ['PM', '架构师'], message: 'discuss', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'discuss', targets: ['PM', '架构师'], message: 'discuss', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
     expect(mockRunMultiAgentDiscussion).toHaveBeenCalledWith(['PM', '架构师'], 'discuss', 's1', agents, sendEvent)
   })
 
   it('action=align_confirm → calls handlePMConfirm', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'align_confirm', message: '', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_confirm', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'alignment')
     expect(mockHandlePMConfirm).toHaveBeenCalled()
   })
 
   it('action=align_decompose → calls handleArchitectPlan', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'align_decompose', message: '', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_decompose', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'alignment')
     expect(mockHandleArchitectPlan).toHaveBeenCalled()
   })
 
   it('action=align_qa → calls handleAgentQA', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'align_qa', message: '', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_qa', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'alignment')
     expect(mockHandleAgentQA).toHaveBeenCalled()
   })
 
   it('action=execute → calls transitionToExecution', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'execute', message: '', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     mockTaskCount.mockResolvedValueOnce(1)
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'execution')
     expect(mockTransitionToExecution).toHaveBeenCalled()
   })
 
   it('action=execute with 0 tasks → redirect to align_decompose', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'execute', message: '', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     mockTaskCount.mockResolvedValueOnce(0)
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'execution')
     expect(mockHandleArchitectPlan).toHaveBeenCalled()
@@ -161,7 +161,7 @@ describe('handleOrchestratorDecision', () => {
   })
 
   it('action=done → updates session phase and sends done event', async () => {
-    mockGetOrchestratorDecision.mockResolvedValueOnce({ action: 'done', message: 'all done', reason: 'r' })
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: 'all done', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
     expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))

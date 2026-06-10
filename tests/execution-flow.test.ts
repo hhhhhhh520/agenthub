@@ -300,7 +300,7 @@ describe('4. while(hasProgress) 执行循环', () => {
       .mockResolvedValueOnce({ results: new Map([['b', { result: 'result-b' }], ['c', { result: 'result-c' }]]), failedTaskIds: [] })
 
     // LLM review passes for all tasks
-    mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
 
     await handleExecution('', 'session-1', [
       makeAgent({ id: 'agent-1', name: 'Agent1' }),
@@ -351,7 +351,7 @@ describe('5. Git diff 越界修改检测', () => {
     const task = makeTask({ id: 't1', declaredFiles: '["src/schema.prisma"]', dependencies: '[]' })
     mockTaskFindMany.mockResolvedValue([task])
     mockExecuteTaskBatch.mockResolvedValue({ results: new Map([['t1', { result: 'done' }]]), failedTaskIds: [] })
-    mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
     mockGetChangedFiles.mockReturnValue(['src/schema.prisma', 'src/undeclared.ts'])
 
     await handleExecution('', 'session-1', [makeAgent({ id: 'agent-1' })], sendEvent)
@@ -369,7 +369,7 @@ describe('5. Git diff 越界修改检测', () => {
     const task = makeTask({ id: 't1', declaredFiles: '["src/schema.prisma"]', dependencies: '[]' })
     mockTaskFindMany.mockResolvedValue([task])
     mockExecuteTaskBatch.mockResolvedValue({ results: new Map([['t1', { result: 'done' }]]), failedTaskIds: [] })
-    mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
     mockGetChangedFiles.mockReturnValue(['src/schema.prisma'])
 
     await handleExecution('', 'session-1', [makeAgent({ id: 'agent-1' })], sendEvent)
@@ -400,9 +400,9 @@ describe('6. LLM 质量审查 + 纠偏重试', () => {
     mockExecuteTaskBatch
       .mockResolvedValue({ results: new Map([['t1', { result: 'done' }]]), failedTaskIds: [] })
     // First call: correction needed. Subsequent calls: pass (to let loop exit)
-    mockCallLLMForAnalysis
-      .mockResolvedValueOnce(JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理' }))
-      .mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent
+      .mockResolvedValueOnce({ result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理' }) })
+      .mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
 
     await handleExecution('', 'session-1', [makeAgent({ id: 'agent-1' })], sendEvent)
 
@@ -420,8 +420,8 @@ describe('6. LLM 质量审查 + 纠偏重试', () => {
     const task = makeTask({ id: 't1', correctionCount: 2, dependencies: '[]' })
     mockTaskFindMany.mockResolvedValue([task])
     mockExecuteTaskBatch.mockResolvedValue({ results: new Map([['t1', { result: 'done' }]]), failedTaskIds: [] })
-    mockCallLLMForAnalysis.mockResolvedValue(
-      JSON.stringify({ needsCorrection: true, correctionNote: '还是有问题' })
+    mockExecuteSingleAgent.mockResolvedValue(
+      { result: JSON.stringify({ needsCorrection: true, correctionNote: '还是有问题' }) }
     )
 
     await handleExecution('', 'session-1', [makeAgent({ id: 'agent-1' })], sendEvent)
@@ -440,7 +440,7 @@ describe('6. LLM 质量审查 + 纠偏重试', () => {
     const task = makeTask({ id: 't1', correctionCount: 0, dependencies: '[]' })
     mockTaskFindMany.mockResolvedValue([task])
     mockExecuteTaskBatch.mockResolvedValue({ results: new Map([['t1', { result: 'done' }]]), failedTaskIds: [] })
-    mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
 
     await handleExecution('', 'session-1', [makeAgent({ id: 'agent-1' })], sendEvent)
 
@@ -473,7 +473,7 @@ describe('7. blocked 状态', () => {
 
     // Task A fails
     mockExecuteTaskBatch.mockRejectedValueOnce(new Error('execution failed'))
-    mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({ needsCorrection: false, quality: 'good' }))
+    mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
 
     await handleExecution('', 'session-1', [
       makeAgent({ id: 'agent-1' }),

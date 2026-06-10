@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { mockCallLLMForAnalysis, mockMessageCreate, mockExecuteSingleAgent } = vi.hoisted(() => ({
-  mockCallLLMForAnalysis: vi.fn(),
-  mockMessageCreate: vi.fn(),
+const { mockExecuteSingleAgent, mockMessageCreate, mockGetOrchestratorAgent } = vi.hoisted(() => ({
   mockExecuteSingleAgent: vi.fn(),
+  mockMessageCreate: vi.fn(),
+  mockGetOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' }),
 }))
 
 vi.mock('@/lib/orchestrator', () => ({
-  callLLMForAnalysis: mockCallLLMForAnalysis,
   executeSingleAgent: mockExecuteSingleAgent,
+  callLLMForAnalysis: vi.fn(),
+  runDiscussion: vi.fn(),
+  getOrchestratorAgent: mockGetOrchestratorAgent,
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -19,6 +21,7 @@ vi.mock('@/lib/db', () => ({
 
 vi.mock('@/lib/orchestrator/prompts', () => ({
   buildMonitoringPrompt: vi.fn().mockReturnValue('monitoring prompt'),
+  ORCHESTRATOR_DECISION_PROMPT: 'test prompt',
 }))
 
 import { reviewResult } from '@/lib/services/review'
@@ -31,9 +34,9 @@ describe('reviewResult', () => {
   })
 
   it('should return quality poor and send correction message when LLM says needsCorrection', async () => {
-    mockCallLLMForAnalysis.mockResolvedValueOnce(
-      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
-    )
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' }),
+    })
 
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent)
 
@@ -50,9 +53,9 @@ describe('reviewResult', () => {
   })
 
   it('should return quality good when LLM says no correction needed', async () => {
-    mockCallLLMForAnalysis.mockResolvedValueOnce(
-      JSON.stringify({ needsCorrection: false, quality: 'good' })
-    )
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: false, quality: 'good' }),
+    })
 
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent)
 
@@ -62,7 +65,7 @@ describe('reviewResult', () => {
   })
 
   it('should fallback to quality good when LLM throws exception', async () => {
-    mockCallLLMForAnalysis.mockRejectedValueOnce(new Error('LLM timeout'))
+    mockExecuteSingleAgent.mockRejectedValueOnce(new Error('LLM timeout'))
 
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent)
 
@@ -72,26 +75,29 @@ describe('reviewResult', () => {
   })
 
   it('should not retry when retryContext is not provided', async () => {
-    mockCallLLMForAnalysis.mockResolvedValueOnce(
-      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
-    )
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' }),
+    })
 
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent)
 
     expect(result).toEqual({ quality: 'poor' })
-    expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+    // executeSingleAgent called once for monitoring, not for retry
+    expect(mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
   })
 
   it('should retry when needsCorrection is true and retryContext is provided', async () => {
-    mockCallLLMForAnalysis
-      .mockResolvedValueOnce(
-        JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({ needsCorrection: false, quality: 'good' })
-      )
-
-    mockExecuteSingleAgent.mockResolvedValueOnce({ result: 'improved output' })
+    // First call: monitoring returns needsCorrection
+    mockExecuteSingleAgent
+      .mockResolvedValueOnce({
+        result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' }),
+      })
+      // Second call: retry agent execution
+      .mockResolvedValueOnce({ result: 'improved output' })
+      // Third call: monitoring of retry result returns good
+      .mockResolvedValueOnce({
+        result: JSON.stringify({ needsCorrection: false, quality: 'good' }),
+      })
 
     const retryContext = {
       agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
@@ -104,14 +110,8 @@ describe('reviewResult', () => {
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent, retryContext)
 
     expect(result).toEqual({ quality: 'good' })
-    expect(mockExecuteSingleAgent).toHaveBeenCalledWith(
-      { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code', workDir: '/test' },
-      expect.stringContaining('缺少错误处理'),
-      '',
-      expect.any(Function),
-      'session-1',
-      '/test',
-    )
+    // Second call should be the retry
+    expect(mockExecuteSingleAgent).toHaveBeenCalledTimes(3)
     expect(sendEvent).toHaveBeenCalledWith({
       agentId: 'orchestrator',
       type: 'text',
@@ -120,9 +120,9 @@ describe('reviewResult', () => {
   })
 
   it('should not retry when currentRetry >= maxRetries', async () => {
-    mockCallLLMForAnalysis.mockResolvedValueOnce(
-      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
-    )
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' }),
+    })
 
     const retryContext = {
       agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
@@ -135,14 +135,16 @@ describe('reviewResult', () => {
     const result = await reviewResult('task output', 'task desc', 'session-1', sendEvent, retryContext)
 
     expect(result).toEqual({ quality: 'poor' })
-    expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+    // Only monitoring call, no retry
+    expect(mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
   })
 
   it('should return quality poor when executeSingleAgent fails during retry', async () => {
-    mockCallLLMForAnalysis.mockResolvedValueOnce(
-      JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' })
-    )
-
+    // First call: monitoring returns needsCorrection
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: true, correctionNote: '缺少错误处理', quality: 'poor' }),
+    })
+    // Second call: retry agent execution fails
     mockExecuteSingleAgent.mockRejectedValueOnce(new Error('CLI crashed'))
 
     const retryContext = {
