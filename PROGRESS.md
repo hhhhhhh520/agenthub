@@ -128,6 +128,7 @@
 | 执行阶段上下文恢复 | execution.ts: 首次执行任务时Task.cliSessionId为空，fallback读SessionMember.cliSessionId（对齐阶段session），确保agent能resume讨论历史；执行完成后同步回SessionMember | 2026-06-10 |
 | Orchestrator align_decompose提示 | prompts.ts: 告知Orchestrator即使没有架构师Agent，align_decompose也能正常工作（LLM fallback） | 2026-06-10 |
 | Task空表兜底 | alignment.ts: transitionToExecution检查Task为空时自动调handleArchitectPlan补拆任务，确保执行阶段一定有任务；3个新测试，667测试通过 | 2026-06-10 |
+| executeTaskBatch agentId隔离 | execution.ts: agents映射补传id字段，orchestrator/index.ts: agents类型加id、移除as any强转；修复并行Agent共享CLI进程导致输出相同的bug | 2026-06-10 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

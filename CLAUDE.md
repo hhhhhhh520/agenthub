@@ -202,6 +202,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - ClaudeCodeAdapter 支持 `--permission-mode` + `--permission-prompt-tool stdio` 参数
 - **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
+- **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`，共享同一个 CLI 进程，并行执行时输出完全相同
 - 详见 `docs/design/workspace-and-permissions.md`
 
 ### 断点续跑

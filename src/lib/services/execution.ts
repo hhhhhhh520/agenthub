@@ -140,6 +140,7 @@ export async function handleExecution(
         agents.map(a => {
           const task = tasks.find(t => t.assignedAgentId === a.id)
           return {
+            id: a.id,
             name: a.name,
             systemPrompt: a.systemPrompt,
             platform: a.platform,
