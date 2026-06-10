@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-09 (GitHub上传完成)
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-10
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -124,6 +124,8 @@
 | 测试覆盖率报告 | 84.89% Statements / 74.75% Branches / 81.36% Functions / 86.03% Lines，664测试全通过 | 2026-06-09 |
 | GitHub上传 | 独立仓库 https://github.com/hhhhhhh520/agenthub ，77 commits完整历史，排除敏感文件(.env/dev.db/uploads/.opencode/.gstack) | 2026-06-09 |
 | 文档清理 | README.md修复2个失效链接，PROGRESS.md补充最新变更记录 | 2026-06-09 |
+| 聊天页滚动修复 | html/body加overflow-hidden锁定视口，侧边栏/聊天区/Agent面板加min-h-0+overflow-hidden约束高度，ScrollArea加min-h-0+overflow-hidden启用内部滚动，dashboard SidebarInset加overflow-y-auto | 2026-06-10 |
+| 执行阶段上下文恢复 | execution.ts: 首次执行任务时Task.cliSessionId为空，fallback读SessionMember.cliSessionId（对齐阶段session），确保agent能resume讨论历史；执行完成后同步回SessionMember | 2026-06-10 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

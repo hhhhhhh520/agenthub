@@ -11,7 +11,7 @@ export default function DashboardLayout({
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset>
+      <SidebarInset className="overflow-y-auto">
         {children}
       </SidebarInset>
     </SidebarProvider>

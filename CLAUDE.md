@@ -179,8 +179,9 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 - **统一机制**：Claude Code 用 `--resume`，OpenCode 用 `--session`，两个平台都通过 CLI 原生 session 恢复管理历史
 - **不拼接 context**：上下文由 CLI 自己管理，AgentHub 只传当前消息，不手动拼接历史消息
-- **SessionMember.cliSessionId**：存储每个 Agent 的 CLI session ID，用于会话恢复
-- **Task.cliSessionId**：存储任务执行时的 CLI session ID
+- **SessionMember.cliSessionId**：存储每个 Agent 的 CLI session ID，对齐阶段（讨论轮次）写入
+- **Task.cliSessionId**：存储任务执行时的 CLI session ID，执行完成后写入
+- **Fallback 机制**：执行阶段首次启动任务时 `Task.cliSessionId` 为空，fallback 读 `SessionMember.cliSessionId`（对齐阶段的 session），确保 agent 能 resume 讨论历史。执行完成后同步回 `SessionMember`
 - 执行后提取 `session_id` 并保存到对应表
 - 类型定义：`StreamChunk.type` 包含 `'session'` 类型
 

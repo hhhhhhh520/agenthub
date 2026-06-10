@@ -66,6 +66,13 @@ export async function handleExecution(
     }
   }
 
+  // 读取 SessionMember 的 cliSessionId，用于首次执行时 fallback
+  const sessionMembers = await prisma.sessionMember.findMany({
+    where: { sessionId },
+    select: { agentId: true, cliSessionId: true },
+  })
+  const memberSessionMap = new Map(sessionMembers.map(m => [m.agentId, m.cliSessionId]))
+
   const allResults = new Map<string, string>()
   let hasProgress = true
   const MAX_ITERATIONS = tasks.length * 3
@@ -139,7 +146,8 @@ export async function handleExecution(
             model: a.model || undefined,
             baseUrl: a.baseUrl,
             apiKey: a.apiKey,
-            sessionId: task?.cliSessionId || undefined,
+            // 优先用任务级 sessionId，fallback 到对齐阶段的 SessionMember sessionId
+            sessionId: task?.cliSessionId || memberSessionMap.get(a.id) || undefined,
             permissionMode: session?.permissionMode || 'default',
           }
         }),
@@ -188,6 +196,14 @@ export async function handleExecution(
         where: { id: taskId },
         data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace },
       })
+      // 同步 sessionId 到 SessionMember，供后续任务 fallback
+      if (cliSessionId && taskForTrace?.assignedAgentId) {
+        await prisma.sessionMember.updateMany({
+          where: { sessionId, agentId: taskForTrace.assignedAgentId },
+          data: { cliSessionId },
+        })
+        memberSessionMap.set(taskForTrace.assignedAgentId, cliSessionId)
+      }
       const task = tasks.find(t => t.id === taskId)
       if (task) task.status = 'completed'
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })

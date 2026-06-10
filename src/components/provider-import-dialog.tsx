@@ -58,6 +58,9 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
         ) : (
           <div className="space-y-2">
             <p className="text-sm text-gray-500 mb-3">从已配置的服务商中选择（来源：CC-Switch）：</p>
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
+              💡 同名不同配置的 Provider 仅显示一个（按 URL 去重）。如需切换其他配置，请在 CC-Switch 中将其设为"当前使用"后重新导入。
+            </p>
             {providers.map(p => (
               <div
                 key={p.name}

@@ -90,7 +90,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   }, [sessionId, redoPollFast])
 
   return (
-    <div className="w-72 border-l bg-gray-50 flex flex-col">
+    <div className="w-72 border-l bg-gray-50 flex flex-col min-h-0 overflow-hidden">
       <div className="flex border-b">
         <button
           className={`flex-1 p-2 text-sm font-medium ${tab === 'agents' ? 'border-b-2 border-blue-500' : ''}`}
@@ -105,7 +105,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           Tasks ({tasks.length})
         </button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0 overflow-hidden">
         <div className="p-3 space-y-2">
           {tab === 'agents' && (
             <>

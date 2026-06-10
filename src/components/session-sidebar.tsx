@@ -64,7 +64,7 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
   }, [sessions])
 
   return (
-    <div className="w-64 border-r bg-gray-50 flex flex-col">
+    <div className="w-64 border-r bg-gray-50 flex flex-col min-h-0 overflow-hidden">
       <div className="p-3 border-b space-y-2">
         <Button onClick={onQuickStart} variant="outline" className="w-full" size="sm" aria-label="开始对话">
           开始对话
@@ -73,7 +73,7 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
           创建群聊
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0 overflow-hidden">
         <div className="p-2 space-y-3">
           {groupedSessions.map(group => (
             <div key={group.label}>

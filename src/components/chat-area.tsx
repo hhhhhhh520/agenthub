@@ -39,6 +39,8 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   const [replyTo, setReplyTo] = useState<{ id: string; rawContent: string; role: string } | null>(null)
   const [attachments, setAttachments] = useState<AttachmentPreview[]>([])
   const [showCommands, setShowCommands] = useState(false)
+  const [showMentions, setShowMentions] = useState(false)
+  const [mentionQuery, setMentionQuery] = useState('')
   const [showRecovery, setShowRecovery] = useState(false)
   const [recoveredCount, setRecoveredCount] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -75,11 +77,37 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
     const value = e.target.value
     setInput(value)
     setShowCommands(value.startsWith('/'))
+
+    // 检测 @ 触发
+    const lastAt = value.lastIndexOf('@')
+    if (lastAt !== -1 && lastAt === value.length - 1) {
+      // 刚输入 @，显示所有成员
+      setShowMentions(true)
+      setMentionQuery('')
+    } else if (lastAt !== -1) {
+      // @ 后面有内容，按输入过滤
+      const query = value.slice(lastAt + 1)
+      if (!query.includes(' ')) {
+        setShowMentions(true)
+        setMentionQuery(query)
+      } else {
+        setShowMentions(false)
+      }
+    } else {
+      setShowMentions(false)
+    }
   }
 
   const handleCommandSelect = (command: string) => {
     setInput(command)
     setShowCommands(false)
+  }
+
+  const handleMentionSelect = (name: string) => {
+    const lastAt = input.lastIndexOf('@')
+    const before = input.slice(0, lastAt)
+    setInput(before + '@' + name + ' ')
+    setShowMentions(false)
   }
 
   if (!sessionId) {
@@ -136,7 +164,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {sessionType && (
         <div className="border-b px-4 py-2 flex items-center gap-2 text-sm bg-white">
           <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
@@ -150,7 +178,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           )}
         </div>
       )}
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="flex-1 min-h-0 overflow-hidden p-4">
         <div className="space-y-3 max-w-3xl mx-auto">
           {messages.map(msg => {
             const replyPreview = msg.replyTo
@@ -376,6 +404,41 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                 </button>
               ))
             }
+          </div>
+        )}
+        {showMentions && (
+          <div className="mb-2 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+            <button
+              className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+              onClick={() => handleMentionSelect('所有人')}
+            >
+              <span className="text-lg">👥</span>
+              <span className="text-sm font-medium">所有人</span>
+              <span className="text-xs text-gray-500">让所有 Agent 参与讨论</span>
+            </button>
+            {agentNames
+              .filter(name => name.toLowerCase().includes(mentionQuery.toLowerCase()))
+              .map(name => (
+                <button
+                  key={name}
+                  className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+                  onClick={() => handleMentionSelect(name)}
+                >
+                  <Avatar className="h-5 w-5">
+                    <AvatarFallback
+                      className="text-xs text-white"
+                      style={{ backgroundColor: agentColorMap[name] || '#6b7280' }}
+                    >
+                      {name.charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm font-medium">{name}</span>
+                </button>
+              ))
+            }
+            {agentNames.filter(name => name.toLowerCase().includes(mentionQuery.toLowerCase())).length === 0 && (
+              <div className="px-3 py-2 text-sm text-gray-400">无匹配的 Agent</div>
+            )}
           </div>
         )}
         <div className="flex gap-2 items-end">
