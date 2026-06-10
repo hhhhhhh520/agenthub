@@ -157,7 +157,7 @@ export default function ProjectDetailPage() {
         </Link>
         <h1 className="font-semibold text-sm flex-1">{session.title}</h1>
         <Badge variant="outline" className="text-xs">{phaseLabels[session.phase] || session.phase}</Badge>
-        <span className="text-xs text-muted-foreground">{session.messages.length} 条消息</span>
+        <span className="text-xs text-muted-foreground">{session.messages?.length ?? 0} 条消息</span>
       </div>
 
       {/* Three-column layout */}

@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, resolve } from 'path'
 
 /**
  * 构造 Claude Code CLI 的 --mcp-config JSON 字符串
@@ -11,6 +11,8 @@ export function buildMCPConfig(sessionId: string, agentName: string, workDir: st
     ? [join(process.cwd(), 'src/mcp-server/index.js')]
     : ['tsx', join(process.cwd(), 'src/mcp-server/index.ts')]
 
+  const dbUrl = `file:${resolve(process.cwd(), 'dev.db')}`
+
   const config = {
     mcpServers: {
       agenthub: {
@@ -20,6 +22,7 @@ export function buildMCPConfig(sessionId: string, agentName: string, workDir: st
           AGENTHUB_SESSION_ID: sessionId,
           AGENTHUB_AGENT_NAME: agentName,
           AGENTHUB_WORK_DIR: workDir,
+          DATABASE_URL: dbUrl,
         },
       },
     },

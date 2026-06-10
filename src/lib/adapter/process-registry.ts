@@ -451,6 +451,22 @@ class ProcessRegistry {
           if (event.type === 'control_request' && event.request?.subtype === 'can_use_tool') {
             const requestId = event.request_id
             const request = event.request
+
+            // auto 模式下自动批准
+            if (entry.permissionMode === 'auto') {
+              const cliResponse = {
+                type: 'control_response',
+                response: {
+                  subtype: 'success',
+                  request_id: requestId,
+                  response: { behavior: 'allow', updatedInput: request.input }
+                }
+              }
+              const buffer = Buffer.from(JSON.stringify(cliResponse) + '\n', 'utf-8')
+              entry.stdin.write(buffer)
+              continue
+            }
+
             chunkQueue.push({
               type: 'permission_request',
               content: `${request.tool_name}: ${JSON.stringify(request.input)}`,

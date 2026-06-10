@@ -248,7 +248,8 @@ export async function transitionToExecution(
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
-  userMessage?: string
+  userMessage?: string,
+  orchSessionId?: string
 ) {
   await prisma.session.update({ where: { id: sessionId }, data: { phase: 'execution', phaseStep: '' } })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
@@ -261,5 +262,5 @@ export async function transitionToExecution(
   }
 
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
-  await handleExecution(userMessage || '', sessionId, agents, sendEvent)
+  await handleExecution(userMessage || '', sessionId, agents, sendEvent, orchSessionId)
 }

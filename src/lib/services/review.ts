@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
-import { executeSingleAgent, runDiscussion, callLLMForAnalysis } from '@/lib/orchestrator'
-import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
+import { executeSingleAgent, runDiscussion, callLLMForAnalysis, getOrchestratorAgent } from '@/lib/orchestrator'
+import { buildMonitoringPrompt, ORCHESTRATOR_DECISION_PROMPT } from '@/lib/orchestrator/prompts'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
@@ -16,11 +16,30 @@ export async function reviewResult(
     currentRetry?: number
     chatSessionId?: string
     projectDir?: string
-  }
+  },
+  orchSessionId?: string
 ): Promise<{ quality: string }> {
   try {
     const monitoringPrompt = buildMonitoringPrompt(taskDescription, result, [], { declared: [], undeclared: [] }, 'single')
-    const reviewOutput = await callLLMForAnalysis(monitoringPrompt)
+    const orch = await getOrchestratorAgent()
+    const { result: reviewOutput } = await executeSingleAgent(
+      {
+        name: 'Orchestrator',
+        systemPrompt: '你是代码审查专家，负责检查 Agent 输出质量。返回 JSON 格式的审查结果。',
+        platform: orch.platform,
+        model: orch.model || undefined,
+        baseUrl: orch.baseUrl || undefined,
+        apiKey: orch.apiKey || undefined,
+        sessionId: orchSessionId,
+        workDir: retryContext?.projectDir,
+        permissionMode: 'auto',
+      },
+      monitoringPrompt,
+      '',
+      () => {},
+      retryContext?.chatSessionId,
+      retryContext?.projectDir
+    )
     const cleaned = reviewOutput.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
@@ -64,7 +83,7 @@ export async function reviewResult(
             return reviewResult(retryResult, taskDescription, sessionId, sendEvent, {
               ...retryContext,
               currentRetry: currentRetry + 1,
-            })
+            }, orchSessionId)
           } catch {
             // 重试失败，明确标记为差
             return { quality: 'poor' }
@@ -85,7 +104,8 @@ export async function delegateToAgent(
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
-  attachments?: TaskAttachment[]
+  attachments?: TaskAttachment[],
+  orchSessionId?: string
 ) {
   let agent = agents.find(a => a.name === agentName)
   if (!agent) {
@@ -132,7 +152,7 @@ export async function delegateToAgent(
     currentRetry: 0,
     chatSessionId: sessionId,
     projectDir: workDir,
-  })
+  }, orchSessionId)
   sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality } })
 }
 
@@ -179,6 +199,6 @@ export async function runMultiAgentDiscussion(
   await prisma.message.create({
     data: { role: 'orchestrator', rawContent: summary, sessionId },
   })
-  const { quality: discQuality } = await reviewResult(summary, topic, sessionId, sendEvent)
+  const { quality: discQuality } = await reviewResult(summary, topic, sessionId, sendEvent, undefined, undefined)
   sendEvent({ agentId: 'orchestrator', type: 'done', content: summary, data: { quality: discQuality } })
 }

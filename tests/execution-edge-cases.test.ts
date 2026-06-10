@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   mockMessageCreate: vi.fn(),
   mockExecuteTaskBatch: vi.fn(),
   mockCallLLMForAnalysis: vi.fn(),
+  mockExecuteSingleAgent: vi.fn(),
+  mockGetOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' }),
   mockGetChangedFiles: vi.fn().mockReturnValue([]),
   mockGetGitSnapshot: vi.fn().mockReturnValue(new Set()),
   mockBuildMonitoringPrompt: vi.fn().mockReturnValue('monitor prompt'),
@@ -32,6 +34,8 @@ vi.mock('@/lib/db', () => ({
 vi.mock('@/lib/orchestrator', () => ({
   executeTaskBatch: mocks.mockExecuteTaskBatch,
   callLLMForAnalysis: mocks.mockCallLLMForAnalysis,
+  executeSingleAgent: mocks.mockExecuteSingleAgent,
+  getOrchestratorAgent: mocks.mockGetOrchestratorAgent,
 }))
 
 vi.mock('@/lib/orchestrator/prompts', () => ({
@@ -100,14 +104,14 @@ describe('Execution — correction retry', () => {
     })
 
     // Monitoring: first call needs correction, second is good
-    mocks.mockCallLLMForAnalysis.mockResolvedValueOnce(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValueOnce({ result: JSON.stringify({
       needsCorrection: true,
       correctionNote: '缺少错误处理',
       quality: 'poor',
-    })).mockResolvedValueOnce(JSON.stringify({
+    }) }).mockResolvedValueOnce({ result: JSON.stringify({
       needsCorrection: false,
       quality: 'good',
-    }))
+    }) })
 
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
@@ -130,11 +134,11 @@ describe('Execution — correction retry', () => {
       failedTaskIds: [],
     })
     // Monitoring says needs correction but count is at limit
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: true,
       correctionNote: '还是有问题',
       quality: 'poor',
-    }))
+    }) })
 
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
@@ -158,9 +162,9 @@ describe('Execution — correction retry', () => {
       results: new Map([['task-1', { result: 'fixed output', sessionId: 'cli-s1' }]]),
       failedTaskIds: [],
     })
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: false, quality: 'good',
-    }))
+    }) })
 
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
@@ -234,9 +238,9 @@ describe('Execution — blocked task cascading', () => {
       }
     })
 
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: false, quality: 'good',
-    }))
+    }) })
 
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
@@ -276,9 +280,9 @@ describe('Execution — safety limits', () => {
       results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
       failedTaskIds: [],
     })
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: false, quality: 'good',
-    }))
+    }) })
 
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
@@ -306,9 +310,9 @@ describe('Execution — git diff boundary detection', () => {
       results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
       failedTaskIds: [],
     })
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: false, quality: 'good',
-    }))
+    }) })
     // Agent modified undeclared file
     mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
 
@@ -333,9 +337,9 @@ describe('Execution — git diff boundary detection', () => {
       results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
       failedTaskIds: [],
     })
-    mocks.mockCallLLMForAnalysis.mockResolvedValue(JSON.stringify({
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
       needsCorrection: false, quality: 'good',
-    }))
+    }) })
     mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx'])
 
     const sendEvent = vi.fn()

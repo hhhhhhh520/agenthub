@@ -164,8 +164,8 @@ describe('getOrchestratorDecision', () => {
       yield { type: 'text', content: JSON.stringify({ action: 'self', message: 'hi', reason: 'greeting' }) }
     })
     const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'claude-code' }], 'context')
-    expect(result.action).toBe('self')
-    expect(result.reason).toBe('greeting')
+    expect(result.decision.action).toBe('self')
+    expect(result.decision.reason).toBe('greeting')
   })
 })
 
