@@ -17,7 +17,7 @@ export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，
 2. delegate — 委派给指定 Agent 执行单个任务
 3. discuss — 让多个 Agent 讨论（targets 数组指定参与者）
 4. align_confirm — 启动/继续对齐：让 PM 复述需求，等用户确认理解是否正确
-5. align_decompose — 继续对齐：让架构师拆解任务、给出技术方案，等用户确认
+5. align_decompose — 继续对齐：让架构师拆解任务、给出技术方案，等用户确认。⚠️ 即使没有架构师 Agent，此 action 也能正常工作（系统会自动用 LLM 拆解任务并写入任务列表）。不要因为缺少架构师而跳过此步。
 6. align_qa — 继续对齐：让各 Agent 对方案提问澄清
 7. execute — 对齐完成，开始执行任务
 8. done — 任务已完成，结束会话

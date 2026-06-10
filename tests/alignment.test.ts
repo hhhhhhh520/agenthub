@@ -1,5 +1,46 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { validateDecision } from '@/lib/services/chat-router'
+
+// ── Mock for transitionToExecution tests ──
+const mocks = vi.hoisted(() => ({
+  mockTaskFindMany: vi.fn(),
+  mockTaskCreate: vi.fn(),
+  mockSessionUpdate: vi.fn(),
+  mockSessionFindUnique: vi.fn(),
+  mockMessageFindMany: vi.fn().mockResolvedValue([]),
+  mockMessageCreate: vi.fn(),
+  mockSessionMemberFindMany: vi.fn().mockResolvedValue([]),
+  mockExecuteSingleAgent: vi.fn(),
+  mockDecomposeTasks: vi.fn(),
+  mockCallLLMForAnalysis: vi.fn(),
+  mockHandleExecution: vi.fn(),
+  mockSendEvent: vi.fn(),
+}))
+
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate },
+    session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
+    message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
+    sessionMember: { findMany: mocks.mockSessionMemberFindMany },
+  },
+}))
+
+vi.mock('@/lib/orchestrator', () => ({
+  executeSingleAgent: mocks.mockExecuteSingleAgent,
+  decomposeTasks: mocks.mockDecomposeTasks,
+  callLLMForAnalysis: mocks.mockCallLLMForAnalysis,
+  parseJSON: vi.fn(),
+  formatArchitectPlan: vi.fn().mockReturnValue('plan summary'),
+  generateRoles: vi.fn(),
+  analyzeScene: vi.fn(),
+}))
+
+vi.mock('@/lib/services/execution', () => ({
+  handleExecution: mocks.mockHandleExecution,
+}))
+
+import { transitionToExecution } from '@/lib/services/alignment'
 
 function dec(action: string, overrides?: Partial<{ target: string | null; targets: string[] | null; message: string; reason: string }>) {
   return { action, message: '', reason: '', ...overrides }
@@ -136,5 +177,66 @@ describe('validateDecision — passthrough', () => {
     const result = validateDecision(d, 'execution', [])
     expect(result.target).toBe('frontend')
     expect(result.targets).toEqual(['frontend', 'backend'])
+  })
+})
+
+// ── transitionToExecution tests ──
+describe('transitionToExecution — task-empty fallback', () => {
+  const agents = [
+    { id: 'a1', name: '前端工程师', systemPrompt: '', platform: 'claude-code', expertise: '前端', model: '', baseUrl: '', apiKey: '', tools: '' },
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mocks.mockHandleExecution.mockResolvedValue(undefined)
+    // handleArchitectPlan 内部需要的 mock
+    mocks.mockMessageFindMany.mockResolvedValue([])
+    mocks.mockMessageCreate.mockResolvedValue({})
+    mocks.mockSessionMemberFindMany.mockResolvedValue([])
+  })
+
+  it('sends auto-decompose status when Task table is empty', async () => {
+    // transitionToExecution 的 findMany 返回空 → 触发兜底
+    // handleArchitectPlan 内部也会调 findMany
+    mocks.mockTaskFindMany.mockResolvedValue([])
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'uuid-1', description: 'task1', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+    ])
+    mocks.mockTaskCreate.mockResolvedValue({})
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '做个网站')
+
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'status', content: '任务列表为空，正在自动拆解...' })
+    )
+    expect(mocks.mockHandleExecution).toHaveBeenCalled()
+  })
+
+  it('skips auto-decompose when tasks already exist', async () => {
+    mocks.mockTaskFindMany.mockResolvedValueOnce([{ id: 't1', description: 'task1' }])
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '做个网站')
+
+    // 不应发送"任务列表为空"状态
+    const statusCalls = mocks.mockSendEvent.mock.calls.filter(
+      (c: any[]) => c[0]?.content === '任务列表为空，正在自动拆解...'
+    )
+    expect(statusCalls).toHaveLength(0)
+    expect(mocks.mockHandleExecution).toHaveBeenCalled()
+  })
+
+  it('always transitions to execution phase', async () => {
+    mocks.mockTaskFindMany.mockResolvedValue([{ id: 't1' }])
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '做个网站')
+
+    expect(mocks.mockSessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { phase: 'execution', phaseStep: '' } })
+    )
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition', content: 'execution' })
+    )
   })
 })

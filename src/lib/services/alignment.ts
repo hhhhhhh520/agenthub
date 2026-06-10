@@ -252,6 +252,14 @@ export async function transitionToExecution(
 ) {
   await prisma.session.update({ where: { id: sessionId }, data: { phase: 'execution', phaseStep: '' } })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
+
+  // 兜底：Task 为空时自动补拆（Orchestrator 可能跳过了 align_decompose）
+  const existingTasks = await prisma.task.findMany({ where: { sessionId } })
+  if (existingTasks.length === 0) {
+    sendEvent({ agentId: 'orchestrator', type: 'status', content: '任务列表为空，正在自动拆解...' })
+    await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
+  }
+
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
   await handleExecution(userMessage || '', sessionId, agents, sendEvent)
 }
