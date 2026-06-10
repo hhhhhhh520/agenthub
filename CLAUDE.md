@@ -164,7 +164,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。
 
-安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。**execute 前置检查**：如果数据库中无 Task 记录，强制重定向到 `align_decompose`（架构师拆解），防止跳步。**delegate 前置检查**：如果数据库中存在 pending 任务，自动切换为 `execute`，确保任务状态正确更新（防止 delegate 直接执行但不更新 Task 状态）。
+安全校验：`validateDecision()` 拦截严重矛盾（alignment 中返回 done、execution 中回退 align_*、Q&A 循环超限）。**delegate 前置检查**：如果数据库中存在 pending 任务，自动切换为 `execute`，确保任务状态正确更新（防止 delegate 直接执行但不更新 Task 状态）。**Task 兜底**：`transitionToExecution` 检查 Task 为空时自动调 `handleArchitectPlan` 补拆任务（即使没有架构师 Agent，LLM fallback 也能拆解）。**align_decompose 无架构师可用**：prompt 中告知 Orchestrator，不要因为缺少架构师而跳过 `align_decompose`。
 
 决策函数：`src/lib/orchestrator/index.ts` → `getOrchestratorDecision()`
 

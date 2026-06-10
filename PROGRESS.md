@@ -126,6 +126,8 @@
 | 文档清理 | README.md修复2个失效链接，PROGRESS.md补充最新变更记录 | 2026-06-09 |
 | 聊天页滚动修复 | html/body加overflow-hidden锁定视口，侧边栏/聊天区/Agent面板加min-h-0+overflow-hidden约束高度，ScrollArea加min-h-0+overflow-hidden启用内部滚动，dashboard SidebarInset加overflow-y-auto | 2026-06-10 |
 | 执行阶段上下文恢复 | execution.ts: 首次执行任务时Task.cliSessionId为空，fallback读SessionMember.cliSessionId（对齐阶段session），确保agent能resume讨论历史；执行完成后同步回SessionMember | 2026-06-10 |
+| Orchestrator align_decompose提示 | prompts.ts: 告知Orchestrator即使没有架构师Agent，align_decompose也能正常工作（LLM fallback） | 2026-06-10 |
+| Task空表兜底 | alignment.ts: transitionToExecution检查Task为空时自动调handleArchitectPlan补拆任务，确保执行阶段一定有任务；3个新测试，667测试通过 | 2026-06-10 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
