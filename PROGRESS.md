@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-10
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-11
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -129,21 +129,33 @@
 | Orchestrator align_decompose提示 | prompts.ts: 告知Orchestrator即使没有架构师Agent，align_decompose也能正常工作（LLM fallback） | 2026-06-10 |
 | Task空表兜底 | alignment.ts: transitionToExecution检查Task为空时自动调handleArchitectPlan补拆任务，确保执行阶段一定有任务；3个新测试，667测试通过 | 2026-06-10 |
 | executeTaskBatch agentId隔离 | execution.ts: agents映射补传id字段，orchestrator/index.ts: agents类型加id、移除as any强转；修复并行Agent共享CLI进程导致输出相同的bug | 2026-06-10 |
+| 8项核心Bug修复 | 讨论自问自答+进程共享+workDir断链+上下文丢失+MCP转圈+auto模式+白屏+迁移缺失，详见下方说明 | 2026-06-10 |
+| getOrchestratorDecision permissionMode | 补传permissionMode参数，确保auto模式下MCP工具自动批准 | 2026-06-10 |
+| Playwright E2E测试(无头浏览器) | 16张截图验证：首页/详情页/讨论/任务拆解/执行，发现3个新Bug | 2026-06-11 |
+
+**8项核心Bug修复详情**（2026-06-10）：
+1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
+2. **讨论进程共享**：runDiscussion传递sessionId+workDir，每个Agent独立CLI进程
+3. **workDir断链**：getOrchestratorDecision改用executeSingleAgent，传递workDir参数
+4. **上下文丢失**：Orchestrator用CLI替代裸LLM，获取sessionId支持--resume
+5. **MCP转圈**：DATABASE_URL改绝对路径，MCP Server不再因cwd不同找不到数据库
+6. **auto模式需确认**：process-registry添加auto模式自动批准+getOrchestratorDecision补传permissionMode
+7. **详情页白屏**：session.messages添加空值保护
+8. **迁移缺失**：创建SessionMember.cliSessionId迁移文件
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-09 更新）
+### 📋 待办（2026-06-11 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
-| ~~🔴高~~ | ~~Setup Wizard model覆盖~~ | ~~CLI模式下隐藏输入框但默认值仍发送~~ | ✅已修复 |
-| ~~🔴高~~ | ~~群聊委派不执行~~ | ~~Orchestrator返回delegate决策后未调用delegateToAgent()~~ | ✅已修复 |
-| ~~🟡中~~ | ~~项目详情页路由~~ | ~~缓存问题，重启后正常~~ | ✅已解决 |
+| 🔴高 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result | 🔴未解决 |
+| 🔴高 | ISSUE-004 任务面板不刷新 | page.tsx SSE处理后未re-fetch tasks/agents | 🔴未解决 |
+| 🔴高 | ISSUE-005 执行阶段卡住 | handleAgentQA无超时+validateDecision无phaseStep防护 | 🔴未解决 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
-| ~~🟢低~~ | ~~Agent编辑保存刷新~~ | ~~修改名称后UI未刷新显示新名称~~ | ✅已修复 |
 
 **已评估不实施**：
 - ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高
