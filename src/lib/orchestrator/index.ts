@@ -268,7 +268,7 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
 
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
-  agents: Array<{ name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
+  agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
   chatSessionId?: string,
   projectDir?: string
@@ -300,7 +300,7 @@ export async function executeTaskBatch(
       let capturedSessionId: string | undefined
 
       // Design decision #20: update Agent status per-session
-      const agentId = (agent as any).id as string | undefined
+      const agentId = agent.id
       await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'working')
 
       try {
