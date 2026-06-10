@@ -13,7 +13,8 @@ export async function handleOrchestratorDecision(
   sendEvent: SendEvent,
   sessionPhase: string,
   attachments?: TaskAttachment[],
-  workDir?: string
+  workDir?: string,
+  permissionMode?: string
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
@@ -27,7 +28,8 @@ export async function handleOrchestratorDecision(
       message,
       agents.map(a => ({ name: a.name, expertise: a.expertise, platform: a.platform })),
       context,
-      workDir
+      workDir,
+      permissionMode
     )
     decision = result.decision
     orchSessionId = result.sessionId

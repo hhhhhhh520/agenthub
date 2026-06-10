@@ -223,7 +223,8 @@ export async function getOrchestratorDecision(
   userMessage: string,
   agents: Array<{ name: string; expertise: string; platform: string }>,
   context: string,
-  workDir?: string
+  workDir?: string,
+  permissionMode?: string
 ): Promise<{ decision: OrchestratorDecision; sessionId?: string }> {
   const agentList = agents.map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
   const systemPrompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
@@ -245,6 +246,7 @@ ${context}
       baseUrl: orch.baseUrl || undefined,
       apiKey: orch.apiKey || undefined,
       workDir,
+      permissionMode: permissionMode || 'default',
     },
     fullPrompt,
     '',

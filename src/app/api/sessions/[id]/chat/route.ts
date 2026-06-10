@@ -221,7 +221,7 @@ export async function POST(
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent)
           } else {
-            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments, workDir)
+            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments, workDir, permissionMode)
           }
         }
       } catch (error) {
