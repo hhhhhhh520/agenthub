@@ -11,7 +11,7 @@ function ChatContent() {
   const [showCreateGroup, setShowCreateGroup] = useState(false)
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen overflow-hidden">
       <SessionSidebar
         sessions={sessions}
         activeId={activeId}
@@ -32,7 +32,7 @@ function ChatContent() {
           setActiveId(sessionId)
         }}
       />
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         <ChatArea sessionId={activeId} sessionType={sessions.find(s => s.id === activeId)?.type} />
         <AgentPanel
           sessionId={activeId}

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   mockBuildMonitoringPrompt: vi.fn().mockReturnValue('monitor prompt'),
   mockBuildContextFromHistory: vi.fn().mockReturnValue(''),
   mockEnforceFileOverlap: vi.fn(),
+  mockSessionMemberFindMany: vi.fn().mockResolvedValue([]),
+  mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -23,6 +25,7 @@ vi.mock('@/lib/db', () => ({
     session: { findUnique: mocks.mockSessionFindUnique, update: mocks.mockSessionUpdate },
     task: { findMany: mocks.mockTaskFindMany, update: mocks.mockTaskUpdate, count: mocks.mockTaskCount },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
+    sessionMember: { findMany: mocks.mockSessionMemberFindMany, updateMany: mocks.mockSessionMemberUpdateMany },
   },
 }))
 

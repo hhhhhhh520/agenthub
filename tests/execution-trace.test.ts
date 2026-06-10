@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock prisma
-const { mockTaskFindMany, mockTaskUpdate, mockTaskUpdateMany, mockSessionFindUnique, mockSessionUpdate, mockMessageFindMany, mockMessageCreate } = vi.hoisted(() => ({
+const { mockTaskFindMany, mockTaskUpdate, mockTaskUpdateMany, mockSessionFindUnique, mockSessionUpdate, mockMessageFindMany, mockMessageCreate, mockSessionMemberFindMany, mockSessionMemberUpdateMany } = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskUpdate: vi.fn(),
   mockTaskUpdateMany: vi.fn(),
@@ -9,6 +9,8 @@ const { mockTaskFindMany, mockTaskUpdate, mockTaskUpdateMany, mockSessionFindUni
   mockSessionUpdate: vi.fn(),
   mockMessageFindMany: vi.fn(),
   mockMessageCreate: vi.fn(),
+  mockSessionMemberFindMany: vi.fn(),
+  mockSessionMemberUpdateMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -25,6 +27,10 @@ vi.mock('@/lib/db', () => ({
     message: {
       findMany: mockMessageFindMany,
       create: mockMessageCreate,
+    },
+    sessionMember: {
+      findMany: mockSessionMemberFindMany,
+      updateMany: mockSessionMemberUpdateMany,
     },
   },
 }))
@@ -68,6 +74,8 @@ describe('Execution Trace', () => {
     mockMessageCreate.mockResolvedValue({})
     mockSessionUpdate.mockResolvedValue({})
     mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mockSessionMemberFindMany.mockResolvedValue([])
+    mockSessionMemberUpdateMany.mockResolvedValue({ count: 0 })
   })
 
   it('appends start trace when task begins execution', async () => {

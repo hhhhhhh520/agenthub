@@ -2,12 +2,13 @@
 
 import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
-import { Plus, Search } from "lucide-react"
+import { Plus, Search, Download } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
+import { ProviderImportDialog } from "@/components/provider-import-dialog"
 
 interface Agent {
   id: string
@@ -31,6 +32,7 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [search, setSearch] = useState("")
   const [showCreate, setShowCreate] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   const loadAgents = () => {
     fetch('/api/agents').then(r => r.json()).then(d => { if (Array.isArray(d)) setAgents(d) })
@@ -50,12 +52,17 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-2xl font-semibold">智能体</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            能领取 issue、留下评论、推进状态的 AI 队友
+            选择或创建 AI Agent，配置模型和技能，参与多 Agent 协作
           </p>
         </div>
-        <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
-          <Plus className="h-4 w-4" /> 创建智能体
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" className="gap-1" onClick={() => setShowImport(true)}>
+            <Download className="h-4 w-4" /> 导入服务商
+          </Button>
+          <Button size="sm" className="gap-1" onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" /> 创建智能体
+          </Button>
+        </div>
       </div>
 
       {/* Filter row */}
@@ -122,6 +129,18 @@ export default function AgentsPage() {
       </div>
 
       <CreateAgentDialog open={showCreate} onOpenChange={setShowCreate} onCreated={loadAgents} />
+      <ProviderImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        onImport={async (config) => {
+          await fetch('/api/providers/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config),
+          })
+          loadAgents()
+        }}
+      />
     </div>
   )
 }
