@@ -5,6 +5,8 @@ import type { TaskAttachment } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
 
+const REVIEW_MAX_ELAPSED_MS = 10 * 60 * 1000
+
 export async function reviewResult(
   result: string,
   taskDescription: string,
@@ -17,8 +19,14 @@ export async function reviewResult(
     chatSessionId?: string
     projectDir?: string
   },
-  orchSessionId?: string
+  orchSessionId?: string,
+  startTime: number = Date.now()
 ): Promise<{ quality: string }> {
+  // 总耗时超限检查
+  if (Date.now() - startTime > REVIEW_MAX_ELAPSED_MS) {
+    console.error('[TIMEOUT] reviewResult 总耗时超限')
+    return { quality: 'poor' }
+  }
   try {
     const monitoringPrompt = buildMonitoringPrompt(taskDescription, result, [], { declared: [], undeclared: [] }, 'single')
     const orch = await getOrchestratorAgent()
@@ -53,7 +61,7 @@ export async function reviewResult(
         const maxRetries = retryContext?.maxRetries ?? 3
         const currentRetry = retryContext?.currentRetry ?? 0
 
-        if (retryContext?.agent && currentRetry < maxRetries) {
+        if (retryContext?.agent && currentRetry < maxRetries && Date.now() - startTime < REVIEW_MAX_ELAPSED_MS) {
           sendEvent({ agentId: 'orchestrator', type: 'text', content: `正在要求 Agent 改进（第 ${currentRetry + 1}/${maxRetries} 次重试）...` })
 
           const retryPrompt = `之前的结果有问题：${review.correctionNote}\n\n原始任务：${taskDescription}\n\n请重新完成任务，确保修复上述问题。`
@@ -83,7 +91,7 @@ export async function reviewResult(
             return reviewResult(retryResult, taskDescription, sessionId, sendEvent, {
               ...retryContext,
               currentRetry: currentRetry + 1,
-            }, orchSessionId)
+            }, orchSessionId, startTime)
           } catch {
             // 重试失败，明确标记为差
             return { quality: 'poor' }

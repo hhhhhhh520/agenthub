@@ -92,6 +92,7 @@ export async function POST(
 
   const encoder = new TextEncoder()
   const SSE_TIMEOUT_MS = 60 * 60_000
+  const globalDeadline = Date.now() + 50 * 60 * 1000
   const stream = new ReadableStream({
     async start(controller) {
       let streamClosed = false
@@ -221,7 +222,7 @@ export async function POST(
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent)
           } else {
-            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments, workDir, permissionMode)
+            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, session.phase, msgAttachments, workDir, permissionMode, globalDeadline)
           }
         }
       } catch (error) {

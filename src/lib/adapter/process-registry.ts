@@ -833,6 +833,28 @@ class ProcessRegistry {
     this.registry.delete(key)
   }
 
+  async gracefulKillEntry(key: string): Promise<void> {
+    const entry = this.registry.get(key)
+    if (!entry || !entry.alive) return
+    const pid = entry.process.pid
+    if (!pid) { this.killEntry(key); return }
+
+    // Phase 1: 优雅关闭
+    try {
+      if (process.platform === 'win32') {
+        spawn('taskkill', ['/pid', pid.toString(), '/T'], { shell: false })
+      } else {
+        process.kill(-pid, 'SIGTERM')
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 5000))
+
+    // Phase 2: 强制杀
+    if (entry.alive) {
+      this.killEntry(key)
+    }
+  }
+
   cleanupIdle(): void {
     const now = Date.now()
     for (const [key, entry] of this.registry) {

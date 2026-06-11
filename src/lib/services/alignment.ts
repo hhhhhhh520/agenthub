@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, callLLMForAnalysis, analyzeScene, generateRoles, decomposeTasks, parseJSON, formatArchitectPlan } from '@/lib/orchestrator'
+import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt } from '@/lib/orchestrator/prompts'
 import { topologicalSort, type ScheduledTask } from '@/lib/orchestrator/scheduler'
 import { handleExecution } from './execution'
@@ -141,7 +142,12 @@ export async function handleArchitectPlan(
         sendEvent({ agentId: archAgent.name, type: 'status', content: '任务拆解格式异常，正在重新生成...' })
         scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
       }
-    } catch {
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.error('[TIMEOUT] handleArchitectPlan')
+        sendEvent({ agentId: 'orchestrator', type: 'error', content: '架构师任务拆解超时，请重试' })
+        return
+      }
       scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
     }
   } else {
@@ -179,7 +185,8 @@ export async function handleAgentQA(
   message: string,
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  globalDeadline?: number
 ) {
   await prisma.session.update({ where: { id: sessionId }, data: { phase: 'alignment', phaseStep: 'agent_qa' } })
 
@@ -211,7 +218,11 @@ export async function handleAgentQA(
           workDir
         )
         return { agent, response: result }
-      } catch {
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          console.error('[TIMEOUT] handleAgentQA', agent.name)
+          return { agent, response: '[问答超时]' }
+        }
         try {
           const response = await callLLMForAnalysis(prompt)
           return { agent, response }
@@ -240,7 +251,7 @@ export async function handleAgentQA(
     sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'agent_qa' })
   } else {
     sendEvent({ agentId: 'orchestrator', type: 'text', content: '所有 Agent 无疑问，开始执行...' })
-    await transitionToExecution(sessionId, agents, sendEvent)
+    await transitionToExecution(sessionId, agents, sendEvent, undefined, undefined, globalDeadline)
   }
 }
 
@@ -249,7 +260,8 @@ export async function transitionToExecution(
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
   userMessage?: string,
-  orchSessionId?: string
+  orchSessionId?: string,
+  globalDeadline?: number
 ) {
   await prisma.session.update({ where: { id: sessionId }, data: { phase: 'execution', phaseStep: '' } })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
@@ -262,5 +274,5 @@ export async function transitionToExecution(
   }
 
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
-  await handleExecution(userMessage || '', sessionId, agents, sendEvent, orchSessionId)
+  await handleExecution(userMessage || '', sessionId, agents, sendEvent, orchSessionId, globalDeadline)
 }
