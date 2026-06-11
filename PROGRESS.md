@@ -132,6 +132,8 @@
 | 8项核心Bug修复 | 讨论自问自答+进程共享+workDir断链+上下文丢失+MCP转圈+auto模式+白屏+迁移缺失，详见下方说明 | 2026-06-10 |
 | getOrchestratorDecision permissionMode | 补传permissionMode参数，确保auto模式下MCP工具自动批准 | 2026-06-10 |
 | Playwright E2E测试(无头浏览器) | 16张截图验证：首页/详情页/讨论/任务拆解/执行，发现3个新Bug | 2026-06-10 |
+| ISSUE-004 任务面板不刷新修复 | projects/[id]/page.tsx 替换为 AgentPanel（3秒轮询），删除内联面板代码 | 2026-06-11 |
+| ISSUE-005 执行阶段卡住修复 | 超时系统：gracefulKillEntry两阶段杀进程+withTimeout async generator包装+5个函数加超时+4个catch块区分TimeoutError+全局50分钟deadline+监控120秒超时+reviewResult 10分钟总耗时上限。Security Engineer 3轮审查通过 | 2026-06-11 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
@@ -148,13 +150,11 @@
 |------|------|
 | （暂无） | |
 
-### 📋 待办（2026-06-10 更新）
+### 📋 待办（2026-06-11 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
-| 🔴高 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result | 🔴未解决 |
-| 🔴高 | ISSUE-004 任务面板不刷新 | page.tsx SSE处理后未re-fetch tasks/agents | 🔴未解决 |
-| 🔴高 | ISSUE-005 执行阶段卡住 | handleAgentQA无超时+validateDecision无phaseStep防护 | 🔴未解决 |
+| 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
 
 **已评估不实施**：

@@ -1,6 +1,17 @@
 # 执行阶段卡住
 
-> 创建时间: 2026-06-10 | 状态: 🔴未解决
+> 创建时间: 2026-06-10 | 状态: 🟢已解决（2026-06-11）
+
+## 解决方案
+
+超时系统（1 新文件 + 6 文件改动）：
+- `orchestrator/timeout.ts`：withTimeout async generator 包装器 + TimeoutError + TIMEOUT 常量
+- `process-registry.ts`：gracefulKillEntry() 两阶段杀进程（SIGTERM → 5s → SIGKILL）
+- `orchestrator/index.ts`：5 个函数（callLLMForAnalysis/callLLM/executeSingleAgent/runDiscussion/executeTaskBatch）加 withTimeout + onTimeout 清理
+- `alignment.ts`/`chat-router.ts`/`review.ts`：4 个 catch 块区分 TimeoutError，不走 fallback
+- `execution.ts`：全局 50 分钟 deadline + 监控 120 秒超时
+- `route.ts`：globalDeadline 从 SSE 流开始计算并传递到调用链
+- `review.ts`：reviewResult 10 分钟总耗时上限，startTime 透传递归
 
 ## 问题描述
 

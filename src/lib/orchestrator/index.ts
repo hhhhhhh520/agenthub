@@ -2,10 +2,26 @@ import { join } from 'path'
 import { prisma } from '@/lib/db'
 import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
+import { processRegistry } from '../adapter/process-registry'
+import { withTimeout, TIMEOUT, TimeoutError } from './timeout'
 import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
+
+// 构建 ProcessRegistry key（与 adapter 内部 getRegistryKey 保持一致）
+// 注意：workDir 必须和 adapter.connect() 时的值一致，否则 gracefulKillEntry 查不到进程
+function buildRegistryKey(platform: string, chatSessionId?: string, agentId?: string, workDir?: string): string {
+  const sessionPart = chatSessionId || 'default'
+  const agentPart = agentId || 'default'
+  // ClaudeCodeAdapter: config.workDir || process.cwd()
+  // OpenCodeAdapter: config.workDir || join(process.cwd(), 'workspaces', `opencode-${Date.now()}`)
+  // OpenCode 的 key 含时间戳，超时时无法重建，但 ndjson 格式会自动清理
+  const dir = workDir || process.cwd()
+  return platform === 'opencode'
+    ? `opencode:${sessionPart}:${agentPart}:${dir}`
+    : `${sessionPart}:${agentPart}:${dir}`
+}
 
 // 隐性行为准则：自动注入所有 Agent 的 System Prompt
 const AGENT_BEHAVIOR_RULES = `<role>你是 AgentHub 平台上的独立 Agent，与其他 Agent 协作完成用户任务。</role>
@@ -122,10 +138,13 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
   })
 
   let result = ''
-  for await (const chunk of adapter.send({ prompt: userPrompt })) {
-    if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+  try {
+    for await (const chunk of withTimeout(adapter.send({ prompt: userPrompt }), TIMEOUT.LLM_CALL)) {
+      if (chunk.type === 'text' || chunk.type === 'error') result += chunk.content
+    }
+  } finally {
+    await adapter.close()
   }
-  await adapter.close()
 
   if (!result.trim()) throw new Error('LLM returned empty response')
   return result
@@ -145,15 +164,17 @@ async function callLLM(systemPrompt: string, userPrompt: string): Promise<string
   })
 
   let result = ''
-  for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-    if (chunk.type === 'text') {
-      result += chunk.content
-    } else if (chunk.type === 'error') {
-      await adapter.close()
-      throw new Error(chunk.content)
+  try {
+    for await (const chunk of withTimeout(adapter.send({ prompt: combinedPrompt }), TIMEOUT.LLM_CALL)) {
+      if (chunk.type === 'text') {
+        result += chunk.content
+      } else if (chunk.type === 'error') {
+        throw new Error(chunk.content)
+      }
     }
+  } finally {
+    await adapter.close()
   }
-  await adapter.close()
 
   if (!result.trim()) throw new Error('LLM returned empty response')
   return result
@@ -345,21 +366,28 @@ export async function executeTaskBatch(
           : ''
         // 依赖任务结果作为 prompt 前缀
         const depPrefix = depContext ? `[依赖任务结果]\n${depContext}\n\n` : ''
-        for await (const chunk of adapter.send({
-          prompt: depPrefix + fileConstraint + task.description,
-          context: '',  // 不传 context，CLI 通过 session 恢复管理历史
-          systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
-        })) {
-          if (chunk.type === 'session') {
-            capturedSessionId = chunk.content
-          } else if (chunk.type === 'text') {
-            result += chunk.content
+        const registryKey = buildRegistryKey(platform, chatSessionId, agentId, projectDir)
+        try {
+          for await (const chunk of withTimeout(
+            adapter.send({
+              prompt: depPrefix + fileConstraint + task.description,
+              context: '',  // 不传 context，CLI 通过 session 恢复管理历史
+              systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
+            }),
+            TIMEOUT.AGENT_TASK,
+            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+          )) {
+            if (chunk.type === 'session') {
+              capturedSessionId = chunk.content
+            } else if (chunk.type === 'text') {
+              result += chunk.content
+            }
+            // error chunk 不拼入 result，只通过 onChunk 发送给前端
+            onChunk(task.id, chunk)
           }
-          // error chunk 不拼入 result，只通过 onChunk 发送给前端
-          onChunk(task.id, chunk)
+        } finally {
+          await adapter.close()
         }
-
-        await adapter.close()
       } finally {
         await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'idle')
       }
@@ -435,22 +463,29 @@ export async function executeSingleAgent(
 
     let result = ''
     let capturedSessionId: string | undefined
-    for await (const chunk of adapter.send({
-      prompt: effectivePrompt,
-      context,
-      systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
-      attachments,
-    })) {
-      if (chunk.type === 'session') {
-        capturedSessionId = chunk.content
-      } else if (chunk.type === 'text') {
-        result += chunk.content
+    const registryKey = buildRegistryKey(platform, chatSessionId, agent.id, agent.workDir)
+    try {
+      for await (const chunk of withTimeout(
+        adapter.send({
+          prompt: effectivePrompt,
+          context,
+          systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
+          attachments,
+        }),
+        TIMEOUT.AGENT_TASK,
+        { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+      )) {
+        if (chunk.type === 'session') {
+          capturedSessionId = chunk.content
+        } else if (chunk.type === 'text') {
+          result += chunk.content
+        }
+        // error chunk 不拼入 result，status chunk 也不拼入
+        onChunk(agent.name, chunk)
       }
-      // error chunk 不拼入 result，status chunk 也不拼入
-      onChunk(agent.name, chunk)
+    } finally {
+      await adapter.close()
     }
-
-    await adapter.close()
 
     // Guard: empty response
     if (!result.trim()) {
@@ -487,15 +522,28 @@ export async function runDiscussion(
         await adapter.connect({ platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
 
         let result = ''
-        for await (const chunk of adapter.send({ prompt: combinedPrompt })) {
-          if (chunk.type === 'text') result += chunk.content
-          onChunk(agent.name, chunk)
+        const registryKey = buildRegistryKey(platform, chatSessionId, undefined, projectDir)
+        try {
+          for await (const chunk of withTimeout(
+            adapter.send({ prompt: combinedPrompt }),
+            TIMEOUT.DISCUSSION,
+            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+          )) {
+            if (chunk.type === 'text') result += chunk.content
+            onChunk(agent.name, chunk)
+          }
+        } finally {
+          await adapter.close()
         }
 
         opinions.push(`${agent.name}（第${round}轮）：${result || EMPTY_RESPONSE}`)
-        await adapter.close()
-      } catch {
-        const skipMsg = `[${agent.name} 讨论出错，已跳过]`
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          console.error('[TIMEOUT] runDiscussion', agent.name, 'round', round)
+        }
+        const skipMsg = err instanceof TimeoutError
+          ? `[${agent.name} 讨论超时，已跳过]`
+          : `[${agent.name} 讨论出错，已跳过]`
         opinions.push(`${agent.name}（第${round}轮）：${skipMsg}`)
         onChunk(agent.name, { type: 'error', content: skipMsg })
       }

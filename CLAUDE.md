@@ -32,7 +32,7 @@ src/
 │   └── attachment-input.tsx   # 附件上传（📎按钮 + 拖拽 + 粘贴）
 ├── lib/
 │   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
-│   ├── orchestrator/          # 编排器（prompt + 调度 + 执行）
+│   ├── orchestrator/          # 编排器（prompt + 调度 + 执行 + 超时控制）
 │   ├── services/              # 业务服务层（从 chat route 拆分）
 │   │   ├── chat-router.ts     # Orchestrator 决策路由 + validateDecision
 │   │   ├── alignment.ts       # 对齐流程（PM确认→架构师拆解→Q&A）
@@ -109,6 +109,7 @@ prisma/
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
 - **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
+- **Wall-clock 超时**：`orchestrator/timeout.ts` 的 `withTimeout` 包装 async generator，超时抛 `TimeoutError` 并调用 `onTimeout` 清理（`gracefulKillEntry` 两阶段杀进程）。5 个核心函数有超时保护：callLLM/callLLMForAnalysis(2min)、executeSingleAgent/executeTaskBatch(15min)、runDiscussion(3min/轮)。全局 50 分钟 deadline 从 SSE 流开始算。catch 块区分 `TimeoutError` 不走 fallback 防连锁挂起
 - `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
   - **prompt 通过 CLI 参数传递**：只传用户消息，systemPrompt 通过配置文件注入
   - **System Prompt 注入**：写入 `.opencode/agents/agenthub-{agentId}.md`，通过 `--agent` 参数选择

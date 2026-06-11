@@ -3,6 +3,7 @@ import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestrat
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './git-utils'
+import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
 
 interface TraceEntry {
@@ -29,7 +30,8 @@ export async function handleExecution(
   sessionId: string,
   agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
   sendEvent: SendEvent,
-  orchSessionId?: string
+  orchSessionId?: string,
+  globalDeadline?: number
 ) {
   const tasks = await prisma.task.findMany({
     where: { sessionId },
@@ -79,7 +81,14 @@ export async function handleExecution(
   const MAX_ITERATIONS = tasks.length * 3
   let iteration = 0
 
+  const deadline = globalDeadline ?? Date.now() + 50 * 60 * 1000
+
   while (hasProgress && iteration < MAX_ITERATIONS) {
+    if (Date.now() > deadline) {
+      console.error('[TIMEOUT] handleExecution 全局耗时超限')
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: '执行阶段超时，部分任务未完成' })
+      break
+    }
     iteration++
     hasProgress = false
 
@@ -227,7 +236,9 @@ export async function handleExecution(
       try {
         const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
         const orch = await getOrchestratorAgent()
-        const { result: reviewResult } = await executeSingleAgent(
+        const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
+        const { result: reviewResult } = await Promise.race([
+          executeSingleAgent(
           {
             name: 'Orchestrator',
             systemPrompt: '你是代码审查专家，负责检查 Agent 输出质量。返回 JSON 格式的审查结果。',
@@ -244,7 +255,11 @@ export async function handleExecution(
           () => {},
           sessionId,
           projectRoot
-        )
+        ),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new TimeoutError(MONITORING_TIMEOUT_MS, 'monitoring')), MONITORING_TIMEOUT_MS)
+          ),
+        ])
         const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
         const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
         if (jsonMatch) {
@@ -268,7 +283,10 @@ export async function handleExecution(
             }
           }
         }
-      } catch { /* monitoring failed, continue */ }
+      } catch (err) {
+        if (err instanceof TimeoutError) console.error('[TIMEOUT] monitoring', taskId)
+        /* monitoring failed, continue */
+      }
     }
 
     for (const task of tasks) {

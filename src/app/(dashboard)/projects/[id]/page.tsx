@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useParams } from "next/navigation"
-import { ArrowLeft, Bot, Plus, Send } from "lucide-react"
+import { ArrowLeft, Send } from "lucide-react"
 import Link from "next/link"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { AgentPanel } from "@/components/agent-panel"
 
 interface Session {
   id: string
@@ -25,33 +26,11 @@ interface Message {
   createdAt: string
 }
 
-interface Task {
-  id: string
-  description: string
-  status: string
-  assignedAgentId?: string
-}
-
 interface Agent {
   id: string
   name: string
   accentColor: string
   status: string
-}
-
-const taskStatusIcons: Record<string, string> = {
-  completed: "✅",
-  in_progress: "🔄",
-  pending: "⬜",
-  failed: "❌",
-  blocked: "⏸",
-}
-
-const agentStatusDot: Record<string, string> = {
-  working: "bg-green-500",
-  idle: "bg-gray-400",
-  done: "bg-blue-500",
-  error: "bg-red-500",
 }
 
 const phaseLabels: Record<string, string> = {
@@ -67,7 +46,6 @@ export default function ProjectDetailPage() {
 
   const [session, setSession] = useState<Session | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [tasks, setTasks] = useState<Task[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
@@ -77,7 +55,6 @@ export default function ProjectDetailPage() {
     if (!sessionId) return
     fetch(`/api/sessions/${sessionId}`).then(r => r.json()).then(setSession)
     fetch(`/api/sessions/${sessionId}/messages`).then(r => r.json()).then(data => { if (Array.isArray(data)) setMessages(data) })
-    fetch(`/api/sessions/${sessionId}/tasks`).then(r => r.json()).then(data => { if (Array.isArray(data)) setTasks(data) })
     fetch(`/api/sessions/${sessionId}/agents`).then(r => r.json()).then(data => { if (Array.isArray(data)) setAgents(data) })
   }, [sessionId])
 
@@ -243,57 +220,7 @@ export default function ProjectDetailPage() {
           </div>
         </div>
 
-        {/* Agent & Task panel */}
-        <div className="w-64 border-l flex flex-col">
-          {/* Agents */}
-          <div className="p-3 border-b text-xs font-medium text-muted-foreground">智能体 ({agents.length})</div>
-          <div className="p-2 space-y-1 border-b">
-            {agents.length === 0 && (
-              <div className="p-2 text-xs text-muted-foreground">暂无智能体</div>
-            )}
-            {agents.map((agent) => (
-              <div key={agent.id} className="flex items-center gap-2 p-2 rounded hover:bg-accent">
-                <Avatar className="h-6 w-6">
-                  <AvatarFallback
-                    className="text-xs text-white"
-                    style={{ backgroundColor: agent.accentColor }}
-                  >
-                    {agent.name.charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
-                <span className="text-xs font-medium flex-1">{agent.name}</span>
-                <span className={`h-2 w-2 rounded-full ${agentStatusDot[agent.status] || "bg-gray-400"}`} />
-              </div>
-            ))}
-          </div>
-
-          {/* Tasks */}
-          <div className="p-3 border-b text-xs font-medium text-muted-foreground">任务 ({tasks.length})</div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {tasks.length === 0 && (
-                <div className="p-2 text-xs text-muted-foreground">暂无任务</div>
-              )}
-              {tasks.map((task) => {
-                const agent = task.assignedAgentId ? agentMap[task.assignedAgentId] : null
-                return (
-                  <div key={task.id} className="p-2 rounded text-xs hover:bg-accent">
-                    <div className="flex items-center gap-2">
-                      <span>{taskStatusIcons[task.status] || task.status}</span>
-                      <span className="flex-1">{task.description}</span>
-                    </div>
-                    {agent && (
-                      <div className="flex items-center gap-1 mt-1 text-muted-foreground">
-                        <Bot className="h-3 w-3" />
-                        {agent.name}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </ScrollArea>
-        </div>
+        <AgentPanel sessionId={sessionId} />
       </div>
     </div>
   )

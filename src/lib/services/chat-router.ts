@@ -5,6 +5,7 @@ import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review
 import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution } from './alignment'
 import type { SendEvent } from './review'
 import type { TaskAttachment } from '@/lib/adapter/types'
+import { TimeoutError } from '@/lib/orchestrator/timeout'
 
 export async function handleOrchestratorDecision(
   message: string,
@@ -14,7 +15,8 @@ export async function handleOrchestratorDecision(
   sessionPhase: string,
   attachments?: TaskAttachment[],
   workDir?: string,
-  permissionMode?: string
+  permissionMode?: string,
+  globalDeadline?: number
 ) {
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
@@ -33,7 +35,12 @@ export async function handleOrchestratorDecision(
     )
     decision = result.decision
     orchSessionId = result.sessionId
-  } catch {
+  } catch (err) {
+    if (err instanceof TimeoutError) {
+      console.error('[TIMEOUT] getOrchestratorDecision')
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: 'Orchestrator 决策超时，请重试' })
+      return
+    }
     await handleOrchestratorChat(message, sessionId, sendEvent, agents)
     return
   }
@@ -78,10 +85,10 @@ export async function handleOrchestratorDecision(
       await handleArchitectPlan(message, sessionId, agents, sendEvent)
       break
     case 'align_qa':
-      await handleAgentQA(message, sessionId, agents, sendEvent)
+      await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline)
       break
     case 'execute':
-      await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId)
+      await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline)
       break
     case 'done':
       await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
