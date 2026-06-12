@@ -37,7 +37,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 
 **前置条件：** Node.js 18+，至少安装一个 AI CLI 平台：
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
-- [OpenCode CLI](https://open-code.ai)（`npm install -g @anthropic-ai/opencode`）
+- [OpenCode CLI](https://open-code.ai)（`npm install -g opencode`）
 
 ```bash
 # 克隆项目
