@@ -134,6 +134,7 @@ declare global {
 class ProcessRegistry {
   private registry: Map<string, ProcessEntry>
   private cleanupTimer: ReturnType<typeof setInterval> | null = null
+  private requestIdToKey = new Map<string, string>()
 
   constructor() {
     // Use global registry if it exists, otherwise create new one
@@ -280,6 +281,9 @@ class ProcessRegistry {
 
     proc.on('exit', () => {
       entry.alive = false
+      for (const [requestId] of entry.pendingPermissions) {
+        this.requestIdToKey.delete(requestId)
+      }
       this.registry.delete(key)
     })
 
@@ -476,6 +480,7 @@ class ProcessRegistry {
                 toolInput: request.input,
               }
             })
+            this.requestIdToKey.set(requestId, key)
             const permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
               const pending: PendingPermission = {
                 requestId,
@@ -500,6 +505,7 @@ class ProcessRegistry {
               pending.resolve({ behavior: 'deny', message: 'Request cancelled by CLI' })
               entry.pendingPermissions.delete(requestId)
             }
+            this.requestIdToKey.delete(requestId)
           }
 
           if (event.type === 'assistant' && event.message?.content) {
@@ -796,6 +802,20 @@ class ProcessRegistry {
     return true
   }
 
+  /**
+   * 通过 requestId 响应权限请求
+   * 解决 permission route 无法构造 effectiveKey 的问题
+   */
+  respondPermissionByRequestId(requestId: string, result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }): boolean {
+    const effectiveKey = this.requestIdToKey.get(requestId)
+    if (!effectiveKey) {
+      console.warn(`[respondPermissionByRequestId] 未找到 requestId=${requestId} 的映射`)
+      return false
+    }
+    this.requestIdToKey.delete(requestId)
+    return this.respondPermission(effectiveKey, requestId, result)
+  }
+
   getSessionId(key: string): string | null {
     return this.registry.get(key)?.sessionId || null
   }
@@ -803,6 +823,10 @@ class ProcessRegistry {
   killEntry(key: string): void {
     const entry = this.registry.get(key)
     if (!entry) return
+
+    for (const [requestId] of entry.pendingPermissions) {
+      this.requestIdToKey.delete(requestId)
+    }
 
     entry.alive = false
     const pid = entry.process.pid
@@ -934,6 +958,7 @@ class ProcessRegistry {
         }
       }
       this.registry.clear()
+      this.requestIdToKey.clear()
     }, 5000)
   }
 }

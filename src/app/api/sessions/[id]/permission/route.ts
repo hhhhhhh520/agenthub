@@ -19,12 +19,14 @@ export async function POST(
     return Response.json({ error: 'Session not found' }, { status: 404 })
   }
 
-  const key = `${sessionId}:${agentId}:${session.projectDir || process.cwd()}`
-  processRegistry.respondPermission(key, requestId, {
+  const success = processRegistry.respondPermissionByRequestId(requestId, {
     behavior,
     updatedInput,
     message,
   })
+  if (!success) {
+    return Response.json({ error: 'Permission request not found or already expired' }, { status: 404 })
+  }
 
   return Response.json({ ok: true })
 }

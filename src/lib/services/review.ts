@@ -204,8 +204,17 @@ export async function runMultiAgentDiscussion(
   )
 
   const summary = opinions.join('\n\n')
+  // 判断讨论是否成功：至少有一个 Agent 给出了有效内容（非超时/出错）
+  const hasValidContent = opinions.some(
+    op => !op.includes('讨论超时') && !op.includes('讨论出错') && !op.includes('未返回有效内容')
+  )
+  const statusTag = hasValidContent ? '[STATUS:success]' : '[STATUS:failed]'
   await prisma.message.create({
-    data: { role: 'orchestrator', rawContent: summary, sessionId },
+    data: {
+      role: 'orchestrator',
+      rawContent: `[DISCUSSION_SUMMARY]${statusTag}${summary}`,
+      sessionId,
+    },
   })
   const { quality: discQuality } = await reviewResult(summary, topic, sessionId, sendEvent, undefined, undefined)
   sendEvent({ agentId: 'orchestrator', type: 'done', content: summary, data: { quality: discQuality } })

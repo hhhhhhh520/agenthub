@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { mockSessionFindUnique, mockRespondPermission } = vi.hoisted(() => ({
+const { mockSessionFindUnique, mockRespondPermissionByRequestId } = vi.hoisted(() => ({
   mockSessionFindUnique: vi.fn(),
-  mockRespondPermission: vi.fn(),
+  mockRespondPermissionByRequestId: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -10,7 +10,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 vi.mock('@/lib/adapter/process-registry', () => ({
-  processRegistry: { respondPermission: mockRespondPermission },
+  processRegistry: { respondPermissionByRequestId: mockRespondPermissionByRequestId },
 }))
 
 import { POST } from '@/app/api/sessions/[id]/permission/route'
@@ -28,7 +28,7 @@ const params = { params: Promise.resolve({ id: 's1' }) }
 beforeEach(() => {
   vi.clearAllMocks()
   mockSessionFindUnique.mockResolvedValue({ id: 's1', projectDir: '/test' })
-  mockRespondPermission.mockReturnValue(undefined)
+  mockRespondPermissionByRequestId.mockReturnValue(true)
 })
 
 describe('POST /api/sessions/[id]/permission', () => {
@@ -53,7 +53,7 @@ describe('POST /api/sessions/[id]/permission', () => {
     expect(res.status).toBe(404)
   })
 
-  it('calls respondPermission with correct key format', async () => {
+  it('calls respondPermissionByRequestId with correct params', async () => {
     const res = await POST(makeReq({
       requestId: 'req-123',
       behavior: 'allow',
@@ -61,8 +61,7 @@ describe('POST /api/sessions/[id]/permission', () => {
       updatedInput: { command: 'ls' },
     }), params)
     expect(res.status).toBe(200)
-    expect(mockRespondPermission).toHaveBeenCalledWith(
-      's1:agent-1:/test',
+    expect(mockRespondPermissionByRequestId).toHaveBeenCalledWith(
       'req-123',
       expect.objectContaining({ behavior: 'allow', updatedInput: { command: 'ls' } })
     )
@@ -75,8 +74,7 @@ describe('POST /api/sessions/[id]/permission', () => {
       agentId: 'agent-1',
       message: 'User denied this tool use',
     }), params)
-    expect(mockRespondPermission).toHaveBeenCalledWith(
-      's1:agent-1:/test',
+    expect(mockRespondPermissionByRequestId).toHaveBeenCalledWith(
       'req-456',
       expect.objectContaining({ behavior: 'deny', message: 'User denied this tool use' })
     )
@@ -88,5 +86,15 @@ describe('POST /api/sessions/[id]/permission', () => {
     }), params)
     const body = await res.json()
     expect(body.ok).toBe(true)
+  })
+
+  it('returns 404 when permission request not found', async () => {
+    mockRespondPermissionByRequestId.mockReturnValue(false)
+    const res = await POST(makeReq({
+      requestId: 'r1', behavior: 'allow', agentId: 'a1',
+    }), params)
+    expect(res.status).toBe(404)
+    const body = await res.json()
+    expect(body.error).toContain('Permission request not found')
   })
 })

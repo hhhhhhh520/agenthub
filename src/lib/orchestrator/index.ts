@@ -316,6 +316,17 @@ export async function executeTaskBatch(
   const agentMap = new Map(agents.map(a => [a.name, a]))
   const failedTaskIds: string[] = []
 
+  // 提取讨论摘要（在循环外提取一次，所有任务共享）
+  let discussionSummary = ''
+  if (chatSessionId) {
+    try {
+      const { buildDiscussionSummary } = await import('../services/context-builder')
+      discussionSummary = await buildDiscussionSummary(chatSessionId)
+    } catch (error) {
+      console.warn('[executeTaskBatch] 提取讨论摘要失败:', error)
+    }
+  }
+
   // Group tasks by batch for sequential execution (same batch parallel, different batch sequential)
   const batches = new Map<number, ScheduledTask[]>()
   for (const task of tasks) {
@@ -366,11 +377,30 @@ export async function executeTaskBatch(
           : ''
         // 依赖任务结果作为 prompt 前缀
         const depPrefix = depContext ? `[依赖任务结果]\n${depContext}\n\n` : ''
+
+        // 构建 prompt：注入讨论摘要
+        let prompt = depPrefix + fileConstraint + task.description
+        if (discussionSummary) {
+          prompt = `[项目背景]\n${discussionSummary}\n\n${prompt}`
+        }
+        // 如果总 prompt 超过 4000 字，按比例缩减讨论摘要
+        const MAX_PROMPT_LEN = 4000
+        if (prompt.length > MAX_PROMPT_LEN && discussionSummary) {
+          const excess = prompt.length - MAX_PROMPT_LEN
+          const newSummaryLen = Math.max(100, discussionSummary.length - excess)
+          // 按句子边界截断
+          const truncated = discussionSummary.slice(0, newSummaryLen)
+          const lastPeriod = Math.max(truncated.lastIndexOf('。'), truncated.lastIndexOf('！'), truncated.lastIndexOf('\n'))
+          const shrunkSummary = lastPeriod > newSummaryLen * 0.5 ? truncated.slice(0, lastPeriod + 1) : truncated
+          prompt = `[项目背景]\n${shrunkSummary}\n\n${depPrefix}${fileConstraint}${task.description}`
+          console.warn(`[executeTaskBatch] 讨论摘要已缩减: ${discussionSummary.length} -> ${shrunkSummary.length} 字符`)
+        }
+
         const registryKey = buildRegistryKey(platform, chatSessionId, agentId, projectDir)
         try {
           for await (const chunk of withTimeout(
             adapter.send({
-              prompt: depPrefix + fileConstraint + task.description,
+              prompt,
               context: '',  // 不传 context，CLI 通过 session 恢复管理历史
               systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
             }),

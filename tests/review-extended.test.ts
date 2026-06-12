@@ -127,7 +127,7 @@ describe('runMultiAgentDiscussion', () => {
   it('saves summary and sends done event', async () => {
     await runMultiAgentDiscussion(['PM', '架构师'], 'topic', 's1', agents, sendEvent)
     expect(mockMessageCreate).toHaveBeenCalledWith({
-      data: { role: 'orchestrator', rawContent: 'opinion 1\n\nopinion 2', sessionId: 's1' },
+      data: { role: 'orchestrator', rawContent: '[DISCUSSION_SUMMARY][STATUS:success]opinion 1\n\nopinion 2', sessionId: 's1' },
     })
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({
       type: 'done',
