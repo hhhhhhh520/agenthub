@@ -104,8 +104,8 @@ prisma/
 - `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式，支持 `--resume` 恢复会话）
   - 120 秒无输出超时（`noOutputTimer`），超时自动 killProcessTree
   - **权限交互**：`--permission-prompt-tool stdio`，CLI 通过 `control_request`/`control_response` 协议与前端交互。`default` 模式下发 `control_request`，前端显示确认横幅；`auto` 模式不发请求
-  - ProcessRegistry key：`${sessionId}:${agentId}:${workDir}`，permission API 必须用相同格式
-  - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
+  - **权限路由**：`respondPermissionByRequestId(requestId, result)` 通过 `requestIdToKey` 反向索引 O(1) 查找进程，解决 permission route 无法构造 `effectiveKey`（含 toolsHash）的问题。失败返回 404
+  - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；`requestIdToKey: Map<string, string>` 反向索引；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
 - **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
@@ -175,6 +175,13 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 - `src/lib/message-parser.ts` → `parseMessage()` 函数
 - `/api/messages` 返回时自动解析 `rawContent`，前端可直接使用 `message.parsed.text`、`message.parsed.codeBlocks`、`message.parsed.artifacts`
+
+### 讨论摘要注入
+
+- **存储标记**：`runMultiAgentDiscussion` 和 `@所有人` 讨论结果存储时加 `[DISCUSSION_SUMMARY][STATUS:success/failed]` 前缀
+- **摘要提取**：`buildDiscussionSummary(sessionId)` 从 DB 读取最新讨论消息，过滤失败讨论，按句子边界截断 500 字
+- **Agent 注入**：`executeTaskBatch` 提取讨论摘要，条件注入 Agent prompt 作为 `[项目背景]` 前缀，超长按比例缩减
+- **前缀剥离**：`buildContextFromHistory` 去掉 `[DISCUSSION_SUMMARY]` 前缀，避免污染 Orchestrator 决策上下文
 
 ### CLI 会话恢复
 

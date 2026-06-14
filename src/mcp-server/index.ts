@@ -19,16 +19,10 @@ const AGENT_NAME = process.env.AGENTHUB_AGENT_NAME || ''
 const WORK_DIR = resolve(process.env.AGENTHUB_WORK_DIR || '.')
 const REAL_WORK_DIR = realpathSync(WORK_DIR)
 
+import { isPathSafe as _isPathSafe } from '../lib/path-safety'
+
 function isPathSafe(filePath: string): boolean {
-  try {
-    const realPath = realpathSync(filePath)
-    return realPath === REAL_WORK_DIR || realPath.startsWith(REAL_WORK_DIR + sep)
-  } catch {
-    // realpathSync throws if file doesn't exist, but resolve+startsWith
-    // can still be bypassed by .. paths — reject unknown paths
-    const resolved = resolve(filePath)
-    return resolved === WORK_DIR || resolved.startsWith(WORK_DIR + sep)
-  }
+  return _isPathSafe(filePath, WORK_DIR)
 }
 
 const server = new McpServer({

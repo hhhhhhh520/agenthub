@@ -277,13 +277,9 @@ describe('ProcessRegistry NDJSON support', () => {
     }, 10)
 
     const chunks: any[] = []
-    try {
-      const gen = processRegistry.send('claude-test', 'prompt', config)
-      for await (const chunk of gen) {
-        chunks.push(chunk)
-      }
-    } catch {
-      // May throw due to mock — that's OK
+    const gen = processRegistry.send('claude-test', 'prompt', config)
+    for await (const chunk of gen) {
+      chunks.push(chunk)
     }
 
     // Should have spawned 'claude' (default command)

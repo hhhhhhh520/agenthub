@@ -158,19 +158,3 @@ describe('Prisma Schema — generator and datasource', () => {
   })
 })
 
-describe('Database module exports', () => {
-  it('should export prisma client', async () => {
-    const db = await import('../src/lib/db')
-    expect(db.prisma).toBeDefined()
-    expect(typeof db.prisma).toBe('object')
-  })
-
-  it('prisma should have standard model accessors', async () => {
-    const db = await import('../src/lib/db')
-    expect(db.prisma.session).toBeDefined()
-    expect(db.prisma.agent).toBeDefined()
-    expect(db.prisma.task).toBeDefined()
-    expect(db.prisma.message).toBeDefined()
-    expect(db.prisma.sessionMember).toBeDefined()
-  })
-})

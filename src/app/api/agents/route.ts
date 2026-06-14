@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 
+// 导出供测试验证：如果有人修改这些值，测试会同步感知
+export const XSS_TAG_RE = /<[a-zA-Z][^>]*>/
+export const SELECTED_FIELDS = ['id', 'name', 'expertise', 'platform', 'model', 'baseUrl', 'tools', 'isPreset', 'accentColor', 'capabilities', 'status'] as const
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const preset = searchParams.get('preset')
@@ -25,7 +29,7 @@ export async function POST(request: Request) {
     )
   }
 
-  if (/<[a-zA-Z][^>]*>/.test(name)) {
+  if (XSS_TAG_RE.test(name)) {
     return NextResponse.json({ error: 'Agent name must not contain HTML tags' }, { status: 400 })
   }
 

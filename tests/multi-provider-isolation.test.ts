@@ -233,8 +233,30 @@ describe('ProcessRegistry — per-agent env isolation', () => {
 // ─── OpenCodeAdapter env injection ─────────────────────────────────────────────
 
 describe('OpenCodeAdapter — provider env injection', () => {
-  it('should set both ANTHROPIC_* and OPENAI_* env vars when apiKey is provided', async () => {
-    // OpenCodeAdapter injects into spawn env, which we can verify through the mock
+  it('should set ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL in spawn env', async () => {
+    // 创建独立的 mock 进程，以便控制 stdout close 事件
+    const localStdout = new EventEmitter()
+    const localStderr = new EventEmitter()
+    const localProcess: any = {
+      pid: 88888,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: localStdout,
+      stderr: localStderr,
+      exitCode: null,
+      on: vi.fn((event: string, cb: Function) => {
+        if (event === 'exit') localProcess._exitCb = cb
+      }),
+      kill: vi.fn(),
+    }
+
+    // 通过 vi.mocked 获取 spawn mock，用 mockImplementation 保留 env 捕获逻辑
+    const { spawn } = await import('child_process')
+    const spawnMock = vi.mocked(spawn)
+    spawnMock.mockImplementation((cmd: string, args: string[], options: any) => {
+      capturedEnvList.push(options?.env || {})
+      return localProcess as any
+    })
+
     const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
     const adapter = new OpenCodeAdapter()
 
@@ -243,12 +265,26 @@ describe('OpenCodeAdapter — provider env injection', () => {
       apiKey: 'sk-test-opencode-key',
       baseUrl: 'https://proxy.example.com',
       model: 'deepseek-chat',
-      workDir: '/tmp/test-oc',
+      workDir: '/tmp/test-oc-env',
     })
 
-    // Verify config was stored (we can't easily capture spawn env without additional mocking,
-    // but we verify connect() doesn't throw and stores config correctly)
-    expect(adapter).toBeDefined()
+    // 启动 send，然后立即关闭 stdout 让 generator 结束
+    const before = capturedEnvList.length
+    const gen = adapter.send({ prompt: 'test' })
+    setTimeout(() => localStdout.emit('close'), 10)
+
+    for await (const _ of gen) { /* consume */ }
+
+    const newEnvs = capturedEnvList.slice(before)
+    expect(newEnvs.length).toBeGreaterThanOrEqual(1)
+
+    // 验证 spawn 时传入的 env 包含正确的变量
+    // 第一个 spawn 是 opencode 进程（包含 env），后续可能是 taskkill 清理
+    const spawnEnv = newEnvs[0]
+    expect(spawnEnv.ANTHROPIC_API_KEY).toBe('sk-test-opencode-key')
+    expect(spawnEnv.ANTHROPIC_BASE_URL).toBe('https://proxy.example.com')
+    expect(spawnEnv.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+
     await adapter.close()
   })
 })

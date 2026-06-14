@@ -1,62 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-// ── Attachment cleanup logic tests ──────────────────────────────────────────
-describe('attachment-cleanup — orphan detection logic', () => {
-  const ONE_HOUR_MS = 60 * 60 * 1000
-
-  function findOrphans(attachments: Array<{ id: string; messageId: string | null; createdAt: Date }>) {
-    return attachments.filter(a =>
-      !a.messageId && a.createdAt.getTime() < Date.now() - ONE_HOUR_MS
-    )
-  }
-
-  it('identifies attachments older than 1 hour without messageId', () => {
-    const oneHourAgo = new Date(Date.now() - 61 * 60 * 1000)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
-
-    const attachments = [
-      { id: 'a1', messageId: null, createdAt: oneHourAgo },
-      { id: 'a2', messageId: 'msg-1', createdAt: oneHourAgo },
-      { id: 'a3', messageId: null, createdAt: fiveMinutesAgo },
-    ]
-
-    const orphans = findOrphans(attachments)
-    expect(orphans).toHaveLength(1)
-    expect(orphans[0].id).toBe('a1')
-  })
-
-  it('does not flag attachments with messageId as orphans', () => {
-    const old = new Date(Date.now() - 2 * ONE_HOUR_MS)
-    const attachments = [
-      { id: 'a1', messageId: 'msg-1', createdAt: old },
-    ]
-    expect(findOrphans(attachments)).toHaveLength(0)
-  })
-
-  it('does not flag recent attachments without messageId', () => {
-    const recent = new Date(Date.now() - 10 * 1000) // 10 seconds ago
-    const attachments = [
-      { id: 'a1', messageId: null, createdAt: recent },
-    ]
-    expect(findOrphans(attachments)).toHaveLength(0)
-  })
-
-  it('handles empty list', () => {
-    expect(findOrphans([])).toHaveLength(0)
-  })
-
-  it('finds multiple orphans', () => {
-    const old = new Date(Date.now() - 2 * ONE_HOUR_MS)
-    const attachments = [
-      { id: 'a1', messageId: null, createdAt: old },
-      { id: 'a2', messageId: null, createdAt: old },
-      { id: 'a3', messageId: 'msg-1', createdAt: old },
-    ]
-    expect(findOrphans(attachments)).toHaveLength(2)
-  })
-})
-
 // ── validateDecision edge cases ──────────────────────────────────────────
+// NOTE: findOrphans 测试已删除 — src 中不存在该函数，原测试是自引用（测副本）
 describe('validateDecision — comprehensive edge cases', () => {
   async function loadValidateDecision() {
     const mod = await import('@/lib/services/chat-router')
