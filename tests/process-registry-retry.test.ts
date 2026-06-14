@@ -1,33 +1,7 @@
 import { describe, it, expect } from 'vitest'
-
-// Test the error classification logic directly
-// We import the patterns and functions by testing the behavior through the module
+import { isPermanentError, getRetryDelay } from '../src/lib/adapter/process-registry'
 
 describe('ProcessRegistry error classification', () => {
-  // These test the error classification logic
-  // The functions are not exported, so we test via the patterns
-
-  const PERMANENT_ERROR_PATTERNS = [
-    'api_key_invalid',
-    'invalid_api_key',
-    'authentication_error',
-    'authentication error',
-    'permission_denied',
-    'permission denied',
-    'model_not_found',
-    'model not found',
-    'invalid_prompt',
-  ]
-
-  function isPermanentError(error: string): boolean {
-    const lower = error.toLowerCase()
-    return PERMANENT_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()))
-  }
-
-  function getRetryDelay(attempt: number): number {
-    return Math.min(1000 * Math.pow(2, attempt), 16000)
-  }
-
   describe('isPermanentError', () => {
     it('should classify API_KEY_INVALID as permanent', () => {
       expect(isPermanentError('API_KEY_INVALID')).toBe(true)
@@ -44,6 +18,10 @@ describe('ProcessRegistry error classification', () => {
 
     it('should classify MODEL_NOT_FOUND as permanent', () => {
       expect(isPermanentError('Model not found: claude-xyz')).toBe(true)
+    })
+
+    it('should classify invalid_prompt as permanent', () => {
+      expect(isPermanentError('invalid_prompt: empty input')).toBe(true)
     })
 
     it('should classify process crash as transient (not permanent)', () => {

@@ -95,11 +95,13 @@ describe('Execution Trace', () => {
 
     // Check that trace was updated with start event
     const startCall = mockTaskUpdate.mock.calls.find((call: any[]) => call[0].where.id === 't1' && call[0].data.status === 'in_progress')
-    expect(startCall).toBeDefined()
+    expect(startCall, 'should have an in_progress update for t1').toBeDefined()
     const startTrace = JSON.parse(startCall![0].data.trace)
     expect(startTrace).toHaveLength(1)
     expect(startTrace[0].event).toBe('start')
     expect(startTrace[0].agent).toBe('agent1')
+    expect(startTrace[0].ts).toBeDefined()
+    expect(typeof startTrace[0].ts).toBe('string')
   })
 
   it('appends success trace when task completes', async () => {
@@ -119,9 +121,12 @@ describe('Execution Trace', () => {
 
     // Check that trace was updated with success event
     const successCall = mockTaskUpdate.mock.calls.find((call: any[]) => call[0].where.id === 't1' && call[0].data.status === 'completed')
-    expect(successCall).toBeDefined()
+    expect(successCall, 'should have a completed update for t1').toBeDefined()
     const successTrace = JSON.parse(successCall![0].data.trace)
-    expect(successTrace.some((e: any) => e.event === 'success')).toBe(true)
+    const successEvent = successTrace.find((e: any) => e.event === 'success')
+    expect(successEvent).toBeDefined()
+    expect(successEvent.ts).toBeDefined()
+    expect(successTrace.some((e: any) => e.event === 'start')).toBe(true) // start 事件也应该保留
   })
 
   it('appends error trace when task fails', async () => {
@@ -138,9 +143,12 @@ describe('Execution Trace', () => {
 
     // Check that trace was updated with error event
     const failCall = mockTaskUpdate.mock.calls.find((call: any[]) => call[0].where.id === 't1' && call[0].data.status === 'failed')
-    expect(failCall).toBeDefined()
+    expect(failCall, 'should have a failed update for t1').toBeDefined()
     const failTrace = JSON.parse(failCall![0].data.trace)
-    expect(failTrace.some((e: any) => e.event === 'error' && e.message === 'API timeout')).toBe(true)
+    const errorEvent = failTrace.find((e: any) => e.event === 'error')
+    expect(errorEvent).toBeDefined()
+    expect(errorEvent.message).toBe('API timeout')
+    expect(errorEvent.ts).toBeDefined()
   })
 
   it('appends blocked trace when dependency fails', async () => {
@@ -158,8 +166,10 @@ describe('Execution Trace', () => {
 
     // Check that t2 was marked as blocked with trace
     const blockedCall = mockTaskUpdate.mock.calls.find((call: any[]) => call[0].where.id === 't2' && call[0].data.status === 'blocked')
-    expect(blockedCall).toBeDefined()
+    expect(blockedCall, 'should have a blocked update for t2').toBeDefined()
     const blockedTrace = JSON.parse(blockedCall![0].data.trace)
-    expect(blockedTrace.some((e: any) => e.event === 'blocked')).toBe(true)
+    const blockedEvent = blockedTrace.find((e: any) => e.event === 'blocked')
+    expect(blockedEvent).toBeDefined()
+    expect(blockedEvent.message).toBe('依赖任务失败')
   })
 })

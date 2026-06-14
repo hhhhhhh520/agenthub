@@ -48,13 +48,16 @@ describe('LLMAdapter (retained, not exposed via createAdapter)', () => {
     await expect(adapter.close()).resolves.toBeUndefined()
   })
 
-  it('send should yield error chunk when not connected (no API key)', async () => {
+  it('send should not crash when not connected (no API key)', async () => {
     const adapter = new LLMAdapter()
+    // AI SDK 在无 API key 时会抛 LoadAPIKeyError（出现在 stderr），
+    // 但 textStream 迭代可能静默结束。验证不会抛出未捕获异常。
     const chunks: any[] = []
     for await (const chunk of adapter.send({ prompt: 'test' })) {
       chunks.push(chunk)
     }
-    expect(chunks.length).toBeGreaterThanOrEqual(0)
+    // 无 API key 时可能返回空或 error chunk，两种都可接受
+    expect(chunks.every(c => c.type === 'text' || c.type === 'error')).toBe(true)
   })
 })
 

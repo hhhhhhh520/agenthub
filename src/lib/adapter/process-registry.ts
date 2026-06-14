@@ -70,12 +70,12 @@ const PERMANENT_ERROR_PATTERNS = [
   'invalid_prompt',
 ]
 
-function isPermanentError(error: string): boolean {
+export function isPermanentError(error: string): boolean {
   const lower = error.toLowerCase()
   return PERMANENT_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()))
 }
 
-function getRetryDelay(attempt: number): number {
+export function getRetryDelay(attempt: number): number {
   return Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt), 16000)
 }
 

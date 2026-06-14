@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-10
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-12
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -134,6 +134,8 @@
 | Playwright E2E测试(无头浏览器) | 16张截图验证：首页/详情页/讨论/任务拆解/执行，发现3个新Bug | 2026-06-10 |
 | ISSUE-004 任务面板不刷新修复 | projects/[id]/page.tsx 替换为 AgentPanel（3秒轮询），删除内联面板代码 | 2026-06-10 |
 | ISSUE-005 执行阶段卡住修复 | 超时系统：gracefulKillEntry两阶段杀进程+withTimeout async generator包装+5个函数加超时+4个catch块区分TimeoutError+全局50分钟deadline+监控120秒超时+reviewResult 10分钟总耗时上限。Security Engineer 3轮审查通过 | 2026-06-10 |
+| 讨论摘要注入 | 讨论结果存储加`[DISCUSSION_SUMMARY][STATUS:success/failed]`前缀+`buildDiscussionSummary()`提取+`executeTaskBatch`条件注入Agent prompt+前缀剥离防污染。17测试通过 | 2026-06-12 |
+| 权限确认传递修复 | `requestIdToKey`反向索引O(1)查找+`respondPermissionByRequestId`方法+killEntry/gracefulShutdown清理+permission路由404响应。Security Engineer 2轮审查通过，676测试通过 | 2026-06-12 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator

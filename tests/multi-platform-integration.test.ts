@@ -419,18 +419,20 @@ describe('ProcessRegistry — env merge for Claude Code and OpenCode', () => {
 // ─── Cross-platform adapter lifecycle ────────────────────────────────────────
 
 describe('Cross-platform adapter lifecycle', () => {
-  it('OpenCode close is a no-op', async () => {
+  it('OpenCode close is a no-op and idempotent', async () => {
     const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', workDir: '/dir' })
-    await adapter.close()
+    await expect(adapter.close()).resolves.toBeUndefined()
+    await expect(adapter.close()).resolves.toBeUndefined()
   })
 
-  it('ClaudeCode close is a no-op', async () => {
+  it('ClaudeCode close is a no-op and idempotent', async () => {
     const { ClaudeCodeAdapter } = await import('../src/lib/adapter/claude-code-adapter')
     const adapter = new ClaudeCodeAdapter()
     await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
-    await adapter.close()
+    await expect(adapter.close()).resolves.toBeUndefined()
+    await expect(adapter.close()).resolves.toBeUndefined()
   })
 
   it('LLMAdapter close aborts the controller', async () => {
