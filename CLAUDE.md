@@ -20,9 +20,11 @@ src/
 │   │   └── projects/          # /projects 项目管理
 │   ├── chat/page.tsx          # /chat 聊天界面（SessionSidebar + ChatArea + AgentPanel）
 │   ├── api/                   # API 路由
-│   └── layout.tsx             # 根 layout（字体 + body）
+│   ├── error.tsx              # 根错误边界（开发环境显示完整错误，生产环境通用提示）
+│   ├── not-found.tsx          # 404 页面
+│   └── layout.tsx             # 根 layout（ThemeProvider + Toaster + 字体 + body）
 ├── components/
-│   ├── ui/                    # shadcn/ui 组件
+│   ├── ui/                    # shadcn/ui 组件（含 sonner Toast）
 │   ├── chat-area.tsx          # 聊天区 + SSE 流式
 │   ├── session-sidebar.tsx    # 会话侧边栏
 │   ├── agent-panel.tsx        # Agent 面板 + 任务看板
@@ -76,6 +78,8 @@ prisma/
 
 - 动态路由 `params` 是 `Promise`，必须 `await`
 - 签名：`{ params }: { params: Promise<{ id: string }> }`
+- **暗色模式**：`next-themes` ThemeProvider 在根 layout，`attribute="class"`，sonner Toaster 用 `useTheme()` 动态跟随主题
+- **Toast 通知**：sonner，`import { toast } from 'sonner'`，根 layout 已挂载 `<Toaster position="bottom-right" />`
 
 ### Claude Code CLI 集成
 

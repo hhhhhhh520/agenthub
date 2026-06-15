@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-12
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-15
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -136,6 +136,12 @@
 | ISSUE-005 执行阶段卡住修复 | 超时系统：gracefulKillEntry两阶段杀进程+withTimeout async generator包装+5个函数加超时+4个catch块区分TimeoutError+全局50分钟deadline+监控120秒超时+reviewResult 10分钟总耗时上限。Security Engineer 3轮审查通过 | 2026-06-10 |
 | 讨论摘要注入 | 讨论结果存储加`[DISCUSSION_SUMMARY][STATUS:success/failed]`前缀+`buildDiscussionSummary()`提取+`executeTaskBatch`条件注入Agent prompt+前缀剥离防污染。17测试通过 | 2026-06-12 |
 | 权限确认传递修复 | `requestIdToKey`反向索引O(1)查找+`respondPermissionByRequestId`方法+killEntry/gracefulShutdown清理+permission路由404响应。Security Engineer 2轮审查通过，676测试通过 | 2026-06-12 |
+| 异常可见性改造 | error.tsx/not-found.tsx错误边界+sonner Toast通知系统+6处静默catch改可见+use-sessions.ts remove加res.ok检查。654测试通过 | 2026-06-15 |
+| 暗色模式接线 | ThemeProvider(next-themes)+sonner useTheme动态主题+AppSidebar主题切换按钮(Sun/Moon)+session-sidebar/agent-panel/chat-area dark:变体 | 2026-06-15 |
+| 空状态+Skeleton | useSessions加isLoading+session-sidebar加载Skeleton+空列表提示+agent-panel agentsLoading/tasksLoading+双tab空状态+Skeleton占位 | 2026-06-15 |
+| 开源发布准备 | LICENSE(MIT)+.env.example+CONTRIBUTING.md+README完善(截图/架构图/测试说明)+.gitignore排除.env.example | 2026-06-15 |
+| 数据清理+截图 | 删除乱码OpenCode会话/Agent+暗色模式样式修复(bg-gray-50→dark:bg-gray-900等)+6张项目截图(亮色/暗色各3张) | 2026-06-15 |
+| path-safety修复 | realpathSync import从'path'改为'fs'(TypeScript类型错误) | 2026-06-15 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
