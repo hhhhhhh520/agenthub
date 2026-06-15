@@ -2,6 +2,8 @@
 
 IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作，Orchestrator 智能调度任务。
 
+![工作区首页](docs/screenshots/01-dashboard.png)
+
 ## 功能
 
 - **三栏 IM 布局** — 会话列表 | 聊天区 | Agent 面板
@@ -9,7 +11,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - **三种会话** — Orchestrator 主会话 | 群聊（多 Agent 协作） | 私聊（1v1）
 - **Orchestrator** — 系统级协调器，负责选人 + 拆任务 + 监督 + 纠偏
 - **对齐流程** — PM 确认需求 → 架构师确认技术方案+任务拆解 → 其他 Agent 提问
-- **Agent 预设池** — 6 个预设 Agent（架构师/前后端/测试/PM/设计师），全局复用
+- **Agent 预设池** — 7 个预设 Agent（架构师/前后端/测试/PM/设计师/Orchestrator），全局复用
 - **多供应商** — 每个 Agent 可独立配置 model/baseUrl/apiKey，支持 CC-Switch 导入
 - **混合执行层** — Claude Code CLI / OpenCode CLI 双平台
 - **工具集硬限制** — Agent 工具白名单通过 CLI 参数（Claude Code）和配置文件（OpenCode）硬限制
@@ -20,9 +22,14 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - **工作区与权限** — 用户指定项目目录，Agent 直接在项目中工作，权限模式（default/auto）
 - **变更检测** — 每批任务执行后 Git diff 检测越界修改
 - **任务重做** — 失败/阻塞任务可编辑描述后重新执行，自动级联下游任务
-- **聊天命令** — `/permission` 切换权限模式，`/` 气泡提示
-- **Code Diff** — Monaco Editor 代码对比
-- **Web Preview** — iframe 预览生成的网页
+- **暗色模式** — 支持亮色/暗色/跟随系统
+
+## 截图
+
+| 亮色模式 | 暗色模式 |
+|----------|----------|
+| ![聊天页](docs/screenshots/03-chat-with-messages.png) | ![暗色聊天](docs/screenshots/06-dark-mode-chat.png) |
+| ![智能体管理](docs/screenshots/04-agents-page.png) | ![暗色首页](docs/screenshots/05-dark-mode-dashboard.png) |
 
 ## 技术栈
 
@@ -33,6 +40,21 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - Monaco Editor
 - Claude Code CLI + OpenCode CLI
 
+## 架构
+
+```
+用户浏览器
+  ↓
+Next.js App (SSE 流式推送)
+  ├── Orchestrator（编排器）
+  │     ├── 选择 Agent → 拆分任务 → 监督执行 → 纠偏重试
+  │     └── 8 种 action: self / delegate / discuss / align_* / execute / done
+  ├── Adapter 层
+  │     ├── Claude Code Adapter（spawn CLI，读 NDJSON）
+  │     └── OpenCode Adapter（spawn CLI，读 NDJSON）
+  └── MCP Server（Agent 间共享工具）
+```
+
 ## 快速开始
 
 **前置条件：** Node.js 18+，至少安装一个 AI CLI 平台：
@@ -41,7 +63,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 
 ```bash
 # 克隆项目
-git clone <仓库地址>
+git clone https://github.com/hhhhhhh520/agenthub.git
 cd agenthub
 
 # 安装依赖
@@ -50,16 +72,28 @@ npm install
 # 初始化数据库
 npx prisma db push
 
-# 填充预设数据（8个Agent）
+# 填充预设数据（7个Agent）
 npx tsx prisma/seed.ts
 
 # 启动开发服务器
 npm run dev
 ```
 
-打开 http://localhost:3000，创建会话，开始对话。
+打开 http://localhost:3000，首次启动会进入 Setup Wizard 引导你配置 CLI 平台和 Agent。
 
 > 首次启动需要执行全部步骤。后续启动只需 `npm run dev`。
+
+## 测试
+
+```bash
+# 运行全部单元测试（664 个）
+npm test
+
+# 运行 E2E 测试
+npm run test:e2e
+```
+
+测试覆盖率：Statements 85% / Branches 75% / Functions 81% / Lines 86%
 
 ## 项目结构
 
@@ -83,3 +117,11 @@ issues/              — 开发问题记录
 - [已实施方案](docs/archive/已实施/) — CLI-first 改造、ChatFab 私聊、SSE 超时等
 - [参考报告](docs/archive/参考报告/) — AI 协作流程、多 Agent 架构对比
 - [开发问题记录](issues/) — 已解决问题和设计验收清单
+
+## 贡献
+
+欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发流程和提交规范。
+
+## 许可证
+
+[MIT License](LICENSE)
