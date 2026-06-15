@@ -111,7 +111,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   }
 
   if (!sessionId) {
-    return <div className="flex-1 flex items-center justify-center text-gray-400">选择或创建一个会话</div>
+    return <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500">选择或创建一个会话</div>
   }
 
   const handleSend = () => {
@@ -166,7 +166,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {sessionType && (
-        <div className="border-b px-4 py-2 flex items-center gap-2 text-sm bg-white">
+        <div className="border-b px-4 py-2 flex items-center gap-2 text-sm bg-white dark:bg-gray-800 dark:border-gray-700">
           <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
             {SESSION_TYPE_LABELS[sessionType] || sessionType}
           </span>
@@ -183,7 +183,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           {messages.map(msg => {
             const replyPreview = msg.replyTo
               ? (
-                <div className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1 mb-1 border-l-2 border-gray-300">
+                <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 rounded px-2 py-1 mb-1 border-l-2 border-gray-300 dark:border-gray-600">
                   {msg.replyTo.rawContent.slice(0, 80)}{msg.replyTo.rawContent.length > 80 ? '...' : ''}
                 </div>
               )
@@ -296,9 +296,9 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                 <Avatar size="sm">
                   <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                 </Avatar>
-                <div className="rounded-lg p-3 bg-gray-50 border border-gray-200">
-                  <div className="text-xs font-medium mb-1 text-gray-400">💭 {agentId} 思考中...</div>
-                  <div className="text-sm text-gray-500 italic whitespace-pre-wrap">{text}</div>
+                <div className="rounded-lg p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                  <div className="text-xs font-medium mb-1 text-gray-400 dark:text-gray-500">💭 {agentId} 思考中...</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400 italic whitespace-pre-wrap">{text}</div>
                 </div>
               </div>
             )
@@ -306,7 +306,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           {/* Tool Calls 展示 */}
           {toolCalls.map(tc => (
             <div key={tc.id} className="flex gap-2 max-w-[80%] ml-8">
-              <div className={`rounded-lg p-2 text-xs font-mono border ${tc.status === 'running' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
+              <div className={`rounded-lg p-2 text-xs font-mono border ${tc.status === 'running' ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
                 <div className="flex items-center gap-1 mb-1">
                   {tc.status === 'running' ? (
                     <span className="animate-spin">⚙️</span>
@@ -345,9 +345,9 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         </div>
       </ScrollArea>
       {replyTo && (
-        <div className="border-t px-3 py-2 flex items-center gap-2 text-sm text-gray-500 bg-gray-50">
+        <div className="border-t px-3 py-2 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
           <span className="truncate flex-1">回复 {replyTo.role}: {replyTo.rawContent.slice(0, 60)}...</span>
-          <button onClick={() => setReplyTo(null)} className="text-gray-400 hover:text-gray-600">✕</button>
+          <button onClick={() => setReplyTo(null)} className="text-gray-400 dark:text-gray-500 hover:text-gray-600">✕</button>
         </div>
       )}
       {awaitingInput && (
@@ -381,7 +381,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         </div>
       ))}
       {phase !== 'idle' && (
-        <div className="border-t px-3 py-1 text-xs text-gray-400 bg-gray-50 flex items-center gap-2">
+        <div className="border-t px-3 py-1 text-xs text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 flex items-center gap-2">
           <span className={`w-2 h-2 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
           {phase === 'alignment' && '对齐中'}
           {phase === 'execution' && '执行中'}
@@ -390,7 +390,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
       )}
       <div className="border-t p-3">
         {showCommands && (
-          <div className="mb-2 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          <div className="mb-2 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
             {COMMANDS
               .filter(cmd => cmd.name.startsWith(input))
               .map(cmd => (
@@ -407,9 +407,9 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           </div>
         )}
         {showMentions && (
-          <div className="mb-2 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          <div className="mb-2 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
             <button
-              className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+              className="w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
               onClick={() => handleMentionSelect('所有人')}
             >
               <span className="text-lg">👥</span>
@@ -421,7 +421,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
               .map(name => (
                 <button
                   key={name}
-                  className="w-full px-3 py-2 text-left hover:bg-gray-100 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                   onClick={() => handleMentionSelect(name)}
                 >
                   <Avatar className="h-5 w-5">

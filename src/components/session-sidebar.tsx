@@ -66,7 +66,7 @@ export function SessionSidebar({ sessions, activeId, isLoading, onSelect, onCrea
   }, [sessions])
 
   return (
-    <div className="w-64 border-r bg-gray-50 flex flex-col min-h-0 overflow-hidden">
+    <div className="w-64 border-r bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col min-h-0 overflow-hidden">
       <div className="p-3 border-b space-y-2">
         <Button onClick={onQuickStart} variant="outline" className="w-full" size="sm" aria-label="开始对话">
           开始对话
@@ -92,13 +92,13 @@ export function SessionSidebar({ sessions, activeId, isLoading, onSelect, onCrea
             </div>
           ) : groupedSessions.map(group => (
             <div key={group.label}>
-              <div className="text-xs text-gray-400 font-medium px-2 mb-1">{group.label}</div>
+              <div className="text-xs text-gray-400 dark:text-gray-500 font-medium px-2 mb-1">{group.label}</div>
               <div className="space-y-1">
                 {group.sessions.map(session => (
                   <div
                     key={session.id}
                     className={`p-2 rounded cursor-pointer text-sm flex justify-between items-center group select-none ${
-                      activeId === session.id ? 'bg-blue-100 text-blue-900' : 'hover:bg-gray-100'
+                      activeId === session.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900 dark:text-blue-100' : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                     }`}
                     onClick={() => onSelect(session.id)}
                     role="button"
@@ -131,7 +131,7 @@ export function SessionSidebar({ sessions, activeId, isLoading, onSelect, onCrea
                     <span className="truncate flex-1 min-w-0">{session.title}</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDelete(session.id, session.title) }}
-                      className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 text-xs shrink-0 ml-1"
+                      className="opacity-0 group-hover:opacity-100 text-gray-400 dark:text-gray-500 hover:text-red-500 text-xs shrink-0 ml-1"
                       aria-label={`删除会话 ${session.title}`}
                     >
                       x

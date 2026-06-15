@@ -99,8 +99,8 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   }, [sessionId, redoPollFast])
 
   return (
-    <div className="w-72 border-l bg-gray-50 flex flex-col min-h-0 overflow-hidden">
-      <div className="flex border-b">
+    <div className="w-72 border-l bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col min-h-0 overflow-hidden">
+      <div className="flex border-b dark:border-gray-700">
         <button
           className={`flex-1 p-2 text-sm font-medium ${tab === 'agents' ? 'border-b-2 border-blue-500' : ''}`}
           onClick={() => setTab('agents')}
@@ -129,7 +129,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
               {agentsLoading ? (
                 <div className="space-y-2">
                   {Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="p-2 bg-white rounded border space-y-2">
+                    <div key={i} className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 space-y-2">
                       <div className="flex items-center gap-2">
                         <Skeleton className="h-8 w-8 rounded-full" />
                         <Skeleton className="h-4 w-20" />
@@ -139,14 +139,14 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                   ))}
                 </div>
               ) : agents.length === 0 ? (
-                <div className="text-center text-gray-400 text-xs py-6">
+                <div className="text-center text-gray-400 dark:text-gray-500 text-xs py-6">
                   还没有 Agent，创建或导入一个
                 </div>
               ) : agents.map(agent => {
                 const style = getAgentStyle(agent.name, agent.accentColor)
                 const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
                 return (
-                  <div key={agent.id} className="group p-2 bg-white rounded border text-sm">
+                  <div key={agent.id} className="group p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
                     <div className="flex items-center gap-2">
                       <Avatar size="sm">
                         <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
@@ -188,7 +188,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             tasksLoading ? (
               <div className="space-y-2">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="p-2 bg-white rounded border space-y-1">
+                  <div key={i} className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 space-y-1">
                     <div className="flex items-center gap-2">
                       <Skeleton className="h-4 w-4" />
                       <Skeleton className="h-4 flex-1" />
@@ -197,7 +197,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 ))}
               </div>
             ) : tasks.length === 0 ? (
-              <div className="text-center text-gray-400 text-xs py-6">
+              <div className="text-center text-gray-400 dark:text-gray-500 text-xs py-6">
                 暂无任务，开始对话后会在这里显示
               </div>
             ) : tasks.map(task => {
@@ -205,7 +205,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             try { traceEntries = JSON.parse(task.trace || '[]') } catch {}
             const isExpanded = expandedTraces.has(task.id)
             return (
-              <div key={task.id} className="p-2 bg-white rounded border text-sm">
+              <div key={task.id} className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
                 <div className="flex items-center gap-2">
                   <span>{TASK_STATUS_ICONS[task.status] || task.status}</span>
                   <span className="flex-1">{task.description}</span>
