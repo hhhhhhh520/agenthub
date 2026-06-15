@@ -11,12 +11,13 @@ interface WebPreviewProps {
 export function WebPreview({ html, css = '', js = '' }: WebPreviewProps) {
   const [expanded, setExpanded] = useState(true)
 
-  // Sanitize HTML to prevent XSS — strips <script>, event handlers, etc.
+  // Sanitize HTML — strips <script>, event handlers, etc.
   const cleanHtml = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
   // Sanitize CSS — remove @import and url() with external origins
   const cleanCss = css.replace(/@import\s+url\([^)]*\)/gi, '').replace(/url\(\s*['"]?(?!data:)[^'")\s]*['"]?\s*\)/gi, '')
-  // JS runs in sandboxed iframe — strip only obvious script injection outside the script tag
-  const cleanJs = js
+  // JS is NOT sanitized — defense is CSP (no network) + sandbox (no same-origin).
+  // Prevent </script> breakout by escaping the closing tag.
+  const cleanJs = js.replace(/<\/script/gi, '<\\/script')
 
   const srcdoc = `<!DOCTYPE html>
 <html>
