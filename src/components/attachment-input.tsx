@@ -2,6 +2,7 @@
 
 import { useRef, useCallback } from "react"
 import { Paperclip, X, Loader2 } from "lucide-react"
+import { toast } from "sonner"
 
 export interface AttachmentPreview {
   id: string
@@ -60,8 +61,7 @@ export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }:
       // Show toast for images
       const hasImages = result.some(r => r.mimeType.startsWith('image/'))
       if (hasImages) {
-        // Simple toast - could be replaced with a proper toast component
-        console.warn('请确认当前模型支持图片输入')
+        toast.info('请确认当前模型支持图片输入')
       }
 
       // Update placeholders with real IDs

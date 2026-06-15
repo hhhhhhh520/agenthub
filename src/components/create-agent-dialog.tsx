@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { CreateProviderDialog } from '@/components/create-provider-dialog'
 import { ChevronDown, Cpu, Loader2, Check, Search } from 'lucide-react'
+import { toast } from 'sonner'
 
 const PRESET_COLORS = [
   '#6366f1', '#10b981', '#f59e0b', '#ef4444',
@@ -107,7 +108,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
       fetch('/api/providers')
         .then(r => r.json())
         .then(data => { if (Array.isArray(data)) setProviders(data) })
-        .catch(() => {})
+        .catch((err) => { console.error(err); toast.error('加载服务商列表失败') })
     }
   }, [open])
 
@@ -118,7 +119,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     fetch('/api/opencode/models')
       .then(r => r.json())
       .then(data => { if (Array.isArray(data.models)) setOcModels(data.models) })
-      .catch(() => {})
+      .catch((err) => { console.error(err); toast.error('加载模型列表失败') })
       .finally(() => setOcModelsLoading(false))
   }, [platform, ocModels.length])
 
@@ -226,6 +227,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
       }
       const data = await res.json()
       reset()
+      toast.success(isEdit ? 'Agent 已保存' : 'Agent 已创建')
       onOpenChange(false)
       onCreated(data.id)
     } catch {
@@ -533,7 +535,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
           fetch('/api/providers')
             .then(r => r.json())
             .then(data => { if (Array.isArray(data)) setProviders(data) })
-            .catch(() => {})
+            .catch(console.error)
           // Auto-select the new provider
           const providerKey = newProvider.id
           applyProvider({
