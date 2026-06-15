@@ -2,11 +2,14 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useTheme } from "next-themes"
+import { useState, useEffect } from "react"
 import {
   Home,
   FolderKanban,
   Bot,
-
+  Sun,
+  Moon,
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react"
@@ -33,6 +36,9 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   return (
     <Sidebar collapsible="icon">
@@ -71,6 +77,22 @@ export function AppSidebar() {
 
       <SidebarFooter className="border-t p-2">
         <SidebarMenu>
+          {mounted && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                tooltip={theme === "dark" ? "切换亮色模式" : "切换暗色模式"}
+                className="w-full"
+              >
+                {theme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+                <span>{theme === "dark" ? "亮色" : "暗色"}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           <SidebarMenuItem>
             <SidebarTrigger className="w-full" />
           </SidebarMenuItem>

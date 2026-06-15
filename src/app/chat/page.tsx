@@ -7,7 +7,7 @@ import { CreateGroupDialog } from '@/components/create-group-dialog'
 import { useSessions } from '@/lib/hooks/use-sessions'
 
 function ChatContent() {
-  const { sessions, activeId, setActiveId, create, remove, refresh } = useSessions()
+  const { sessions, activeId, setActiveId, create, remove, refresh, isLoading } = useSessions()
   const [showCreateGroup, setShowCreateGroup] = useState(false)
 
   return (
@@ -15,6 +15,7 @@ function ChatContent() {
       <SessionSidebar
         sessions={sessions}
         activeId={activeId}
+        isLoading={isLoading}
         onSelect={setActiveId}
         onCreateGroup={() => setShowCreateGroup(true)}
         onQuickStart={async () => {
