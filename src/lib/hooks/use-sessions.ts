@@ -19,22 +19,30 @@ export function useSessions() {
   const [activeId, setActiveId] = useState<string | null>(searchParams.get('session'))
   const [isLoading, setIsLoading] = useState(true)
   const isRefreshing = useRef(false)
+  const needsRefresh = useRef(false)
 
-  const refresh = useCallback(async (showLoading = false) => {
-    if (isRefreshing.current) return
-    isRefreshing.current = true
-    if (showLoading) setIsLoading(true)
+  const doFetch = useCallback(async () => {
     try {
       const res = await fetch('/api/sessions')
       const data = await res.json()
       setSessions(data)
     } catch (err) {
       console.error('Failed to refresh sessions:', err)
+    }
+  }, [])
+
+  const refresh = useCallback(async (showLoading = false) => {
+    if (isRefreshing.current) { needsRefresh.current = true; return }
+    isRefreshing.current = true
+    if (showLoading) setIsLoading(true)
+    try {
+      await doFetch()
     } finally {
       if (showLoading) setIsLoading(false)
       isRefreshing.current = false
+      if (needsRefresh.current) { needsRefresh.current = false; refresh(false) }
     }
-  }, [])
+  }, [doFetch])
 
   useEffect(() => { refresh(true) }, [refresh])
 

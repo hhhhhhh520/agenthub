@@ -45,6 +45,10 @@ const TASK_STATUS_ICONS: Record<string, string> = {
   blocked: '⏸',
 }
 
+const parseCaps = (caps: string): string[] => {
+  try { return JSON.parse(caps) } catch { return [] }
+}
+
 export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | null; onPrivateChat?: (agentId: string, agentName: string) => void }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
@@ -59,10 +63,6 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [redoDescription, setRedoDescription] = useState('')
   const [redoLoading, setRedoLoading] = useState(false)
   const [redoPollFast, setRedoPollFast] = useState(false)
-
-  const parseCaps = (caps: string): string[] => {
-    try { return JSON.parse(caps) } catch { return [] }
-  }
 
   const loadAgents = useCallback(async () => {
     if (!sessionId) { setAgentsLoading(false); return }
@@ -104,9 +104,11 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
         .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
         .then(data => {
           setTasks(prev => {
-            const oldStatuses = JSON.stringify(prev.map((t: Task) => t.status))
-            const newStatuses = JSON.stringify(data.map((t: Task) => t.status))
-            return data.length !== prev.length || oldStatuses !== newStatuses ? data : prev
+            if (data.length !== prev.length) return data
+            const changed = data.some((t: Task, i: number) =>
+              t.status !== prev[i].status || t.trace !== prev[i].trace
+            )
+            return changed ? data : prev
           })
           errorCount = 0; if (firstFetch) { setTasksLoading(false); firstFetch = false }
         })
