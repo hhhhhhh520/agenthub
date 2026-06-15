@@ -24,7 +24,7 @@ export function CodeDiff({ original, modified, language = 'javascript', onAccept
 
   if (!expanded) {
     return (
-      <div className="border rounded-lg p-2 bg-gray-50 text-sm">
+      <div className="border rounded-lg p-2 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 text-sm">
         <button onClick={() => setExpanded(true)} className="text-blue-500 hover:underline">
           Show Code Diff
         </button>
@@ -49,7 +49,7 @@ export function CodeDiff({ original, modified, language = 'javascript', onAccept
   return (
     <>
       <div className="border rounded-lg overflow-hidden">
-        <div className="bg-gray-100 px-3 py-1 text-xs font-medium flex justify-between items-center">
+        <div className="bg-gray-100 dark:bg-gray-800 px-3 py-1 text-xs font-medium flex justify-between items-center">
           <span>Code Changes</span>
           <div className="flex gap-2">
             {onAccept && <button onClick={onAccept} className="text-green-600 hover:underline">Accept</button>}

@@ -89,6 +89,7 @@ export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }:
       onAttachmentsChange([...updated, ...newItems])
     } catch (err) {
       console.error('Upload failed:', err)
+      toast.error('附件上传失败')
       // Remove failed placeholders
       onAttachmentsChange(attachments.filter(a => !placeholders.some(p => p.id === a.id)))
     }

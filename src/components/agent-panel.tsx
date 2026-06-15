@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
+import { toast } from 'sonner'
 
 interface Agent {
   id: string
@@ -23,6 +24,7 @@ interface Agent {
   status: string
   accentColor: string
   capabilities: string
+  parsedCapabilities: string[]
   isPreset: boolean
 }
 
@@ -58,19 +60,29 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [redoLoading, setRedoLoading] = useState(false)
   const [redoPollFast, setRedoPollFast] = useState(false)
 
+  const parseCaps = (caps: string): string[] => {
+    try { return JSON.parse(caps) } catch { return [] }
+  }
+
   const loadAgents = useCallback(async () => {
     if (!sessionId) { setAgentsLoading(false); return }
     setAgentsLoading(true)
     try {
       const res = await fetch(`/api/sessions/${sessionId}/agents`)
+      if (!res.ok) throw new Error(`${res.status}`)
       const sessionAgents = await res.json()
       if (Array.isArray(sessionAgents) && sessionAgents.length > 0) {
-        setAgents(sessionAgents)
+        setAgents(sessionAgents.map((a: Agent) => ({ ...a, parsedCapabilities: parseCaps(a.capabilities) })))
       } else {
         // Session has no agent members — fall back to global agent list
         const globalRes = await fetch('/api/agents')
-        setAgents(await globalRes.json())
+        if (!globalRes.ok) throw new Error(`${globalRes.status}`)
+        const globalAgents = await globalRes.json()
+        setAgents(globalAgents.map((a: Agent) => ({ ...a, parsedCapabilities: parseCaps(a.capabilities) })))
       }
+    } catch (err) {
+      console.error('Failed to load agents:', err)
+      toast.error('加载 Agent 列表失败')
     } finally {
       setAgentsLoading(false)
     }
@@ -82,21 +94,43 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
 
   useEffect(() => {
     if (!sessionId) { setTasksLoading(false); return }
+    setTasksLoading(true)
+    setTasks([])
     let errorCount = 0
     let firstFetch = true
+    const controller = new AbortController()
     const fetchTasks = () => {
-      fetch(`/api/sessions/${sessionId}/tasks`)
+      fetch(`/api/sessions/${sessionId}/tasks`, { signal: controller.signal })
         .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
-        .then(data => { setTasks(data); errorCount = 0; if (firstFetch) { setTasksLoading(false); firstFetch = false } })
-        .catch(() => { errorCount++; if (firstFetch) { setTasksLoading(false); firstFetch = false } })
+        .then(data => {
+          setTasks(prev => {
+            const oldStatuses = JSON.stringify(prev.map((t: Task) => t.status))
+            const newStatuses = JSON.stringify(data.map((t: Task) => t.status))
+            return data.length !== prev.length || oldStatuses !== newStatuses ? data : prev
+          })
+          errorCount = 0; if (firstFetch) { setTasksLoading(false); firstFetch = false }
+        })
+        .catch((err) => {
+          if (err.name === 'AbortError') return
+          errorCount++; if (firstFetch) { setTasksLoading(false); firstFetch = false }
+        })
     }
     fetchTasks()
     const interval = setInterval(() => {
       if (errorCount >= 5) return // 退避：连续失败 5 次后停止轮询
       fetchTasks()
     }, redoPollFast ? 1000 : 3000)
-    return () => clearInterval(interval)
+    return () => { clearInterval(interval); controller.abort() }
   }, [sessionId, redoPollFast])
+
+  // Memoize parsed traces to avoid JSON.parse on every render
+  const parsedTraces = useMemo(() => {
+    const map = new Map<string, Array<{ ts: string; event: string; message?: string; agent?: string; attempt?: number; duration_ms?: number }>>()
+    for (const task of tasks) {
+      try { map.set(task.id, JSON.parse(task.trace || '[]')) } catch { map.set(task.id, []) }
+    }
+    return map
+  }, [tasks])
 
   return (
     <div className="w-72 border-l bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col min-h-0 overflow-hidden">
@@ -144,7 +178,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 </div>
               ) : agents.map(agent => {
                 const style = getAgentStyle(agent.name, agent.accentColor)
-                const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
+                const caps = agent.parsedCapabilities || []
                 return (
                   <div key={agent.id} className="group p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
                     <div className="flex items-center gap-2">
@@ -201,8 +235,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 暂无任务，开始对话后会在这里显示
               </div>
             ) : tasks.map(task => {
-            let traceEntries: Array<{ ts: string; event: string; message?: string; agent?: string; attempt?: number; duration_ms?: number }> = []
-            try { traceEntries = JSON.parse(task.trace || '[]') } catch {}
+            const traceEntries = parsedTraces.get(task.id) || []
             const isExpanded = expandedTraces.has(task.id)
             return (
               <div key={task.id} className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
@@ -321,17 +354,29 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                     })
                   } catch (e) {
                     console.error('Redo request failed:', e)
+                    toast.error('重做请求失败')
                   } finally {
                     setRedoLoading(false)
                   }
                   // Check task status until terminal, then restore slow polling
+                  let checkRetries = 0
                   const checkDone = async () => {
-                    const res = await fetch(`/api/sessions/${sessionId}/tasks`)
-                    const tasks = await res.json()
-                    const t = tasks.find((t: Task) => t.id === taskToRedo.id)
-                    if (t && (t.status === 'completed' || t.status === 'failed' || t.status === 'blocked')) {
+                    checkRetries++
+                    if (checkRetries > 30) {
                       setRedoPollFast(false)
-                    } else {
+                      toast.error('任务状态检查超时，请手动刷新')
+                      return
+                    }
+                    try {
+                      const res = await fetch(`/api/sessions/${sessionId}/tasks`)
+                      const tasks = await res.json()
+                      const t = tasks.find((t: Task) => t.id === taskToRedo.id)
+                      if (t && (t.status === 'completed' || t.status === 'failed' || t.status === 'blocked')) {
+                        setRedoPollFast(false)
+                      } else {
+                        setTimeout(checkDone, 1000)
+                      }
+                    } catch {
                       setTimeout(checkDone, 1000)
                     }
                   }

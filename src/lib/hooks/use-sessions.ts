@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 
@@ -18,19 +18,25 @@ export function useSessions() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(searchParams.get('session'))
   const [isLoading, setIsLoading] = useState(true)
+  const isRefreshing = useRef(false)
 
-  const refresh = useCallback(async () => {
-    setIsLoading(true)
+  const refresh = useCallback(async (showLoading = false) => {
+    if (isRefreshing.current) return
+    isRefreshing.current = true
+    if (showLoading) setIsLoading(true)
     try {
       const res = await fetch('/api/sessions')
       const data = await res.json()
       setSessions(data)
+    } catch (err) {
+      console.error('Failed to refresh sessions:', err)
     } finally {
-      setIsLoading(false)
+      if (showLoading) setIsLoading(false)
+      isRefreshing.current = false
     }
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => { refresh(true) }, [refresh])
 
   // 从 URL 参数自动选中会话
   useEffect(() => {
@@ -56,13 +62,11 @@ export function useSessions() {
     try {
       const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
       if (!res.ok) throw new Error('Delete failed')
-      let nextFirst: string | null = null
       setSessions(prev => {
         const filtered = prev.filter(s => s.id !== id)
-        nextFirst = filtered[0]?.id || null
+        setActiveId(prev => prev === id ? (filtered[0]?.id || null) : prev)
         return filtered
       })
-      if (activeId === id) setActiveId(nextFirst)
       toast.success('会话已删除')
     } catch (err) {
       console.error('Failed to delete session:', err)
