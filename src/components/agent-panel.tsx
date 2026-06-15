@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
@@ -45,6 +46,8 @@ const TASK_STATUS_ICONS: Record<string, string> = {
 export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | null; onPrivateChat?: (agentId: string, agentName: string) => void }) {
   const [agents, setAgents] = useState<Agent[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [agentsLoading, setAgentsLoading] = useState(true)
+  const [tasksLoading, setTasksLoading] = useState(true)
   const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set())
   const [tab, setTab] = useState<'agents' | 'tasks'>('agents')
   const [showCreate, setShowCreate] = useState(false)
@@ -56,15 +59,20 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [redoPollFast, setRedoPollFast] = useState(false)
 
   const loadAgents = useCallback(async () => {
-    if (!sessionId) return
-    const res = await fetch(`/api/sessions/${sessionId}/agents`)
-    const sessionAgents = await res.json()
-    if (Array.isArray(sessionAgents) && sessionAgents.length > 0) {
-      setAgents(sessionAgents)
-    } else {
-      // Session has no agent members — fall back to global agent list
-      const globalRes = await fetch('/api/agents')
-      setAgents(await globalRes.json())
+    if (!sessionId) { setAgentsLoading(false); return }
+    setAgentsLoading(true)
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/agents`)
+      const sessionAgents = await res.json()
+      if (Array.isArray(sessionAgents) && sessionAgents.length > 0) {
+        setAgents(sessionAgents)
+      } else {
+        // Session has no agent members — fall back to global agent list
+        const globalRes = await fetch('/api/agents')
+        setAgents(await globalRes.json())
+      }
+    } finally {
+      setAgentsLoading(false)
     }
   }, [sessionId])
 
@@ -73,13 +81,14 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   }, [loadAgents])
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId) { setTasksLoading(false); return }
     let errorCount = 0
+    let firstFetch = true
     const fetchTasks = () => {
       fetch(`/api/sessions/${sessionId}/tasks`)
         .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
-        .then(data => { setTasks(data); errorCount = 0 })
-        .catch(() => { errorCount++ })
+        .then(data => { setTasks(data); errorCount = 0; if (firstFetch) { setTasksLoading(false); firstFetch = false } })
+        .catch(() => { errorCount++; if (firstFetch) { setTasksLoading(false); firstFetch = false } })
     }
     fetchTasks()
     const interval = setInterval(() => {
@@ -117,7 +126,23 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                   导入服务商
                 </Button>
               </div>
-              {agents.map(agent => {
+              {agentsLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="p-2 bg-white rounded border space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-8 w-8 rounded-full" />
+                        <Skeleton className="h-4 w-20" />
+                      </div>
+                      <Skeleton className="h-3 w-32" />
+                    </div>
+                  ))}
+                </div>
+              ) : agents.length === 0 ? (
+                <div className="text-center text-gray-400 text-xs py-6">
+                  还没有 Agent，创建或导入一个
+                </div>
+              ) : agents.map(agent => {
                 const style = getAgentStyle(agent.name, agent.accentColor)
                 const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
                 return (
@@ -159,7 +184,23 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
               })}
             </>
           )}
-          {tab === 'tasks' && tasks.map(task => {
+          {tab === 'tasks' && (
+            tasksLoading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="p-2 bg-white rounded border space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-4" />
+                      <Skeleton className="h-4 flex-1" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : tasks.length === 0 ? (
+              <div className="text-center text-gray-400 text-xs py-6">
+                暂无任务，开始对话后会在这里显示
+              </div>
+            ) : tasks.map(task => {
             let traceEntries: Array<{ ts: string; event: string; message?: string; agent?: string; attempt?: number; duration_ms?: number }> = []
             try { traceEntries = JSON.parse(task.trace || '[]') } catch {}
             const isExpanded = expandedTraces.has(task.id)
@@ -200,7 +241,8 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 )}
               </div>
             )
-          })}
+          })
+          )}
         </div>
       </ScrollArea>
       <CreateAgentDialog

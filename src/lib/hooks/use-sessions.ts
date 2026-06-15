@@ -17,11 +17,17 @@ export function useSessions() {
   const searchParams = useSearchParams()
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(searchParams.get('session'))
+  const [isLoading, setIsLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    const res = await fetch('/api/sessions')
-    const data = await res.json()
-    setSessions(data)
+    setIsLoading(true)
+    try {
+      const res = await fetch('/api/sessions')
+      const data = await res.json()
+      setSessions(data)
+    } finally {
+      setIsLoading(false)
+    }
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
@@ -64,5 +70,5 @@ export function useSessions() {
     }
   }
 
-  return { sessions, activeId, setActiveId, create, remove, refresh }
+  return { sessions, activeId, setActiveId, create, remove, refresh, isLoading }
 }

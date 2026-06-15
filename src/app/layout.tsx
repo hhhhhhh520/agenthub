@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import "./globals.css"
+import { ThemeProvider } from "next-themes"
 import { Toaster } from "@/components/ui/sonner"
 
 export const metadata: Metadata = {
@@ -13,10 +14,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="h-full overflow-hidden antialiased">
+    <html lang="zh-CN" suppressHydrationWarning className="h-full overflow-hidden antialiased">
       <body className="h-screen overflow-hidden flex flex-col">
-        {children}
-        <Toaster position="bottom-right" />
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          {children}
+          <Toaster position="bottom-right" />
+        </ThemeProvider>
       </body>
     </html>
   )

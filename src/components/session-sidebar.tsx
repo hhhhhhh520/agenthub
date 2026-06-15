@@ -2,6 +2,7 @@
 import { useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
 
 interface Session {
   id: string
@@ -14,6 +15,7 @@ interface Session {
 interface Props {
   sessions: Session[]
   activeId: string | null
+  isLoading: boolean
   onSelect: (id: string) => void
   onCreateGroup: () => void
   onQuickStart: () => void
@@ -32,7 +34,7 @@ function getTimeGroup(updatedAt: string): string {
   return '更早'
 }
 
-export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, onQuickStart, onDelete }: Props) {
+export function SessionSidebar({ sessions, activeId, isLoading, onSelect, onCreateGroup, onQuickStart, onDelete }: Props) {
   const handleDelete = (id: string, title: string) => {
     if (window.confirm(`确定删除会话「${title}」吗？`)) {
       onDelete(id)
@@ -75,7 +77,20 @@ export function SessionSidebar({ sessions, activeId, onSelect, onCreateGroup, on
       </div>
       <ScrollArea className="flex-1 min-h-0 overflow-hidden">
         <div className="p-2 space-y-3">
-          {groupedSessions.map(group => (
+          {isLoading ? (
+            <div className="space-y-3 p-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="space-y-1">
+                  <Skeleton className="h-3 w-12" />
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ))}
+            </div>
+          ) : groupedSessions.length === 0 ? (
+            <div className="text-center text-gray-400 text-xs py-8 px-2">
+              还没有会话，点击上方按钮开始
+            </div>
+          ) : groupedSessions.map(group => (
             <div key={group.label}>
               <div className="text-xs text-gray-400 font-medium px-2 mb-1">{group.label}</div>
               <div className="space-y-1">
