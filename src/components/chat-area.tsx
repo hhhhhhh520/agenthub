@@ -26,6 +26,18 @@ interface MemberAgent {
   accentColor?: string
 }
 
+const SESSION_TYPE_LABELS: Record<string, string> = {
+  group: '群聊',
+  private: '私聊',
+  orchestrator: '对话',
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  alignment: '对齐中',
+  execution: '执行中',
+  done: '已完成',
+}
+
 const COMMANDS = [
   { name: '/permission auto', description: '切换到自动模式，减少打扰' },
   { name: '/permission default', description: '切换到默认模式，需要确认' },
@@ -48,28 +60,31 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   useEffect(() => {
     if (!sessionId) return
     loadMessages()
-    fetch(`/api/sessions/${sessionId}/members`)
-      .then(r => r.json())
-      .then((members: Array<{ agent: MemberAgent }>) => {
-        const names = members.map(m => m.agent.name)
-        const colorMap: Record<string, string> = {}
-        members.forEach(m => {
-          if (m.agent.accentColor) colorMap[m.agent.name] = m.agent.accentColor
+    // 并行请求成员和会话信息
+    Promise.all([
+      fetch(`/api/sessions/${sessionId}/members`)
+        .then(r => r.json())
+        .then((members: Array<{ agent: MemberAgent }>) => {
+          const names = members.map(m => m.agent.name)
+          const colorMap: Record<string, string> = {}
+          members.forEach(m => {
+            if (m.agent.accentColor) colorMap[m.agent.name] = m.agent.accentColor
+          })
+          setAgentNames(names)
+          setAgentColorMap(colorMap)
         })
-        setAgentNames(names)
-        setAgentColorMap(colorMap)
-      })
-      .catch(console.error)
-    // 断点续跑：检查是否有任务被恢复
-    fetch(`/api/sessions/${sessionId}`)
-      .then(r => r.json())
-      .then((session: { recoveredTaskCount?: number }) => {
-        if (session.recoveredTaskCount && session.recoveredTaskCount > 0) {
-          setRecoveredCount(session.recoveredTaskCount)
-          setShowRecovery(true)
-        }
-      })
-      .catch(console.error)
+        .catch(console.error),
+      // 断点续跑：检查是否有任务被恢复
+      fetch(`/api/sessions/${sessionId}`)
+        .then(r => r.json())
+        .then((session: { recoveredTaskCount?: number }) => {
+          if (session.recoveredTaskCount && session.recoveredTaskCount > 0) {
+            setRecoveredCount(session.recoveredTaskCount)
+            setShowRecovery(true)
+          }
+        })
+        .catch(console.error),
+    ])
   }, [sessionId, loadMessages])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streaming])
 
@@ -149,18 +164,6 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
       body: JSON.stringify({ isPinned }),
     })
     loadMessages()
-  }
-
-  const SESSION_TYPE_LABELS: Record<string, string> = {
-    group: '群聊',
-    private: '私聊',
-    orchestrator: '对话',
-  }
-
-  const PHASE_LABELS: Record<string, string> = {
-    alignment: '对齐中',
-    execution: '执行中',
-    done: '已完成',
   }
 
   return (

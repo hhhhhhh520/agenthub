@@ -361,7 +361,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
                   <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${modelDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {modelDropdownOpen && (
-                  <div className="absolute z-50 mt-1 w-full rounded border bg-white shadow-lg">
+                  <div className="absolute z-50 mt-1 w-full rounded border bg-white dark:bg-gray-800 dark:border-gray-700 shadow-lg">
                     <div className="p-2 border-b">
                       <div className="relative">
                         <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
