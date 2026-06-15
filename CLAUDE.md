@@ -43,7 +43,7 @@ src/
 │   │   ├── agent-factory.ts   # Agent 创建
 │   │   ├── context-builder.ts # 历史上下文构建
 │   │   └── git-utils.ts       # Git 变更检测
-│   ├── hooks/                 # use-sessions, use-chat, use-chat-fab
+│   ├── hooks/                 # use-sessions, use-chat, use-chat-fab, use-mounted
 │   ├── attachment-cleanup.ts  # 附件文件清理（unlinkSync + 孤儿清理）
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
 │   └── utils.ts               # cn/maskApiKey/hasLoneSurrogates
@@ -96,6 +96,7 @@ prisma/
 - **API 响应不泄露 apiKey**：所有 GET 用 Prisma select 排除 apiKey；providers 用 maskApiKey() 返回掩码值
 - **Mass Assignment 防护**：Agent PUT 白名单不含 status（设计决策#20）；Session PUT 白名单不含 phase/type/phaseStep（设计决策#8/#12），白名单字段：title/projectDir/permissionMode/isPinned/isArchived
 - **iframe sandbox**：`allow-scripts`（设计决策#17），不含 `allow-same-origin`
+- **WebPreview XSS 防护**：DOMPurify 清理 HTML + CSS `url()` 过滤 + CSP meta tag（`default-src 'none'; img-src data:`）+ `</script` 转义，JS 靠 CSP+sandbox 防御（JS 本身无法 sanitize）
 - **成员列表**：agent select 排除 systemPrompt
 - **shell:true 命令注入**：ClaudeCodeAdapter/OpenCodeAdapter 使用 `shell: true`，`permissionMode`/`sessionId`/`model` 等来自用户/数据库输入，必须验证后再传入 args
 - **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
