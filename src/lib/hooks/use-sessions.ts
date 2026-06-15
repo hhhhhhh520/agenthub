@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { toast } from 'sonner'
 
 interface Session {
   id: string
@@ -46,14 +47,21 @@ export function useSessions() {
   }
 
   const remove = async (id: string) => {
-    await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
-    let nextFirst: string | null = null
-    setSessions(prev => {
-      const filtered = prev.filter(s => s.id !== id)
-      nextFirst = filtered[0]?.id || null
-      return filtered
-    })
-    if (activeId === id) setActiveId(nextFirst)
+    try {
+      const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      let nextFirst: string | null = null
+      setSessions(prev => {
+        const filtered = prev.filter(s => s.id !== id)
+        nextFirst = filtered[0]?.id || null
+        return filtered
+      })
+      if (activeId === id) setActiveId(nextFirst)
+      toast.success('会话已删除')
+    } catch (err) {
+      console.error('Failed to delete session:', err)
+      toast.error('删除会话失败')
+    }
   }
 
   return { sessions, activeId, setActiveId, create, remove, refresh }

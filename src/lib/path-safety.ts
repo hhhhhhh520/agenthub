@@ -1,4 +1,5 @@
-import { resolve, realpathSync, sep } from 'path'
+import { resolve, sep } from 'path'
+import { realpathSync } from 'fs'
 
 /**
  * 检查文件路径是否在项目目录内（防止路径遍历攻击）

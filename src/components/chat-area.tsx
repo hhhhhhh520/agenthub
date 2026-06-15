@@ -59,7 +59,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         setAgentNames(names)
         setAgentColorMap(colorMap)
       })
-      .catch(() => {})
+      .catch(console.error)
     // 断点续跑：检查是否有任务被恢复
     fetch(`/api/sessions/${sessionId}`)
       .then(r => r.json())
@@ -69,7 +69,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           setShowRecovery(true)
         }
       })
-      .catch(() => {})
+      .catch(console.error)
   }, [sessionId, loadMessages])
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streaming])
 

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { toast } from 'sonner'
 
 interface Provider {
   name: string
@@ -33,12 +34,13 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
       .then(data => {
         if (Array.isArray(data)) setProviders(data)
       })
-      .catch(() => {})
+      .catch((err) => { console.error(err); toast.error('加载服务商列表失败') })
       .finally(() => setLoading(false))
   }, [open])
 
   const handleSelect = (provider: Provider) => {
     onImport({ provider: provider.name, agentId })
+    toast.success(`已导入 ${provider.displayName}`)
     onOpenChange(false)
   }
 

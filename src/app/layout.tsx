@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import "./globals.css"
+import { Toaster } from "@/components/ui/sonner"
 
 export const metadata: Metadata = {
   title: "AgentHub",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" className="h-full overflow-hidden antialiased">
-      <body className="h-screen overflow-hidden flex flex-col">{children}</body>
+      <body className="h-screen overflow-hidden flex flex-col">
+        {children}
+        <Toaster position="bottom-right" />
+      </body>
     </html>
   )
 }

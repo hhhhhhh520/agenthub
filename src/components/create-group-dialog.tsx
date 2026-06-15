@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle } from '@/lib/agent-colors'
 import { FolderOpen, Shield, ShieldCheck } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface Agent {
   id: string
@@ -129,6 +130,7 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
       const session = await res.json()
       if (!res.ok) throw new Error(session.error || '创建失败')
       onCreated(session.id)
+      toast.success('群聊创建成功')
       onOpenChange(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : '创建失败')
