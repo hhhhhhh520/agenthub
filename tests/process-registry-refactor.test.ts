@@ -71,6 +71,12 @@ beforeEach(async () => {
 afterEach(() => {
   try { processRegistry.killAll() } catch {}
   vi.useRealTimers()
+  // 测试 fixture 在 beforeEach 删 __processRegistryShutdownRegistered 标志,
+  // 导致每个测试重新注册 SIGTERM/SIGINT/beforeExit listener,累积到 11+ 触发 MaxListenersExceededWarning。
+  // 这里清理,保持测试基础设施健康。
+  process.removeAllListeners('SIGTERM')
+  process.removeAllListeners('SIGINT')
+  process.removeAllListeners('beforeExit')
 })
 
 describe('ProcessRegistry refactor regressions', () => {
@@ -356,11 +362,14 @@ describe('ProcessRegistry refactor regressions', () => {
     await genB.return?.(undefined)
   }, 10000)
 
-  it('sets entry.busy to true during send and clears it when send fails (finally release)', async () => {
-    // 红-绿 核心: 无锁实现时 entry.busy 从未被设置 → expect(entry.busy).toBe(true) 会红
-    const gen = processRegistry.send('mutex-lifecycle', 'prompt', { workDir: '/dir' })[Symbol.asyncIterator]()
+  it('sets entry.busy to true during send and clears it after send completes', async () => {
+    // 红-绿 核心: 摘掉 lock → busy 永不为 true → 上半段红
+    // 正常完成路径:send 返回后 persist 进程的 entry 还在 registry,可以断言 busy 被 release
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
 
-    // 触发 permission_request 让 gen 进入 readRound 的 while 循环,此时应当已 acquireLock
+    const gen = processRegistry.send('lifecycle', 'prompt', { workDir: '/dir' })[Symbol.asyncIterator]()
+
+    // 触发 permission_request 让 gen 进入 readRound 的 while 循环,此时已 acquireLock
     setTimeout(() => {
       fakeProc.stdout.write(Buffer.from(JSON.stringify({
         type: 'control_request', request_id: 'req-lifecycle',
@@ -372,22 +381,22 @@ describe('ProcessRegistry refactor regressions', () => {
     expect(first.value.type).toBe('permission_request')
 
     // 上半段:send 在 readRound 内暂停 → busy 应为 true
-    const registry = (globalThis as any).__processRegistry as Map<string, any>
-    const entry = registry.get('mutex-lifecycle')
+    const entry = registry.get('lifecycle')
     expect(entry).toBeDefined()
-    expect(entry.busy).toBe(true)  // ← 无锁实现时这条会红
+    expect(entry.busy).toBe(true)  // ← 摘掉 lock 这条会红
 
-    // 杀进程触发 send 失败
-    fakeProc.exitCode = 1
-    fakeProc.emit('exit')
+    // 正常完成 send
+    processRegistry.respondPermissionByRequestId('req-lifecycle', { behavior: 'allow' })
+    setTimeout(() => {
+      fakeProc.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
+    }, 10)
+    await collect({ [Symbol.asyncIterator]: () => gen } as any)
 
-    try { await collect({ [Symbol.asyncIterator]: () => gen } as any) } catch {}
-
-    // 下半段:send 失败后 finally 释放锁 → busy 应为 false
-    const entryAfter = registry.get('mutex-lifecycle')
-    if (entryAfter) {
-      expect(entryAfter.busy).toBe(false)
-    }
+    // 下半段:send 正常返回后 finally 释放了锁 → busy 应为 false
+    // (persist 进程 entry 还在 registry,可以断言)
+    const entryAfter = registry.get('lifecycle')
+    expect(entryAfter).toBeDefined()
+    expect(entryAfter.busy).toBe(false)  // ← 摘掉 finally release 这条会红
   }, 10000)
 
   it('throws EntryDiedWhileWaitingError when entry is killed while a send is waiting for the lock', async () => {
