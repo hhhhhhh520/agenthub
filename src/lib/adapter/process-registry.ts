@@ -374,9 +374,9 @@ class ProcessRegistry {
         if (isPermanentError(lastError)) {
           console.error(`[ProcessRegistry ${effectiveKey}] Permanent error: ${lastError}. Not retrying.`)
           // 一次性进程清理
-          const entry = this.registry.get(effectiveKey)
-          if (entry?.format === 'ndjson') {
-            this.killEntryIfCurrent(effectiveKey, entry)
+          const currentEntry = this.registry.get(effectiveKey)
+          if (currentEntry?.format === 'ndjson') {
+            this.killEntryIfCurrent(effectiveKey, currentEntry)
           }
           yield { type: 'error', content: lastError }
           throw new Error(lastError)
@@ -384,8 +384,8 @@ class ProcessRegistry {
 
         if (attempt <= MAX_SEND_RETRIES) {
           // Kill old process and prepare for retry with exponential backoff
-          const entry = this.registry.get(effectiveKey)
-          if (entry) this.killEntryIfCurrent(effectiveKey, entry)
+          const currentEntry = this.registry.get(effectiveKey)
+          if (currentEntry) this.killEntryIfCurrent(effectiveKey, currentEntry)
           const delay = getRetryDelay(attempt - 1)
           console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
@@ -395,9 +395,9 @@ class ProcessRegistry {
     }
 
     // 一次性进程失败后也清理
-    const entry = this.registry.get(effectiveKey)
-    if (entry?.format === 'ndjson') {
-      this.killEntryIfCurrent(effectiveKey, entry)
+    const finalEntry = this.registry.get(effectiveKey)
+    if (finalEntry?.format === 'ndjson') {
+      this.killEntryIfCurrent(effectiveKey, finalEntry)
     }
 
     // All attempts exhausted — yield error for frontend notification, then throw
@@ -502,7 +502,11 @@ class ProcessRegistry {
             permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
               const wrappedResolve = (response: { behavior: 'allow' | 'deny'; updatedInput?: any }) => {
                 resolve(response)
-                pendingPermissionSet.delete(permissionPromise)
+                // 守卫：若未来某条路径在 executor 同步阶段就 resolve，
+                // permissionPromise 此刻仍是 undefined，delete(undefined) 会让真正的 promise 残留在 Set 里。
+                if (permissionPromise) {
+                  pendingPermissionSet.delete(permissionPromise)
+                }
               }
               const pending: PendingPermission = {
                 requestId,
@@ -578,10 +582,23 @@ class ProcessRegistry {
 
     stdout.on('data', onData)
 
+    // 在 throw 之前抢救 bufferStr 中未换行的尾段，至少把 session_id 提取出来，
+    // 这样 send() 的 catch 块就能把 sessionId 注入下一轮 spawn 的 config 里。
+    const flushTailForSessionId = () => {
+      if (!bufferStr.trim() || entry.sessionId) return
+      try {
+        const event = JSON.parse(bufferStr)
+        if (event.session_id) {
+          entry.sessionId = event.session_id
+        }
+      } catch {}
+    }
+
     try {
       while (!roundComplete) {
         // Check if process is dead
         if (!entry.alive || entry.process.exitCode !== null) {
+          flushTailForSessionId()
           // Flush remaining chunks before throwing
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
 
@@ -603,6 +620,7 @@ class ProcessRegistry {
           const elapsed = Math.round((Date.now() - lastChunkTime) / 1000)
           const stderr = entry.stderrBuffer.trim()
           console.error(`[ProcessRegistry ${key}] TIMEOUT: No data for ${elapsed}s, pid=${entry.process.pid}, exitCode=${entry.process.exitCode}, stderr=${stderr.slice(-300)}`)
+          flushTailForSessionId()
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
           throw new Error(`No data received for ${elapsed}s, process appears stalled. stderr: ${stderr.slice(-200)}`)
         }
@@ -838,8 +856,9 @@ class ProcessRegistry {
     return this.respondPermission(effectiveKey, requestId, result)
   }
 
-  getSessionId(key: string): string | null {
-    return this.registry.get(key)?.sessionId || null
+  getSessionId(key: string, config?: SpawnConfig): string | null {
+    const effectiveKey = this.toEffectiveKey(key, config)
+    return this.registry.get(effectiveKey)?.sessionId || null
   }
 
   /**
@@ -889,11 +908,12 @@ class ProcessRegistry {
     this.registry.delete(key)
   }
 
-  async gracefulKillEntry(key: string): Promise<void> {
-    const entry = this.registry.get(key)
+  async gracefulKillEntry(key: string, config?: SpawnConfig): Promise<void> {
+    const effectiveKey = this.toEffectiveKey(key, config)
+    const entry = this.registry.get(effectiveKey)
     if (!entry || !entry.alive) return
     const pid = entry.process.pid
-    if (!pid) { this.killEntryIfCurrent(key, entry); return }
+    if (!pid) { this.killEntryIfCurrent(effectiveKey, entry); return }
 
     // Phase 1: 优雅关闭
     try {
@@ -907,7 +927,7 @@ class ProcessRegistry {
 
     // Phase 2: 强制杀
     if (entry.alive) {
-      this.killEntryIfCurrent(key, entry)
+      this.killEntryIfCurrent(effectiveKey, entry)
     }
   }
 
