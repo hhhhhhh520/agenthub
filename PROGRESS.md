@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-15
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-22
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -142,6 +142,10 @@
 | 开源发布准备 | LICENSE(MIT)+.env.example+CONTRIBUTING.md+README完善(截图/架构图/测试说明)+.gitignore排除.env.example | 2026-06-15 |
 | 数据清理+截图 | 删除乱码OpenCode会话/Agent+暗色模式样式修复(bg-gray-50→dark:bg-gray-900等)+6张项目截图(亮色/暗色各3张) | 2026-06-15 |
 | path-safety修复 | realpathSync import从'path'改为'fs'(TypeScript类型错误) | 2026-06-15 |
+| 全量代码审查 | 6模块并行+对抗性验证(19 agent),确认4个P1+25个P2+19个P3问题。详见 git log 2026-06-22 之前的审查报告 | 2026-06-22 |
+| ProcessRegistry 重构 第1步 | 改动 1/3/6+#18:键统一(toEffectiveKey 下沉)+entry 身份判断(killEntryIfCurrent)+Set 替换 promise 数组修 CPU 忙等+崩溃重建携带最新 sessionId。public killEntry(key) API 不变,内部统一走 killEntryIfCurrent 防止旧 exit handler 误删新 entry。5 新测试 | 2026-06-22 |
+| ProcessRegistry 重构 第2a步 | 第1步 code review 5 项加固:gracefulKillEntry(key, config?) 贯通到 orchestrator 三处调用、readRound throw 前 flush bufferStr 抢救 session_id、wrappedResolve 加 if 守卫防 delete(undefined)、send 内 catch/finally const entry 改名 currentEntry/finalEntry 消除同名遮蔽。getSessionId 同步加 config 形参。5 新测试,664 测试全绿 | 2026-06-22 |
+| 测试 5 永真断言修复 | 2a code review 发现测试 5 用 `setTimeout(100) + elapsed >= 50` 是永真断言,无法检测改动 6 回归。重写为双断言:promise 加入后 `entry.permissionWaiters.size === 1`,respond 后立即 `size === 0`(同步链无需 await)。permission waiter 从 readRound 闭包提升到 ProcessEntry 字段,readRound 入口处 size === 0 软警告兜底。红-绿验证:回退 wrappedResolve.delete 测试真红。664 测试全绿 | 2026-06-22 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
@@ -156,12 +160,15 @@
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
-| （暂无） | |
+| ProcessRegistry 重构 第2b/2c步 | 第2a 已完成,待启动:2b entry 互斥锁(改动2),2c 清理统一+配置指纹(改动4+5) |
 
-### 📋 待办（2026-06-10 更新）
+### 📋 待办（2026-06-22 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
+| 🟠高 | ProcessRegistry 2b entry 互斥锁 | 修 #2 同 key 并发串话,#9 同 agent 并行 registryKey 冲突 | 待启动 |
+| 🟠高 | ProcessRegistry 2c 清理统一+配置指纹 | 修 #13 改 apiKey/model 10 分钟内不生效,#15/#16 临时文件&超时进程泄漏,#54 XDG 目录泄漏 | 待启动 |
+| 🟡中 | files/accept 路径越界修复 | 审查 #3/#4:sessionId 无校验+敏感路径精确分段匹配,纯本地用户也建议修 | 待启动 |
 | 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
 
