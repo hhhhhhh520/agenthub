@@ -215,7 +215,9 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - ClaudeCodeAdapter 支持 `--permission-mode` + `--permission-prompt-tool stdio` 参数
 - **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
-- **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`，共享同一个 CLI 进程，并行执行时输出完全相同
+- **ProcessRegistry 内部禁止直接调 `killEntry(key)`** — 内部已持有 entry 的路径必须用私有 `killEntryIfCurrent(key, expectedEntry)`,它会校验 `registry.get(key) === expectedEntry`。公开 `killEntry(key)` 仅作外部兼容入口。违反会让旧进程的 exit handler 误删同 key 新 entry(僵尸进程泄漏)
+- **`gracefulKillEntry(key, config?)` 调用方必须传 config** — 当 agent 配了 allowedTools 时,registry 用 `key+toolsHash` 索引,不传 config 内部 `toEffectiveKey` 会 miss → 杀进程无效,超时变哑炮。orchestrator 三处 onTimeout 都需要传完整的 `{ workDir, allowedTools? }`
+- **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`,共享同一个 CLI 进程,并行执行时输出完全相同
 - 详见 `docs/design/workspace-and-permissions.md`
 
 ### 断点续跑
