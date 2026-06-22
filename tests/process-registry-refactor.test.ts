@@ -291,4 +291,202 @@ describe('ProcessRegistry refactor regressions', () => {
     fakeProc.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
     await gen.return?.(undefined)
   })
+
+  // ====================  2b entry 互斥锁  ====================
+
+  it('serializes concurrent sends to the same effectiveKey (FIFO baton-passing lock)', async () => {
+    // 同 effectiveKey 同时跑两个 send：第二个必须等第一个的 stream 全部 yield 完才写 stdin
+    const writeOrder: string[] = []
+
+    const procA = createFakeProcess()
+    mockSpawn.mockImplementation(() => {
+      // 同 effectiveKey 复用同一进程（persistent CLI）
+      fakeProc = procA
+      return procA
+    })
+
+    // spy stdin.write 顺序，按 payload 内容区分 A/B
+    const originalAWrite = procA.stdin.write.bind(procA.stdin)
+    vi.spyOn(procA.stdin, 'write').mockImplementation((chunk: any, ...args: any[]) => {
+      const text = Buffer.isBuffer(chunk) ? chunk.toString('utf-8') : String(chunk)
+      if (text.includes('prompt-A')) writeOrder.push('A-write')
+      else if (text.includes('prompt-B')) writeOrder.push('B-write')
+      return originalAWrite(chunk, ...args)
+    })
+
+    // send-A 启动并推进
+    const genA = processRegistry.send('mutex-fifo', 'prompt-A', { workDir: '/dir' })[Symbol.asyncIterator]()
+    const aFirstChunk = genA.next()  // 推进 iterator 触发 readRound
+
+    // 让 A 完成 stdin.write
+    await new Promise(r => setTimeout(r, 30))
+    expect(writeOrder).toEqual(['A-write'])  // A 已写，B 还没启动
+
+    // 紧接着启动 send-B
+    const genB = processRegistry.send('mutex-fifo', 'prompt-B', { workDir: '/dir' })[Symbol.asyncIterator]()
+    const bFirstChunk = genB.next()  // 推进 B iterator,B 应当卡在 acquireLock
+
+    await new Promise(r => setTimeout(r, 50))
+    // FIFO 锁:B 必须等 A 完成才能写 stdin
+    expect(writeOrder).toEqual(['A-write'])  // B 还没写 stdin
+
+    // A 完成 (yield result chunk)
+    procA.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
+    await aFirstChunk
+    // 让 A 跑完
+    try {
+      while (true) {
+        const r = await Promise.race([
+          genA.next(),
+          new Promise(res => setTimeout(() => res({ done: true, value: undefined } as any), 200)),
+        ]) as any
+        if (r.done) break
+      }
+    } catch {}
+
+    // A 释放锁后 B 应当能拿到锁并写 stdin
+    await new Promise(r => setTimeout(r, 50))
+    expect(writeOrder).toContain('B-write')
+    // FIFO 严格:A-write 一定在 B-write 之前
+    expect(writeOrder.indexOf('A-write')).toBeLessThan(writeOrder.indexOf('B-write'))
+
+    // 让 B 收尾
+    procA.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
+    await bFirstChunk.catch(() => {})
+    await genB.return?.(undefined)
+  }, 10000)
+
+  it('sets entry.busy to true during send and clears it when send fails (finally release)', async () => {
+    // 红-绿 核心: 无锁实现时 entry.busy 从未被设置 → expect(entry.busy).toBe(true) 会红
+    const gen = processRegistry.send('mutex-lifecycle', 'prompt', { workDir: '/dir' })[Symbol.asyncIterator]()
+
+    // 触发 permission_request 让 gen 进入 readRound 的 while 循环,此时应当已 acquireLock
+    setTimeout(() => {
+      fakeProc.stdout.write(Buffer.from(JSON.stringify({
+        type: 'control_request', request_id: 'req-lifecycle',
+        request: { subtype: 'can_use_tool', tool_name: 'Read', input: { file_path: '/a.txt' } },
+      }) + '\n'))
+    }, 10)
+
+    const first = await nextChunk(gen)
+    expect(first.value.type).toBe('permission_request')
+
+    // 上半段:send 在 readRound 内暂停 → busy 应为 true
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+    const entry = registry.get('mutex-lifecycle')
+    expect(entry).toBeDefined()
+    expect(entry.busy).toBe(true)  // ← 无锁实现时这条会红
+
+    // 杀进程触发 send 失败
+    fakeProc.exitCode = 1
+    fakeProc.emit('exit')
+
+    try { await collect({ [Symbol.asyncIterator]: () => gen } as any) } catch {}
+
+    // 下半段:send 失败后 finally 释放锁 → busy 应为 false
+    const entryAfter = registry.get('mutex-lifecycle')
+    if (entryAfter) {
+      expect(entryAfter.busy).toBe(false)
+    }
+  }, 10000)
+
+  it('throws EntryDiedWhileWaitingError when entry is killed while a send is waiting for the lock', async () => {
+    // A 持锁中（busy=true,通过 stdout 不吐数据让 readRound 挂着）
+    // B 调用 send 进入排队
+    // 外部 kill entry → killEntryIfCurrent 唤醒所有 waiter
+    // 关键断言: B 排在 entry.busyWaiters 里(无锁实现时 busyWaiters 字段不存在 → 红)
+    const procA = createFakeProcess()
+    const procB = createFakeProcess()
+    let n = 0
+    mockSpawn.mockImplementation(() => {
+      n++
+      if (n === 1) { fakeProc = procA; return procA }
+      fakeProc = procB; return procB
+    })
+
+    const genA = processRegistry.send('mutex-die', 'prompt-A', { workDir: '/dir' })[Symbol.asyncIterator]()
+    const aFirstChunk = genA.next()  // 推进 A iterator,进入 readRound 持锁
+    await new Promise(r => setTimeout(r, 30))
+
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+    const entryA = registry.get('mutex-die')
+    expect(entryA).toBeDefined()
+    // A 持锁:busy=true
+    expect(entryA.busy).toBe(true)
+    // busyWaiters 字段必须存在(无锁实现时此处会红:undefined.length)
+    expect(entryA.busyWaiters).toBeDefined()
+
+    // B 启动排队
+    const genB = processRegistry.send('mutex-die', 'prompt-B', { workDir: '/dir' })[Symbol.asyncIterator]()
+    const bFirstChunk = genB.next()  // 推进 B iterator,进入 acquireLock 排队
+    await new Promise(r => setTimeout(r, 30))
+
+    // B 应当在排队
+    expect(entryA.busyWaiters.length).toBe(1)
+
+    // 杀 procA — exit handler 应当唤醒所有 waiter 并 splice 队列
+    procA.exitCode = 1
+    procA.emit('exit')
+    await new Promise(r => setTimeout(r, 20))
+
+    // 唤醒后 busyWaiters 应当被清空(splice)
+    expect(entryA.busyWaiters.length).toBe(0)
+
+    // B 收到 EntryDiedWhileWaitingError → retry → 用 procB 完成
+    setTimeout(() => {
+      procB.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
+    }, 50)
+
+    // B 必须能完成,不卡死
+    try {
+      while (true) {
+        const r = await Promise.race([
+          genB.next(),
+          new Promise(res => setTimeout(() => res({ done: true, value: undefined } as any), 3000)),
+        ]) as any
+        if (r.done) break
+      }
+    } catch {}
+
+    // procB 必须被 spawn 过 (B 走 retry rebuild 路径)
+    expect(n).toBeGreaterThanOrEqual(2)
+
+    await aFirstChunk.catch(() => {})
+    await genA.return?.(undefined)
+  }, 10000)
+
+  it('throws EntryBusyTimeoutError when waiting for the lock exceeds LOCK_WAIT_TIMEOUT_MS', async () => {
+    // 直接测 acquireLock 的超时:用 getOrCreate 拿到 entry,手动置 busy=true 模拟"有人持锁不还",
+    // 再调 acquireLock 排队,推进 5min+1s 应抛 EntryBusyTimeoutError。
+    // 不通过 send() 走全流程 —— send 的 60s no-data timeout 会在 5min 之前先把 entry 杀掉,干扰测试。
+    vi.useFakeTimers()
+
+    const entry = processRegistry.getOrCreate('mutex-timeout', { workDir: '/dir' })
+    expect(entry.busy).toBe(false)
+    expect(entry.busyWaiters).toEqual([])
+
+    // 手动模拟"有人持锁"
+    entry.busy = true
+
+    // B 调用 acquireLock,因为 busy=true 必走排队分支
+    const acquirePromise = (processRegistry as any).acquireLock(entry, 'mutex-timeout')
+    expect(entry.busyWaiters.length).toBe(1)
+
+    // 先注册 expect 等 rejection —— 这样 timer 一 fire reject,assertion 立即吸收,
+    // 不会有 unhandled rejection 窗口。
+    const assertPromise = expect(acquirePromise).rejects.toThrow(/busy/i)
+
+    // 推进 5min + 1s 触发 timeout
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 1000)
+
+    // 等 assertion 兑现
+    await assertPromise
+    // 队列被清空(waiter 自己 splice 出去)
+    expect(entry.busyWaiters.length).toBe(0)
+    // entry.busy 还是 true(没人释放),这是预期的 —— 模拟"对方占着不还"
+
+    vi.useRealTimers()
+    // 清理 entry —— 否则 spawnProcess 创建的 idle cleanup 定时器会泄漏到下个测试
+    processRegistry.killEntry('mutex-timeout')
+  }, 10000)
 })
