@@ -580,4 +580,101 @@ describe('ProcessRegistry refactor regressions', () => {
 
     processRegistry.killEntry('ndjson-flush')
   }, 10000)
+
+  // ====================  2c.2 配置指纹  ====================
+
+  it('changing apiKey produces a different effectiveKey (forces new entry, fixes review #13)', () => {
+    // 复审 #13:apiKey/model 改了 10 分钟内不生效,因为旧 entry 用老配置,新 send 复用旧 entry。
+    // 配置指纹后:apiKey 变化 → effectiveKey 变化 → 不同 entry,自动 spawn 新进程。
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+
+    const entryOld = processRegistry.getOrCreate('cfg-apikey', {
+      workDir: '/dir',
+      apiKey: 'sk-old',
+    })
+    const entryNew = processRegistry.getOrCreate('cfg-apikey', {
+      workDir: '/dir',
+      apiKey: 'sk-new',
+    })
+
+    // 两个 entry 必须不同(不同 effectiveKey)
+    expect(entryOld).not.toBe(entryNew)
+    // registry 里两个 effectiveKey 都存在
+    const keys = [...registry.keys()].filter(k => k.startsWith('cfg-apikey'))
+    expect(keys.length).toBe(2)
+
+    processRegistry.killEntry('cfg-apikey')
+  })
+
+  it('changing model produces a different effectiveKey', () => {
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+
+    processRegistry.getOrCreate('cfg-model', { workDir: '/dir', model: 'claude-sonnet-4-6' })
+    processRegistry.getOrCreate('cfg-model', { workDir: '/dir', model: 'claude-opus-4-8' })
+
+    const keys = [...registry.keys()].filter(k => k.startsWith('cfg-model'))
+    expect(keys.length).toBe(2)
+
+    processRegistry.killEntry('cfg-model')
+  })
+
+  it('model bracket suffix [1m] is stripped before hashing (avoid spurious cache miss)', () => {
+    // claude-sonnet-4-6 和 claude-sonnet-4-6[1m] spawn 出的进程行为相同,
+    // 不应触发重建。指纹算法把 [...] 后缀 strip 后再 hash。
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+
+    const e1 = processRegistry.getOrCreate('cfg-bracket', { workDir: '/dir', model: 'claude-sonnet-4-6' })
+    const e2 = processRegistry.getOrCreate('cfg-bracket', { workDir: '/dir', model: 'claude-sonnet-4-6[1m]' })
+
+    expect(e1).toBe(e2)  // 同一 entry,模型字段规范化后等价
+
+    processRegistry.killEntry('cfg-bracket')
+  })
+
+  it('env field does NOT enter fingerprint (preserves process reuse for dynamic env)', () => {
+    // env 是开放容器,可能含 TIMESTAMP 之类动态值;进指纹会让每次 send 都重 spawn,违反进程复用目标。
+    // 设计决策:env 不进指纹,如果用户真的传了影响行为的 env,自己负责管理。
+    const e1 = processRegistry.getOrCreate('cfg-env', {
+      workDir: '/dir',
+      env: { TIMESTAMP: '1' },
+    })
+    const e2 = processRegistry.getOrCreate('cfg-env', {
+      workDir: '/dir',
+      env: { TIMESTAMP: '2' },
+    })
+
+    expect(e1).toBe(e2)  // env 不进指纹,同一 entry
+
+    processRegistry.killEntry('cfg-env')
+  })
+
+  it('disallowedTools order does not affect fingerprint', () => {
+    const e1 = processRegistry.getOrCreate('cfg-tools-order', {
+      workDir: '/dir',
+      disallowedTools: ['A', 'B', 'C'],
+    })
+    const e2 = processRegistry.getOrCreate('cfg-tools-order', {
+      workDir: '/dir',
+      disallowedTools: ['C', 'A', 'B'],
+    })
+
+    expect(e1).toBe(e2)  // 排序后等价
+
+    processRegistry.killEntry('cfg-tools-order')
+  })
+
+  it('apiKey is not exposed in effectiveKey (hashed, not plaintext)', () => {
+    // 安全断言:apiKey 经 SHA-256 截断 16 字符,effectiveKey 里看不到明文。
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+
+    const secretKey = 'sk-supersecret-do-not-leak-12345'
+    processRegistry.getOrCreate('cfg-secret', { workDir: '/dir', apiKey: secretKey })
+
+    const keys = [...registry.keys()].filter(k => k.startsWith('cfg-secret'))
+    expect(keys.length).toBe(1)
+    expect(keys[0]).not.toContain(secretKey)  // 不能明文出现
+    expect(keys[0]).not.toContain('supersecret')
+
+    processRegistry.killEntry('cfg-secret')
+  })
 })
