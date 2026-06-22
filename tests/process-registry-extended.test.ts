@@ -214,10 +214,13 @@ describe('ProcessRegistry — extended coverage', () => {
     it('cleans up ndjson process after send', async () => {
       vi.useRealTimers()
       const key = 'ndjson-cleanup'
-      processRegistry.getOrCreate(key, { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' })
+      const config = { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' as const }
+      processRegistry.getOrCreate(key, config)
 
-      // Verify entry exists before send
-      expect((globalThis as any).__processRegistry.has(key)).toBe(true)
+      // Verify entry exists before send (用 values 查,因为配置指纹后 effectiveKey 含 hash)
+      const registry = (globalThis as any).__processRegistry as Map<string, any>
+      const initialKeys = [...registry.keys()].filter((k: string) => k.startsWith(key))
+      expect(initialKeys.length).toBe(1)
 
       setTimeout(() => {
         fakeProc.stdout.write(Buffer.from(JSON.stringify({ type: 'text', part: { text: 'done' } }) + '\n'))
@@ -225,18 +228,19 @@ describe('ProcessRegistry — extended coverage', () => {
       }, 10)
 
       const spawnCountBefore = mockSpawn.mock.calls.length
-      await collect(processRegistry.send(key, 'prompt', { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' }))
+      await collect(processRegistry.send(key, 'prompt', config))
       // Process should be cleaned up after ndjson send
-      expect((globalThis as any).__processRegistry.has(key)).toBe(false)
+      const finalKeys = [...registry.keys()].filter((k: string) => k.startsWith(key))
+      expect(finalKeys.length).toBe(0)
       // killEntry should have spawned a kill command (taskkill on Windows)
       expect(mockSpawn.mock.calls.length).toBeGreaterThan(spawnCountBefore)
     })
 
     it('respawns dead ndjson process and succeeds', async () => {
       vi.useRealTimers()
+      const config = { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' as const }
       // Pre-spawn a process that's already dead
-      processRegistry.getOrCreate('ndjson-dead', { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' })
-      const entry = (globalThis as any).__processRegistry.get('ndjson-dead')
+      const entry = processRegistry.getOrCreate('ndjson-dead', config)
       entry.alive = false
       entry.process.exitCode = 1
 
@@ -248,7 +252,7 @@ describe('ProcessRegistry — extended coverage', () => {
         fakeProc.stdout.end()
       }, 10)
 
-      const chunks = await collect(processRegistry.send('ndjson-dead', 'prompt', { workDir: '/dir', command: 'opencode', args: ['run'], format: 'ndjson' }))
+      const chunks = await collect(processRegistry.send('ndjson-dead', 'prompt', config))
       expect(chunks.some((c: any) => c.type === 'text' && c.content === 'recovered')).toBe(true)
     })
 

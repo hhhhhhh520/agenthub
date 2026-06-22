@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { StreamChunk } from './types'
@@ -149,6 +150,56 @@ function buildToolsHash(tools?: string[]): string {
   return ':' + Math.abs(hash).toString(36)
 }
 
+/**
+ * 配置指纹:把所有影响 spawn 行为的字段折成一个 hash,进 effectiveKey。
+ * 配置变化(换 apiKey/model/baseUrl 等)→ 自动起新进程,旧 entry 被新 effectiveKey 跳过,
+ * 解决 review #13:apiKey/model 改了 10 分钟内不生效。
+ *
+ * 进指纹的字段:permissionMode / mcpConfig / apiKey / baseUrl / model / command / args /
+ *               format / promptAsArg / disallowedTools
+ * 不进指纹:workDir(已在 key 里)、sessionId(运行时动态)、allowedTools(单独 buildToolsHash 处理)、
+ *           env(开放容器,用户可能传 TIMESTAMP 之类动态值,进指纹会破坏进程复用)
+ *
+ * 安全说明:apiKey 进 hash,但 hash 是单向的(SHA-256 截断 16 字符)、只存内存 Map 键、
+ * 不持久化、不日志输出。无密钥泄露风险。
+ * 同一 apiKey 多次会话产生同一 hash,在单用户本地工具的威胁模型下无问题;
+ * 若未来转多用户/多租户,此字段需重新评估。
+ */
+function buildConfigHash(config?: SpawnConfig): string {
+  if (!config) return ''
+
+  // model 字段先 strip 括号后缀(如 [1m]),否则 claude-sonnet-4-6 和 claude-sonnet-4-6[1m]
+  // 会产生不同 hash 但 spawn 出来的进程行为相同。
+  const normalizedModel = (config.model || '').replace(/\[.*?\]/g, '')
+
+  // disallowedTools 排序后 join,顺序变化不应触发新 entry
+  const sortedDisallowed = config.disallowedTools ? [...config.disallowedTools].sort().join(',') : ''
+
+  const fingerprint = JSON.stringify({
+    permissionMode: config.permissionMode ?? '',
+    mcpConfig: config.mcpConfig ?? '',
+    apiKey: config.apiKey ?? '',
+    baseUrl: config.baseUrl ?? '',
+    model: normalizedModel,
+    command: config.command ?? '',
+    args: config.args ?? [],
+    format: config.format ?? '',
+    promptAsArg: config.promptAsArg ?? false,
+    disallowedTools: sortedDisallowed,
+  })
+
+  // 空对象的 hash 也是固定值,所以"全 undefined"的 config 仍会产生一个 hash
+  // 检查:如果所有字段都是默认值,fingerprint 是 {"permissionMode":"","mcpConfig":"",...}
+  // 用一个常量比较来判断是否"无指纹相关字段",避免给每个无配置 entry 都加一个相同的尾巴
+  const EMPTY_FINGERPRINT = JSON.stringify({
+    permissionMode: '', mcpConfig: '', apiKey: '', baseUrl: '', model: '',
+    command: '', args: [], format: '', promptAsArg: false, disallowedTools: '',
+  })
+  if (fingerprint === EMPTY_FINGERPRINT) return ''
+
+  return ':' + createHash('sha256').update(fingerprint).digest('hex').slice(0, 16)
+}
+
 // Global registry to survive Next.js module reloads
 // In dev mode, Next.js reloads modules on every request, which would
 // clear the registry and lose process references. Using globalThis ensures
@@ -189,7 +240,9 @@ class ProcessRegistry {
 
   private toEffectiveKey(key: string, config?: SpawnConfig): string {
     const toolsHash = buildToolsHash(config?.allowedTools)
-    return toolsHash ? `${key}${toolsHash}` : key
+    const configHash = buildConfigHash(config)
+    const suffix = toolsHash + configHash
+    return suffix ? `${key}${suffix}` : key
   }
 
   getOrCreate(key: string, config: SpawnConfig): ProcessEntry {
@@ -1054,10 +1107,20 @@ class ProcessRegistry {
    * Internal callers that already hold an entry reference must use
    * killEntryIfCurrent(key, entry) to avoid killing a newer replacement entry.
    */
-  killEntry(key: string): void {
-    const entry = this.registry.get(key)
-    if (!entry) return
-    this.killEntryIfCurrent(key, entry)
+  killEntry(key: string, config?: SpawnConfig): void {
+    if (config) {
+      // 有 config 时用精确的 effectiveKey
+      const effectiveKey = this.toEffectiveKey(key, config)
+      const entry = this.registry.get(effectiveKey)
+      if (entry) this.killEntryIfCurrent(effectiveKey, entry)
+    } else {
+      // 无 config 时扫 registry 匹配 key 前缀(兼容杀手锏 api)
+      for (const [entryKey, entry] of this.registry) {
+        if (entryKey === key || entryKey.startsWith(key + ':')) {
+          this.killEntryIfCurrent(entryKey, entry)
+        }
+      }
+    }
   }
 
   private killEntryIfCurrent(key: string, expectedEntry: ProcessEntry): void {
