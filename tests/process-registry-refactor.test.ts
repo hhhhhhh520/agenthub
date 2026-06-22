@@ -498,4 +498,86 @@ describe('ProcessRegistry refactor regressions', () => {
     // 清理 entry —— 否则 spawnProcess 创建的 idle cleanup 定时器会泄漏到下个测试
     processRegistry.killEntry('mutex-timeout')
   }, 10000)
+
+  // ====================  2c.1 清理统一  ====================
+
+  it('cleanupEntry is idempotent (cleanedUp flag guards multiple invocations)', () => {
+    // 直接测 cleanupEntry 的幂等性:多次调用安全,不重复清理映射/唤醒/unlink
+    const entry = processRegistry.getOrCreate('cleanup-idem', { workDir: '/dir' })
+    expect(entry.cleanedUp).toBe(false)
+
+    // 塞一个 fake permission 看 cleanup 会不会清掉
+    entry.pendingPermissions.set('req-1', {
+      requestId: 'req-1', toolName: 'X', toolInput: {}, resolve: () => {}
+    } as any)
+
+    // 第一次 cleanup
+    ;(processRegistry as any).cleanupEntry(entry)
+    expect(entry.cleanedUp).toBe(true)
+    expect(entry.alive).toBe(false)
+    expect(entry.pendingPermissions.size).toBe(0)  // ← 摘 .clear() 这条会红
+
+    // 第二次 cleanup 必须是 no-op(幂等):再塞一个 entry 不会被清(因为 cleanedUp=true 直接 return)
+    entry.pendingPermissions.set('req-2', {
+      requestId: 'req-2', toolName: 'X', toolInput: {}, resolve: () => {}
+    } as any)
+    ;(processRegistry as any).cleanupEntry(entry)
+    // 第二次没有清,所以这条还在(证明真的 no-op,不是重复跑)
+    expect(entry.pendingPermissions.size).toBe(1)
+
+    processRegistry.killEntry('cleanup-idem')
+  })
+
+  it('killEntryIfCurrent clears pendingPermissions Map (not just requestIdToKey)', () => {
+    // 复审挂的修补:pendingPermissions.clear() 漏了 —— 之前只删 requestIdToKey 反向索引,Map 本体残留
+    // 现在走 cleanupEntry,Map 也被清空
+    const entry = processRegistry.getOrCreate('clear-perm', { workDir: '/dir' })
+    entry.pendingPermissions.set('req-A', {
+      requestId: 'req-A', toolName: 'X', toolInput: {}, resolve: () => {}
+    } as any)
+    expect(entry.pendingPermissions.size).toBe(1)
+
+    processRegistry.killEntry('clear-perm')
+    // entry 被 kill 后 pendingPermissions Map 应该清空(走 cleanupEntry)
+    expect(entry.pendingPermissions.size).toBe(0)  // ← 摘 .clear() 这条会红
+  })
+
+  it('readNdjsonRound symmetrically flushes bufferStr before throwing to rescue sessionID', async () => {
+    // 对称于 readRound 的 bufferStr 抢救:NDJSON 协议下 sessionID 卡在 bufferStr 末尾(无换行)
+    // 应当在 throw 之前 flush 一次,把 sessionID 注入 entry.sessionId
+    const procA = createFakeProcess()
+    fakeProc = procA
+    mockSpawn.mockReturnValue(procA)
+
+    const entry = processRegistry.getOrCreate('ndjson-flush', {
+      workDir: '/dir',
+      format: 'ndjson',
+      promptAsArg: true,  // 不写 stdin
+    })
+    expect(entry.sessionId).toBeNull()
+
+    const gen = (processRegistry as any).readNdjsonRound('ndjson-flush', entry, 'prompt')
+
+    // 异步写数据 + 死亡:让 readNdjsonRound 先进入 while 循环,onData 把数据 push 到 bufferStr,
+    // 然后死亡触发 throw 路径,flushTailForSessionId 应当抢救出 sessionID
+    setTimeout(() => {
+      procA.stdout.write(Buffer.from(JSON.stringify({ sessionID: 'sess-from-ndjson-tail' })))  // 无换行
+      procA.exitCode = 1
+    }, 30)
+
+    try {
+      while (true) {
+        const r = await Promise.race([
+          gen.next(),
+          new Promise(res => setTimeout(() => res({ done: true, value: undefined } as any), 500)),
+        ]) as any
+        if (r.done) break
+      }
+    } catch {}
+
+    // flushTailForSessionId 应当从 bufferStr 抢救出 sessionID(NDJSON 字段名是 sessionID)
+    expect(entry.sessionId).toBe('sess-from-ndjson-tail')  // ← 摘 ndjson 的 flush 这条会红
+
+    processRegistry.killEntry('ndjson-flush')
+  }, 10000)
 })
