@@ -17,6 +17,9 @@ interface ProcessEntry {
   workDir: string
   permissionMode: string
   pendingPermissions: Map<string, PendingPermission>
+  // readRound 的 Promise.race 等待集合：进程级生命周期，跨 send 调用复用（持久 CLI 进程）。
+  // 不能和 pendingPermissions Map 合并 —— 那个按 requestId 查回调，这个按 promise 实例 race。
+  permissionWaiters: Set<Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }>>
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
@@ -282,6 +285,7 @@ class ProcessRegistry {
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
+      permissionWaiters: new Set(),
       format: config.format || 'claude',
       stderrBuffer: '',
       promptAsArg: config.promptAsArg || false,
@@ -447,7 +451,12 @@ class ProcessRegistry {
     const roundPromise = new Promise<void>((resolve) => {
       resolveRound = resolve
     })
-    const pendingPermissionSet = new Set<Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>>()
+    // permissionWaiters 跨 send 复用 entry，进入新一轮 readRound 时应当为空。
+    // 非空说明上一轮有漏删（理论不应发生）—— 警告并兜底清理，避免污染本轮 race。
+    if (entry.permissionWaiters.size > 0) {
+      console.warn(`[ProcessRegistry ${key}] WARN: readRound entered with ${entry.permissionWaiters.size} stale permissionWaiters, clearing`)
+      entry.permissionWaiters.clear()
+    }
     let bufferStr = ''
     let lastChunkTime = Date.now()
     const decoder = new TextDecoder()
@@ -502,10 +511,11 @@ class ProcessRegistry {
             permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
               const wrappedResolve = (response: { behavior: 'allow' | 'deny'; updatedInput?: any }) => {
                 resolve(response)
-                // 守卫：若未来某条路径在 executor 同步阶段就 resolve，
-                // permissionPromise 此刻仍是 undefined，delete(undefined) 会让真正的 promise 残留在 Set 里。
+                // 防御未来同步 short-circuit resolve 路径；当前所有调用路径都是异步的（respondPermission /
+                // respondPermissionByRequestId / control_cancel_request），守卫不拦真实回归。
+                // permissionPromise 此刻仍是 undefined 的话 delete(undefined) 会让真正的 promise 残留在 Set 里。
                 if (permissionPromise) {
-                  pendingPermissionSet.delete(permissionPromise)
+                  entry.permissionWaiters.delete(permissionPromise)
                 }
               }
               const pending: PendingPermission = {
@@ -516,7 +526,7 @@ class ProcessRegistry {
               }
               entry.pendingPermissions.set(requestId, pending)
             })
-            pendingPermissionSet.add(permissionPromise)
+            entry.permissionWaiters.add(permissionPromise)
           }
 
           if (event.type === 'control_cancel_request') {
@@ -629,7 +639,7 @@ class ProcessRegistry {
           new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
         ]
         if (roundPromise) waits.push(roundPromise.then(() => true))
-        for (const permPromise of pendingPermissionSet) {
+        for (const permPromise of entry.permissionWaiters) {
           waits.push(permPromise.then(() => false))
         }
 
