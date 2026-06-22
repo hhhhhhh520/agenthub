@@ -112,6 +112,7 @@ prisma/
   - **权限路由**：`respondPermissionByRequestId(requestId, result)` 通过 `requestIdToKey` 反向索引 O(1) 查找进程，解决 permission route 无法构造 `effectiveKey`（含 toolsHash）的问题。失败返回 404
   - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；`requestIdToKey: Map<string, string>` 反向索引；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
+  - **entry 互斥锁**：同 effectiveKey 并发 send 用 FIFO baton-passing 锁(`entry.busy` + `entry.busyWaiters`)串行化 stdin.write + readRound。`acquireLock` 超时 5min 抛 `EntryBusyTimeoutError`;entry 死亡抛 `EntryDiedWhileWaitingError` 触发 retry 重建。锁在 `finally` 释放,每次 retry iteration 独立 acquire/release
 - **错误分类**：`isPermanentError()` 区分永久错误（API_KEY_INVALID 等）和瞬时错误；永久错误不重试，瞬时错误指数退避 1s→2s→4s，最多重试 3 次。stderr 输出累积到 `entry.stderrBuffer`，进程退出时拼入错误消息供 `isPermanentError` 匹配；ndjson 格式的 error 事件若匹配永久错误模式则立即 throw 不等进程退出
 - **优雅关闭**：`gracefulShutdown()` 两阶段：SIGTERM → 5s → SIGKILL；注册 SIGTERM/SIGINT/beforeExit
 - **Wall-clock 超时**：`orchestrator/timeout.ts` 的 `withTimeout` 包装 async generator，超时抛 `TimeoutError` 并调用 `onTimeout` 清理（`gracefulKillEntry` 两阶段杀进程）。5 个核心函数有超时保护：callLLM/callLLMForAnalysis(2min)、executeSingleAgent/executeTaskBatch(15min)、runDiscussion(3min/轮)。全局 50 分钟 deadline 从 SSE 流开始算。catch 块区分 `TimeoutError` 不走 fallback 防连锁挂起
@@ -217,6 +218,8 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
 - **ProcessRegistry 内部禁止直接调 `killEntry(key)`** — 内部已持有 entry 的路径必须用私有 `killEntryIfCurrent(key, expectedEntry)`,它会校验 `registry.get(key) === expectedEntry`。公开 `killEntry(key)` 仅作外部兼容入口。违反会让旧进程的 exit handler 误删同 key 新 entry(僵尸进程泄漏)
 - **`gracefulKillEntry(key, config?)` 调用方必须传 config** — 当 agent 配了 allowedTools 时,registry 用 `key+toolsHash` 索引,不传 config 内部 `toEffectiveKey` 会 miss → 杀进程无效,超时变哑炮。orchestrator 三处 onTimeout 都需要传完整的 `{ workDir, allowedTools? }`
+- **同 effectiveKey 并发 send 必须经 `acquireLock`/`releaseLock`** — ProcessRegistry 的 entry 互斥锁用 FIFO baton-passing(`entry.busy` + `entry.busyWaiters`),保护 stdin.write + readRound 临界区。绕过会让两路 send 的 stdin/stdout 交错 → Claude CLI 收到乱码 JSON。release 必须在 `finally`,同步 throw 路径也要释放。retry iteration 独立 acquire/release,不跨 retry
+- **`toEffectiveKey` 的指纹字段不能漏** — 改 apiKey/model/baseUrl/mcpConfig/permissionMode/command/args/format/disallowedTools 必须触发新进程(进 `buildConfigHash`),否则旧 entry 用老配置继续跑(review #13:配置改了 10 分钟不生效)。`env`/`sessionId`/`workDir`/`allowedTools` 不进 config hash(env 开放容器可能含动态值,进指纹会破坏进程复用)
 - **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`,共享同一个 CLI 进程,并行执行时输出完全相同
 - 详见 `docs/design/workspace-and-permissions.md`
 
