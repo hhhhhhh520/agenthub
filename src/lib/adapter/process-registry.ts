@@ -20,6 +20,11 @@ interface ProcessEntry {
   // readRound 的 Promise.race 等待集合：进程级生命周期，跨 send 调用复用（持久 CLI 进程）。
   // 不能和 pendingPermissions Map 合并 —— 那个按 requestId 查回调，这个按 promise 实例 race。
   permissionWaiters: Set<Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }>>
+  // entry 互斥锁：保护 stdin.write + readRound 这段临界区。同 effectiveKey 多 send 必须 FIFO 串行。
+  // 释放采用 lock handoff（baton passing）：release 时直接把锁交给队首 waiter，期间 busy 不翻 false，
+  // 保证 FIFO 严格性 —— 新来的 acquireLock 在队列非空期间永远看到 busy=true 而排队。
+  busy: boolean
+  busyWaiters: Array<() => void>
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
@@ -59,6 +64,22 @@ const IDLE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 const MAX_SEND_RETRIES = 3
 const NO_DATA_TIMEOUT_MS = 60 * 1000 // 60 seconds
 const BASE_RETRY_DELAY_MS = 1000 // 1s base for exponential backoff
+const LOCK_WAIT_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes — 等锁超时，和"用户能接受等多久"对齐
+const MAX_DIE_WHILE_WAITING = 5       // EntryDiedWhileWaitingError 连续触发上限，防止底层 bug 死循环
+
+// Error classes for lock wait failures
+class EntryBusyTimeoutError extends Error {
+  constructor(key: string, waitedMs: number) {
+    super(`Entry busy for key=${key} after waiting ${waitedMs}ms`)
+    this.name = 'EntryBusyTimeoutError'
+  }
+}
+class EntryDiedWhileWaitingError extends Error {
+  constructor(key: string) {
+    super(`Entry died while waiting for lock: key=${key}`)
+    this.name = 'EntryDiedWhileWaitingError'
+  }
+}
 
 // Error classification: permanent errors should not be retried
 const PERMANENT_ERROR_PATTERNS = [
@@ -286,6 +307,8 @@ class ProcessRegistry {
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
       permissionWaiters: new Set(),
+      busy: false,
+      busyWaiters: [],
       format: config.format || 'claude',
       stderrBuffer: '',
       promptAsArg: config.promptAsArg || false,
@@ -295,6 +318,11 @@ class ProcessRegistry {
       entry.alive = false
       for (const [requestId] of entry.pendingPermissions) {
         this.requestIdToKey.delete(requestId)
+      }
+      // 进程自然 exit 也要唤醒锁等待者(否则 B 会卡到 LOCK_WAIT_TIMEOUT_MS)
+      const waiters = entry.busyWaiters.splice(0)
+      for (const w of waiters) {
+        try { w() } catch {}
       }
       if (this.registry.get(key) === entry) {
         this.registry.delete(key)
@@ -322,10 +350,75 @@ class ProcessRegistry {
     return entry
   }
 
+  /**
+   * Acquire entry lock. FIFO baton-passing：被 release 唤醒的 waiter 醒来时 busy 已经是 true(handoff),
+   * 不再翻锁。新调用方在队列非空期间会看到 busy=true 自动排队,FIFO 严格。
+   *
+   * 抛错情况:
+   *   - entry.alive === false 已经死了 → EntryDiedWhileWaitingError(让 send 走 retry 顶部重查 registry)
+   *   - 等锁超过 LOCK_WAIT_TIMEOUT_MS → EntryBusyTimeoutError(不可恢复)
+   */
+  private acquireLock(entry: ProcessEntry, key: string): Promise<void> {
+    // 快路径 1:entry 已死,不授予死 entry 锁
+    if (!entry.alive) {
+      return Promise.reject(new EntryDiedWhileWaitingError(key))
+    }
+    // 快路径 2:无人持锁,直接拿
+    if (!entry.busy) {
+      entry.busy = true
+      return Promise.resolve()
+    }
+    // 慢路径:排队
+    return new Promise<void>((resolve, reject) => {
+      let resolved = false
+      let timer: NodeJS.Timeout | null = null
+
+      const waiter = () => {
+        if (resolved) return
+        resolved = true
+        if (timer) clearTimeout(timer)
+        if (!entry.alive) {
+          // killEntryIfCurrent 唤醒后 entry 已死,不接锁,让上层重查 registry
+          reject(new EntryDiedWhileWaitingError(key))
+          return
+        }
+        // handoff 保证 busy 已经是 true,这里只 resolve
+        resolve()
+      }
+
+      entry.busyWaiters.push(waiter)
+
+      timer = setTimeout(() => {
+        if (resolved) return
+        resolved = true
+        // 从队列摘自己,避免 release 调到已超时的 waiter
+        const idx = entry.busyWaiters.indexOf(waiter)
+        if (idx >= 0) entry.busyWaiters.splice(idx, 1)
+        reject(new EntryBusyTimeoutError(key, LOCK_WAIT_TIMEOUT_MS))
+      }, LOCK_WAIT_TIMEOUT_MS)
+    })
+  }
+
+  /**
+   * Lock handoff: 如果有等待者,锁直接交给队首,entry.busy 不翻 false。
+   * 这保证了 FIFO 严格性 —— 任何在队列非空期间到来的 acquireLock 都会看到 busy=true 而排队,
+   * 不会和被唤醒的队首 race 抢锁。只有当队列空时 busy 才真的翻 false。
+   */
+  private releaseLock(entry: ProcessEntry): void {
+    const next = entry.busyWaiters.shift()
+    if (next) {
+      // 不翻 false,handoff 给队首 waiter
+      next()
+    } else {
+      entry.busy = false
+    }
+  }
+
   async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
     let attempt = 0
     let lastError: string | null = null
     let latestSessionId = config?.sessionId || null
+    let dieWhileWaitingCount = 0  // EntryDiedWhileWaitingError 连续触发次数,触顶就 abort 防底层 bug 死循环
 
     const effectiveKey = this.toEffectiveKey(key, config)
 
@@ -347,7 +440,13 @@ class ProcessRegistry {
         entry.stderrBuffer = ''
       }
 
+      // 锁姿势:每次 retry iteration 独立 acquire/release。
+      // 不跨 retry —— retry 之间的 exponential backoff 不应持锁,语义上违反"保护共享资源"。
+      let lockAcquired = false
       try {
+        await this.acquireLock(entry, effectiveKey)
+        lockAcquired = true
+
         // Yield retry status if this is a retry attempt
         if (attempt > 0) {
           yield { type: 'status', content: 'process crashed, retrying...', data: { retry: attempt } }
@@ -368,6 +467,23 @@ class ProcessRegistry {
         return  // Success — exit retry loop
 
       } catch (err) {
+        // entry 在锁等待期间死了 —— 不消耗 retry budget,回顶部重查 registry
+        if (err instanceof EntryDiedWhileWaitingError) {
+          dieWhileWaitingCount++
+          if (dieWhileWaitingCount >= MAX_DIE_WHILE_WAITING) {
+            const errMsg = `Entry repeatedly died while waiting for lock (${dieWhileWaitingCount} times), aborting`
+            yield { type: 'error', content: errMsg }
+            throw new Error(errMsg)
+          }
+          continue  // 注意:finally 会先跑,但 lockAcquired=false 所以不释放
+        }
+
+        // 前面的 send 占着锁不还 —— retry 也没用
+        if (err instanceof EntryBusyTimeoutError) {
+          yield { type: 'error', content: err.message }
+          throw err
+        }
+
         if (entry.sessionId) {
           latestSessionId = entry.sessionId
         }
@@ -394,6 +510,14 @@ class ProcessRegistry {
           console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
           await new Promise(resolve => setTimeout(resolve, delay))
+        }
+      } finally {
+        // 关键:同步 throw 路径(readRound 抛错、stdin.write 抛错)也要释放锁。
+        // lockAcquired 标志避免"acquireLock 自己抛错时误释放从未持有的锁"。
+        // killEntryIfCurrent 路径已经把 entry 从 registry 移除,但其他 send 持有的 entry 引用
+        // 仍可能在 busyWaiters 里 —— 必须 release 才能 handoff 给队首。
+        if (lockAcquired) {
+          this.releaseLock(entry)
         }
       }
     }
@@ -890,6 +1014,14 @@ class ProcessRegistry {
     }
 
     expectedEntry.alive = false
+
+    // 唤醒所有锁等待者 —— alive=false 已设,waiter 醒来检查到死亡会抛 EntryDiedWhileWaitingError。
+    // 必须先 splice 出来再调用,防止 waiter 内部再修改 busyWaiters。
+    const waiters = expectedEntry.busyWaiters.splice(0)
+    for (const w of waiters) {
+      try { w() } catch {}
+    }
+
     const pid = expectedEntry.process.pid
     if (pid) {
       if (process.platform === 'win32') {
