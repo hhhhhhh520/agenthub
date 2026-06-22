@@ -159,19 +159,27 @@ class ProcessRegistry {
     }
   }
 
+  private toEffectiveKey(key: string, config?: SpawnConfig): string {
+    const toolsHash = buildToolsHash(config?.allowedTools)
+    return toolsHash ? `${key}${toolsHash}` : key
+  }
+
   getOrCreate(key: string, config: SpawnConfig): ProcessEntry {
-    // 工具配置变化时生成不同 key，避免复用旧进程导致限制不生效
-    const toolsHash = buildToolsHash(config.allowedTools)
-    const effectiveKey = toolsHash ? `${key}${toolsHash}` : key
+    const effectiveKey = this.toEffectiveKey(key, config)
 
     const existing = this.registry.get(effectiveKey)
+    // CONTRACT: alive + exitCode === null 双重检查必须保留。
+    // 它防御 "exit 事件已触发但 handler 还没跑" 的窗口期：
+    //   - alive 在 exit handler 内被设为 false
+    //   - exitCode 由 Node 同步置位（早于 handler 派发）
+    // 任何后续重构不得删除其中任何一项。
     if (existing && existing.alive && existing.process.exitCode === null) {
       existing.lastActive = Date.now()
       return existing
     }
 
     if (existing) {
-      this.killEntry(effectiveKey)
+      this.killEntryIfCurrent(effectiveKey, existing)
     }
     return this.spawnProcess(effectiveKey, config)
   }
@@ -284,7 +292,9 @@ class ProcessRegistry {
       for (const [requestId] of entry.pendingPermissions) {
         this.requestIdToKey.delete(requestId)
       }
-      this.registry.delete(key)
+      if (this.registry.get(key) === entry) {
+        this.registry.delete(key)
+      }
     })
 
     if (proc.stderr) {
@@ -311,10 +321,9 @@ class ProcessRegistry {
   async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
     let attempt = 0
     let lastError: string | null = null
+    let latestSessionId = config?.sessionId || null
 
-    // 与 getOrCreate 保持一致：附加 tools hash
-    const toolsHash = buildToolsHash(config?.allowedTools)
-    const effectiveKey = toolsHash ? `${key}${toolsHash}` : key
+    const effectiveKey = this.toEffectiveKey(key, config)
 
     while (attempt <= MAX_SEND_RETRIES) {
       let entry = this.registry.get(effectiveKey)
@@ -324,7 +333,11 @@ class ProcessRegistry {
         if (attempt > 0 && !config) {
           throw new Error(`Process died and no config available to rebuild for key: ${effectiveKey}`)
         }
-        if (entry) this.killEntry(effectiveKey)
+        const resumeSessionId = entry?.sessionId || latestSessionId
+        if (resumeSessionId && config) {
+          config = { ...config, sessionId: resumeSessionId }
+        }
+        if (entry) this.killEntryIfCurrent(effectiveKey, entry)
         if (!config) throw new Error(`Process entry not found for key: ${effectiveKey}`)
         entry = this.spawnProcess(effectiveKey, config)
         entry.stderrBuffer = ''
@@ -338,19 +351,22 @@ class ProcessRegistry {
 
         // 根据协议格式分发
         if (entry.format === 'ndjson') {
-          yield* this.readNdjsonRound(key, entry, fullPrompt)
+          yield* this.readNdjsonRound(effectiveKey, entry, fullPrompt)
         } else {
-          yield* this.readRound(key, entry, fullPrompt, imageAttachments)
+          yield* this.readRound(effectiveKey, entry, fullPrompt, imageAttachments)
         }
 
         // 一次性进程清理（ndjson 格式，进程已自然退出）
         if (entry.format === 'ndjson') {
-          this.killEntry(effectiveKey)
+          this.killEntryIfCurrent(effectiveKey, entry)
         }
 
         return  // Success — exit retry loop
 
       } catch (err) {
+        if (entry.sessionId) {
+          latestSessionId = entry.sessionId
+        }
         lastError = err instanceof Error ? err.message : String(err)
         attempt++
 
@@ -360,7 +376,7 @@ class ProcessRegistry {
           // 一次性进程清理
           const entry = this.registry.get(effectiveKey)
           if (entry?.format === 'ndjson') {
-            this.killEntry(effectiveKey)
+            this.killEntryIfCurrent(effectiveKey, entry)
           }
           yield { type: 'error', content: lastError }
           throw new Error(lastError)
@@ -368,7 +384,8 @@ class ProcessRegistry {
 
         if (attempt <= MAX_SEND_RETRIES) {
           // Kill old process and prepare for retry with exponential backoff
-          this.killEntry(effectiveKey)
+          const entry = this.registry.get(effectiveKey)
+          if (entry) this.killEntryIfCurrent(effectiveKey, entry)
           const delay = getRetryDelay(attempt - 1)
           console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
@@ -380,7 +397,7 @@ class ProcessRegistry {
     // 一次性进程失败后也清理
     const entry = this.registry.get(effectiveKey)
     if (entry?.format === 'ndjson') {
-      this.killEntry(effectiveKey)
+      this.killEntryIfCurrent(effectiveKey, entry)
     }
 
     // All attempts exhausted — yield error for frontend notification, then throw
@@ -430,7 +447,7 @@ class ProcessRegistry {
     const roundPromise = new Promise<void>((resolve) => {
       resolveRound = resolve
     })
-    const pendingPermissionPromises: Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>[] = []
+    const pendingPermissionSet = new Set<Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>>()
     let bufferStr = ''
     let lastChunkTime = Date.now()
     const decoder = new TextDecoder()
@@ -481,16 +498,21 @@ class ProcessRegistry {
               }
             })
             this.requestIdToKey.set(requestId, key)
-            const permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
+            let permissionPromise: Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>
+            permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
+              const wrappedResolve = (response: { behavior: 'allow' | 'deny'; updatedInput?: any }) => {
+                resolve(response)
+                pendingPermissionSet.delete(permissionPromise)
+              }
               const pending: PendingPermission = {
                 requestId,
                 toolName: request.tool_name,
                 toolInput: request.input,
-                resolve,
+                resolve: wrappedResolve,
               }
               entry.pendingPermissions.set(requestId, pending)
-          })
-            pendingPermissionPromises.push(permissionPromise)
+            })
+            pendingPermissionSet.add(permissionPromise)
           }
 
           if (event.type === 'control_cancel_request') {
@@ -589,7 +611,7 @@ class ProcessRegistry {
           new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
         ]
         if (roundPromise) waits.push(roundPromise.then(() => true))
-        for (const permPromise of pendingPermissionPromises) {
+        for (const permPromise of pendingPermissionSet) {
           waits.push(permPromise.then(() => false))
         }
 
@@ -820,38 +842,48 @@ class ProcessRegistry {
     return this.registry.get(key)?.sessionId || null
   }
 
+  /**
+   * Public compatibility API. Kills the current entry for key.
+   * Internal callers that already hold an entry reference must use
+   * killEntryIfCurrent(key, entry) to avoid killing a newer replacement entry.
+   */
   killEntry(key: string): void {
     const entry = this.registry.get(key)
     if (!entry) return
+    this.killEntryIfCurrent(key, entry)
+  }
 
-    for (const [requestId] of entry.pendingPermissions) {
+  private killEntryIfCurrent(key: string, expectedEntry: ProcessEntry): void {
+    if (this.registry.get(key) !== expectedEntry) return
+
+    for (const [requestId] of expectedEntry.pendingPermissions) {
       this.requestIdToKey.delete(requestId)
     }
 
-    entry.alive = false
-    const pid = entry.process.pid
+    expectedEntry.alive = false
+    const pid = expectedEntry.process.pid
     if (pid) {
       if (process.platform === 'win32') {
         try {
           spawn('taskkill', ['/pid', pid.toString(), '/T', '/F'], { shell: false })
         } catch {
-          entry.process.kill('SIGTERM')
+          expectedEntry.process.kill('SIGTERM')
         }
       } else {
         try {
           process.kill(-pid, 'SIGTERM')
         } catch {
-          entry.process.kill('SIGTERM')
+          expectedEntry.process.kill('SIGTERM')
         }
       }
     }
 
-    if (entry.mcpConfigFile) {
-      try { unlinkSync(entry.mcpConfigFile) } catch {}
+    if (expectedEntry.mcpConfigFile) {
+      try { unlinkSync(expectedEntry.mcpConfigFile) } catch {}
     }
 
-    if (entry.openCodeConfigFile) {
-      try { unlinkSync(entry.openCodeConfigFile) } catch {}
+    if (expectedEntry.openCodeConfigFile) {
+      try { unlinkSync(expectedEntry.openCodeConfigFile) } catch {}
     }
 
     this.registry.delete(key)
@@ -861,7 +893,7 @@ class ProcessRegistry {
     const entry = this.registry.get(key)
     if (!entry || !entry.alive) return
     const pid = entry.process.pid
-    if (!pid) { this.killEntry(key); return }
+    if (!pid) { this.killEntryIfCurrent(key, entry); return }
 
     // Phase 1: 优雅关闭
     try {
@@ -875,7 +907,7 @@ class ProcessRegistry {
 
     // Phase 2: 强制杀
     if (entry.alive) {
-      this.killEntry(key)
+      this.killEntryIfCurrent(key, entry)
     }
   }
 
@@ -883,12 +915,12 @@ class ProcessRegistry {
     const now = Date.now()
     for (const [key, entry] of this.registry) {
       if (!entry.alive || entry.process.exitCode !== null) {
-        this.killEntry(key)
+        this.killEntryIfCurrent(key, entry)
         continue
       }
       // Only kill truly idle processes, not ones actively working
       if (entry.state === 'idle' && now - entry.lastActive > IDLE_TIMEOUT_MS) {
-        this.killEntry(key)
+        this.killEntryIfCurrent(key, entry)
       }
     }
 
@@ -896,15 +928,15 @@ class ProcessRegistry {
       const entries = Array.from(this.registry.entries())
       entries.sort((a, b) => a[1].lastActive - b[1].lastActive)
       const toKill = entries.slice(0, entries.length - MAX_PROCESSES)
-      for (const [key] of toKill) {
-        this.killEntry(key)
+      for (const [key, entry] of toKill) {
+        this.killEntryIfCurrent(key, entry)
       }
     }
   }
 
   killAll(): void {
-    for (const [key] of this.registry) {
-      this.killEntry(key)
+    for (const [key, entry] of this.registry) {
+      this.killEntryIfCurrent(key, entry)
     }
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer)
