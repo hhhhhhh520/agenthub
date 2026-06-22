@@ -172,8 +172,9 @@ describe('ProcessRegistry refactor regressions', () => {
     const { readFileSync } = await vi.importActual<typeof import('fs')>('fs')
     const source = readFileSync('src/lib/adapter/process-registry.ts', 'utf-8')
 
-    expect(source).toContain('pendingPermissionSet')
+    expect(source).toContain('permissionWaiters')
     expect(source).not.toContain('pendingPermissionPromises')
+    expect(source).not.toContain('pendingPermissionSet')  // 防回退：上一版的过渡名字
   })
 
   // ====================  2a 加固  ====================
@@ -255,9 +256,9 @@ describe('ProcessRegistry refactor regressions', () => {
   })
 
   it('resolved permission promise is removed from race set so subsequent waits do not include it', async () => {
-    // 行为断言：触发 permission_request -> respond -> 等到下一个 chunk
-    // 改动 6 修复后，respond 完的 promise 立即 splice 出 Set；
-    // 当前下一次 race 不再包含它，readRound 主循环回到 50ms 节流。
+    // 行为断言：触发 permission_request -> 必须进入 entry.permissionWaiters（size === 1）
+    // respondPermissionByRequestId 调用栈到 wrappedResolve 全是同步链 —— 返回时 size 立即变 0
+    // 改动 6 回退（Set 不删 resolved promise）的话下半段断言会红。
     const gen = processRegistry.send('perm-set-behavior', 'prompt', { workDir: '/dir' })[Symbol.asyncIterator]()
 
     setTimeout(() => {
@@ -271,20 +272,23 @@ describe('ProcessRegistry refactor regressions', () => {
     const first = await nextChunk(gen)
     expect(first.value.type).toBe('permission_request')
 
-    const t0 = Date.now()
+    // 取唯一 entry（无 allowedTools → effectiveKey === key，直接拿 values 更稳）
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+    const entries = [...registry.values()]
+    expect(entries).toHaveLength(1)
+    const entry = entries[0]
+
+    // 上半段：promise 已加入 Set
+    expect(entry.permissionWaiters.size).toBe(1)
+
     processRegistry.respondPermissionByRequestId('req-A', { behavior: 'allow' })
 
-    // 给 100ms 让 readRound 跑几轮 race；过去 (#14) 这段会忙等到 chunkQueue 出新东西或 round 完成；
-    // 现在已 resolved 的 promise 必须从 Set 里删掉，否则下一次 race 立刻被它抢先 -> 空转
-    await new Promise(r => setTimeout(r, 100))
+    // 下半段：respond 内部走 wrappedResolve 同步链，返回时 Set 已清 0
+    // 不加 await Promise.resolve()：链是同步的，加了反而误导
+    expect(entry.permissionWaiters.size).toBe(0)
 
     // 关闭流让 gen 退出
     fakeProc.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
     await gen.return?.(undefined)
-
-    // 断言：respond 后 50ms+ 才推进，说明 race 走的是 setTimeout 50ms 节流分支
-    // 不是被已 resolved permPromise 立刻抢走
-    const elapsed = Date.now() - t0
-    expect(elapsed).toBeGreaterThanOrEqual(50)
   })
 })
