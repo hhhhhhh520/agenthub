@@ -20,11 +20,15 @@ interface ProcessEntry {
   // readRound 的 Promise.race 等待集合：进程级生命周期，跨 send 调用复用（持久 CLI 进程）。
   // 不能和 pendingPermissions Map 合并 —— 那个按 requestId 查回调，这个按 promise 实例 race。
   permissionWaiters: Set<Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }>>
-  // entry 互斥锁：保护 stdin.write + readRound 这段临界区。同 effectiveKey 多 send 必须 FIFO 串行。
-  // 释放采用 lock handoff（baton passing）：release 时直接把锁交给队首 waiter，期间 busy 不翻 false，
+  // entry 互斥锁:保护 stdin.write + readRound 这段临界区。同 effectiveKey 多 send 必须 FIFO 串行。
+  // 释放采用 lock handoff(baton passing):release 时直接把锁交给队首 waiter,期间 busy 不翻 false,
   // 保证 FIFO 严格性 —— 新来的 acquireLock 在队列非空期间永远看到 busy=true 而排队。
   busy: boolean
   busyWaiters: Array<() => void>
+  // 幂等清理标志:cleanupEntry 第一行守卫,多次调用安全。
+  // 三处调用方(killEntryIfCurrent、gracefulKillEntry Phase 2、gracefulShutdown Phase 2)
+  // 都可能在不同时机调到同一 entry 的清理,标志保证非进程资源(映射、Set、临时文件)只清一次。
+  cleanedUp: boolean
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
@@ -309,21 +313,16 @@ class ProcessRegistry {
       permissionWaiters: new Set(),
       busy: false,
       busyWaiters: [],
+      cleanedUp: false,
       format: config.format || 'claude',
       stderrBuffer: '',
       promptAsArg: config.promptAsArg || false,
     }
 
     proc.on('exit', () => {
-      entry.alive = false
-      for (const [requestId] of entry.pendingPermissions) {
-        this.requestIdToKey.delete(requestId)
-      }
-      // 进程自然 exit 也要唤醒锁等待者(否则 B 会卡到 LOCK_WAIT_TIMEOUT_MS)
-      const waiters = entry.busyWaiters.splice(0)
-      for (const w of waiters) {
-        try { w() } catch {}
-      }
+      // 进程自然 exit 也要清理(否则 waiter 卡到 LOCK_WAIT_TIMEOUT_MS,permission Map 残留)
+      // cleanupEntry 幂等,即便 killEntryIfCurrent 先调过也安全
+      this.cleanupEntry(entry)
       if (this.registry.get(key) === entry) {
         this.registry.delete(key)
       }
@@ -414,6 +413,45 @@ class ProcessRegistry {
     }
   }
 
+  /**
+   * 清理 entry 的非进程资源:映射、Set、临时文件,并唤醒所有锁等待者。
+   * 幂等:多次调用安全(cleanedUp 标志守卫)。
+   *
+   * 职责边界:不杀进程。三处调用方(killEntryIfCurrent / gracefulKillEntry Phase 2 / gracefulShutdown Phase 2)
+   * 的"杀进程姿势"不同(SIGTERM 立即 vs 5s 优雅 vs 全量 SIGKILL),由调用方自己负责。
+   * cleanupEntry 只统一处理:alive 标志、映射清理、permission Map、waiter 唤醒、临时文件。
+   *
+   * 注意:唤醒 waiters 时,waiter 检查 alive=false 后会 reject EntryDiedWhileWaitingError。
+   * 在 gracefulShutdown 进程退出场景下,这些 rejection 可能不会被 catch(acquirer 自身也快被进程退出干掉),
+   * 这是预期行为不是 bug。
+   */
+  private cleanupEntry(entry: ProcessEntry): void {
+    if (entry.cleanedUp) return
+    entry.cleanedUp = true
+
+    entry.alive = false
+
+    // 清 permission 映射 + 反向索引(防 respondPermission 找到已死 entry)
+    for (const [requestId] of entry.pendingPermissions) {
+      this.requestIdToKey.delete(requestId)
+    }
+    entry.pendingPermissions.clear()
+
+    // 唤醒所有锁等待者 —— 必须先 splice 出来再调用,防止 waiter 内部再修改 busyWaiters。
+    const waiters = entry.busyWaiters.splice(0)
+    for (const w of waiters) {
+      try { w() } catch {}
+    }
+
+    // 清理临时配置文件
+    if (entry.mcpConfigFile) {
+      try { unlinkSync(entry.mcpConfigFile) } catch {}
+    }
+    if (entry.openCodeConfigFile) {
+      try { unlinkSync(entry.openCodeConfigFile) } catch {}
+    }
+  }
+
   async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
     let attempt = 0
     let lastError: string | null = null
@@ -445,6 +483,7 @@ class ProcessRegistry {
       let lockAcquired = false
       try {
         await this.acquireLock(entry, effectiveKey)
+        // CONTRACT: 必须紧跟 acquireLock,中间禁止插入会 throw 的同步代码,否则 finally 漏 release
         lockAcquired = true
 
         // Yield retry status if this is a retry attempt
@@ -888,11 +927,25 @@ class ProcessRegistry {
     stdout.on('data', onData)
     stdout.on('close', onClose)
 
+    // 对称于 readRound 的 bufferStr 抢救:在 throw 之前抢救 bufferStr 中未换行的尾段,
+    // 至少把 sessionID 提取出来,这样 send() 的 catch 块就能把 sessionId 注入下一轮 spawn 的 config 里。
+    // NDJSON 协议字段名是 sessionID,和 readRound 的 session_id 不同。
+    const flushTailForSessionId = () => {
+      if (!bufferStr.trim() || entry.sessionId) return
+      try {
+        const event = JSON.parse(bufferStr)
+        if (event.sessionID) {
+          entry.sessionId = event.sessionID
+        }
+      } catch {}
+    }
+
     try {
       while (!streamClosed) {
         // Check if process died with non-zero exit code
         // Exit code 0 is success - wait for stream to close naturally
         if (!entry.alive || (entry.process.exitCode !== null && entry.process.exitCode !== 0)) {
+          flushTailForSessionId()
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
           const exitCode = entry.process.exitCode
           const stderr = entry.stderrBuffer.trim()
@@ -907,6 +960,7 @@ class ProcessRegistry {
           const elapsed = Math.round((Date.now() - lastChunkTime) / 1000)
           const stderr = entry.stderrBuffer.trim()
           console.error(`[ProcessRegistry ${key}] TIMEOUT (ndjson): No data for ${elapsed}s, pid=${entry.process.pid}, exitCode=${entry.process.exitCode}, stderr=${stderr.slice(-300)}`)
+          flushTailForSessionId()
           while (chunkQueue.length > 0) yield chunkQueue.shift()!
           throw new Error(`No data received for ${elapsed}s, process appears stalled. stderr: ${stderr.slice(-200)}`)
         }
@@ -1009,19 +1063,10 @@ class ProcessRegistry {
   private killEntryIfCurrent(key: string, expectedEntry: ProcessEntry): void {
     if (this.registry.get(key) !== expectedEntry) return
 
-    for (const [requestId] of expectedEntry.pendingPermissions) {
-      this.requestIdToKey.delete(requestId)
-    }
+    // 统一清理非进程资源(映射、permission Map、waiter 唤醒、临时文件)
+    this.cleanupEntry(expectedEntry)
 
-    expectedEntry.alive = false
-
-    // 唤醒所有锁等待者 —— alive=false 已设,waiter 醒来检查到死亡会抛 EntryDiedWhileWaitingError。
-    // 必须先 splice 出来再调用,防止 waiter 内部再修改 busyWaiters。
-    const waiters = expectedEntry.busyWaiters.splice(0)
-    for (const w of waiters) {
-      try { w() } catch {}
-    }
-
+    // 杀进程(本方法负责的部分)
     const pid = expectedEntry.process.pid
     if (pid) {
       if (process.platform === 'win32') {
@@ -1037,14 +1082,6 @@ class ProcessRegistry {
           expectedEntry.process.kill('SIGTERM')
         }
       }
-    }
-
-    if (expectedEntry.mcpConfigFile) {
-      try { unlinkSync(expectedEntry.mcpConfigFile) } catch {}
-    }
-
-    if (expectedEntry.openCodeConfigFile) {
-      try { unlinkSync(expectedEntry.openCodeConfigFile) } catch {}
     }
 
     this.registry.delete(key)
@@ -1126,7 +1163,7 @@ class ProcessRegistry {
       }
     }
 
-    // Phase 2: Wait 5s, then force kill survivors
+    // Phase 2: Wait 5s, then force kill survivors + cleanup
     setTimeout(() => {
       for (const [key, entry] of this.registry) {
         if (entry.alive && entry.process.exitCode === null) {
@@ -1141,15 +1178,8 @@ class ProcessRegistry {
             } catch {}
           }
         }
-      }
-      // Clean up temp files
-      for (const [, entry] of this.registry) {
-        if (entry.mcpConfigFile) {
-          try { unlinkSync(entry.mcpConfigFile) } catch {}
-        }
-        if (entry.openCodeConfigFile) {
-          try { unlinkSync(entry.openCodeConfigFile) } catch {}
-        }
+        // 统一清理(幂等:进程 exit handler 可能已经调过了,cleanedUp 标志兜底)
+        this.cleanupEntry(entry)
       }
       this.registry.clear()
       this.requestIdToKey.clear()
