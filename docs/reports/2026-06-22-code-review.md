@@ -11,10 +11,10 @@
 
 | 严重度 | 原始数量 | 已解决 | 未解决 |
 |--------|----------|--------|--------|
-| 🔴 P1 真高危 | 4 | 2 | **2** |
-| 🟠 P2 中等 | 25 | 8 | **17** |
+| 🔴 P1 真高危 | 4 | 4 | **0** |
+| 🟠 P2 中等 | 25 | 9 | **16** |
 | 🟡 P3 加固 | 19 | 0 | **19** |
-| **合计** | **48** | **10** | **38** |
+| **合计** | **48** | **13** | **35** |
 
 > **数字说明**: 原始报告声明 48 条（4 P1 + 25 P2 + 19 P3）。本报告逐条核对当前代码状态，P2 实际按编号列出至 #43（跨 6 个模块），编号延续至 #62；以原始声明总数为准，逐条状态见下文标注。
 
@@ -46,12 +46,12 @@
 **触发**: ① 任务运行 >60s（session-lock 超时）时的第二条消息；② `executeTaskBatch` 把同 agent 的两个无依赖任务并行派发（根本不过锁）。
 **后果**: 回答错发对象、result 提前结束、sessionId 归属错。数据正确性级 bug，用户无法察觉。
 
-### #3 sessionId 直接拼路径，无校验 🔴 未解决
+### #3 sessionId 直接拼路径，无校验 ✅ 已解决（2026-06-22 commit `170d5c0`）
 **文件**: `src/app/api/sessions/[id]/files/accept/route.ts:31-42`
 **问题**: `baseDir = join(cwd, 'workspaces', sessionId)`，sessionId 来自 URL 段，既无存在性校验也无格式校验。traversal 守卫只检查 filePath 不检查 sessionId。
 **后果**: `POST /api/sessions/<任意字符串>/files/accept` 可往任意 sessionId 目录写文件，无归属校验。若 Next 路由层不严，还能向上穿越。
 
-### #4 敏感路径拦截可绕过 🔴 未解决
+### #4 敏感路径拦截可绕过 ✅ 已解决（2026-06-22 commit `170d5c0`）
 **文件**: `src/app/api/sessions/[id]/files/accept/route.ts:6, 44-50`
 **问题**: `SENSITIVE_PATHS = ['.env','.git','node_modules','.next']`，用 `includes(part)` 精确分段匹配。
 **绕过方式**:
@@ -176,7 +176,7 @@
 **问题**: 目标存在时用 realpathSync，不存在时回退到普通 resolve（不解析中间目录的符号链接）。
 **后果**: 若 workDir 内已存在指向外部的符号链接目录，传 `<symlink>/newfile` 这类最终段不存在的路径可绕过校验写到 workDir 外。利用条件中等。
 
-### #26 下载路由对 sessionId 无校验 🟠 未解决
+### #26 下载路由对 sessionId 无校验 ✅ 已解决（2026-06-22 commit `170d5c0`）
 **文件**: `src/app/api/sessions/[id]/files/[filename]/route.ts:9-16`
 **问题**: filename 拦截了 `..`/`/`/`\`，但 sessionId 直接拼入路径，无存在性/格式校验，无归属校验。
 **后果**: 任意人可读取任意 session 工作区文件；若路由段能解码遍历序列还能目录上移。
@@ -294,7 +294,7 @@
 
 # 状态核对（2026-06-22 ProcessRegistry 6 步重构后）
 
-## 已解决 10 条（全部在 ProcessRegistry 模块）
+## 已解决 13 条
 
 | # | 严重度 | 问题 | 解决于 | Commit |
 |---|--------|------|--------|--------|
@@ -308,6 +308,9 @@
 | #16 | P2 | 超时进程不回收 | 2c.1 cleanupEntry | `5963771` |
 | #17 | P2 | NDJSON 丢尾行 | 2c.1 readNdjsonRound flush | `5963771` |
 | #18 | P2 | 崩溃丢 sessionId | 第1步+2a flush | `6ffb806`/`d78b2bc` |
+| #3 | P1 | sessionId 无校验/自证守卫 → RCE | 2026-06-22 UUID+isPathSafe+禁用 target | `170d5c0` |
+| #4 | P1 | 敏感路径绕过 + target=project RCE | 2026-06-22 前缀匹配+扩展+禁用 target | `170d5c0` |
+| #26 | P2 | 下载路由 sessionId 无校验 → 读 .env | 2026-06-22 UUID+findUnique | `170d5c0` |
 
 ## ⚠️ #54 诚实修正
 
@@ -324,7 +327,7 @@
 |------|------|----------|
 | M1 编排核心 | 5 | #5 #6 #7 #8 #10 #11（cliSessionId 丢失 / 依赖结果恒空 / parseJSON / 静默换人） |
 | M2 适配器层 | 1 | #19（OpenCode 权限白名单） |
-| M3 API 安全敏感 | 7 | #3 #4 #20 #22-#26（锁泄漏 / SVG XSS / symlink / 下载越界） |
+| M3 API 安全敏感 | 4 | #20 #22-#25（锁泄漏 / SVG XSS / symlink）— #3#4#26 已于 2026-06-22 修复 |
 | M4 API CRUD | 9 | #27-#35（含 #34 密钥明文） |
 | M5 lib+MCP | 3 | #36-#38（含 #38 主进程与 MCP 操作不同库） |
 | M6 前端 | 5 | #39-#43（含 #43 XSS） |
@@ -334,7 +337,6 @@
 
 | # | 问题 | 风险 |
 |---|------|------|
-| #3 + #4 | accept 路由 sessionId 无校验 + 敏感路径绕过 | 可拼成完整 RCE 链 |
 | #34 | providers/db 明文返回 apiKey | F12 抓包即拿到完整 API Key |
 | #43 | file-card downloadUrl 无 scheme 校验 | 存储型 XSS，可执行任意 JS |
 | #21 | SVG 内联 XSS | 同源脚本执行（次要，无登录态故无会话窃取） |
@@ -343,19 +345,22 @@
 
 # 优先级建议
 
-**今天就修**（本地用风险也不低）:
-- #3 #4（accept 路由那俩可拼成完整 RCE 链）
+**今天就修**:
+- #34 #43（密钥明文 / 存储型 XSS，两个安全高危）
 
 **这周修**:
-- #34 #43（密钥明文 / 存储型 XSS，两个安全高危）
 - #21（SVG XSS）
+- #20 #23 #24（锁泄漏相关，影响正常请求体验）
 
 **下周修**:
-- #20 #23 #24（锁泄漏相关，影响正常请求体验）
 - #6 #7 #8（编排核心功能性 bug）
+- #54 小修（opencode-adapter 存 configDir + cleanupEntry rmSync）
 
 **记下但不急**:
 - 其余 P2/P3，等顺手重构相关模块时一起带掉
+
+**本轮已修**（2026-06-22 commit `170d5c0`，Security Engineer 对抗性审查）:
+- #3 #4（accept RCE 链）+ #26（下载越界读 .env）
 
 ---
 
