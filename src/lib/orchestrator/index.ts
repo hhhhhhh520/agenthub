@@ -405,7 +405,7 @@ export async function executeTaskBatch(
               systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
             }),
             TIMEOUT.AGENT_TASK,
-            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey, { workDir: projectDir }) },
           )) {
             if (chunk.type === 'session') {
               capturedSessionId = chunk.content
@@ -503,7 +503,12 @@ export async function executeSingleAgent(
           attachments,
         }),
         TIMEOUT.AGENT_TASK,
-        { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+        {
+          onTimeout: () => processRegistry.gracefulKillEntry(registryKey, {
+            workDir: agent.workDir,
+            allowedTools: toolsList.length > 0 ? toolsList : undefined,
+          })
+        },
       )) {
         if (chunk.type === 'session') {
           capturedSessionId = chunk.content
@@ -557,7 +562,7 @@ export async function runDiscussion(
           for await (const chunk of withTimeout(
             adapter.send({ prompt: combinedPrompt }),
             TIMEOUT.DISCUSSION,
-            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey) },
+            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey, { workDir: projectDir || '' }) },
           )) {
             if (chunk.type === 'text') result += chunk.content
             onChunk(agent.name, chunk)
