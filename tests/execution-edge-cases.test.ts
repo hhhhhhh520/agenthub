@@ -349,4 +349,150 @@ describe('Execution — git diff boundary detection', () => {
     const allCalls = sendEvent.mock.calls.map(c => c[0].content)
     expect(allCalls.some(c => c.includes('越界修改'))).toBe(false)
   })
+
+  // ─── contract v1 §1.2 b 动作 6: declaredFiles 分级校验 ───
+  it('[动作 6] 敏感路径越界(.env)→ 任务硬失败,状态写 failed,不写 result', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'agent output', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    // Agent 偷偷改了 .env
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', '.env'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 应该 update 为 failed 状态(不是 completed)
+    const failedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'failed'
+    )
+    expect(failedUpdate).toBeDefined()
+    // failed update 里不应该写 result(避免污染下游 priorResults)
+    expect(failedUpdate![0].data.result).toBeUndefined()
+    // 不应该有 completed update
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeUndefined()
+
+    // sendEvent 应该报告敏感越界
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(true)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('.env'))).toBe(true)
+  })
+
+  it('[动作 6] 敏感路径越界(package.json)→ 任务硬失败', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'package.json'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const failedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'failed'
+    )
+    expect(failedUpdate).toBeDefined()
+  })
+
+  it('[动作 6] 普通越界(非敏感)→ 任务仍 completed + 软警告', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: false, quality: 'good',
+    }) })
+    // 越界但都不是敏感路径
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 任务仍标 completed
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+    expect(completedUpdate![0].data.result).toBe('done')
+
+    // 软警告仍发送
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界修改'))).toBe(true)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
+  })
+
+  it('[动作 6] declaredFiles 为空 → 跳过文件校验,任务 completed,无越界报警', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // declaredFiles 为空(纯讨论任务)
+    const task = makeTask({ declaredFiles: '[]' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'analysis done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: false, quality: 'good',
+    }) })
+    // Agent 即便没改文件也行;给一个改了的场景也不应报警
+    mocks.mockGetChangedFiles.mockReturnValue(['some/random/file.ts'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 任务 completed
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+
+    // declaredFiles 为空 → 不应有任何越界报警(普通或敏感)
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界'))).toBe(false)
+  })
+
+  it('[动作 6] 敏感越界失败后,依赖该 task 的下游应 blocked', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const upstream = makeTask({ id: 'task-1', description: '上游', declaredFiles: '["src/a.ts"]' })
+    const downstream = makeTask({ id: 'task-2', description: '下游', dependencies: '["task-1"]', declaredFiles: '["src/b.ts"]' })
+    mocks.mockTaskFindMany.mockResolvedValue([upstream, downstream])
+
+    // 上游跑完,但偷偷改了 .env
+    mocks.mockExecuteTaskBatch.mockResolvedValueOnce({
+      results: new Map([['task-1', { result: 'upstream output', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockGetChangedFiles.mockReturnValue(['src/a.ts', '.env'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 上游 → failed
+    const upstreamFailed = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'failed'
+    )
+    expect(upstreamFailed).toBeDefined()
+
+    // 下游 → blocked(由现有的依赖失败检测代码处理)
+    const downstreamBlocked = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-2' && c[0].data.status === 'blocked'
+    )
+    expect(downstreamBlocked).toBeDefined()
+  })
 })

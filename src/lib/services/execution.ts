@@ -3,6 +3,7 @@ import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestrat
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './shadow-git'
+import { pickSensitive } from './sensitive-paths'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
 
@@ -213,16 +214,46 @@ export async function handleExecution(
     for (const [taskId, { result, sessionId: cliSessionId }] of results) {
       allResults.set(taskId, result)
       const taskForTrace = tasks.find(t => t.id === taskId)
+
+      // contract v1 §1.2 b (动作 6): declaredFiles 分级校验
+      // 先算 declaredFiles / changedFiles / undeclared / sensitiveViolations,
+      // 根据是否命中敏感路径决定 task 最终 status
+      const declaredFiles: string[] = JSON.parse(taskForTrace?.declaredFiles || '[]')
+      const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
+      const undeclared = declaredFiles.length === 0
+        ? []  // declaredFiles 为空 = 跳过文件校验(纯讨论/分析任务合法)
+        : changedFiles.filter(f => !declaredFiles.includes(f))
+      const sensitiveViolations = pickSensitive(undeclared)
+      const isSensitiveFail = sensitiveViolations.length > 0
+
+      if (isSensitiveFail) {
+        // 硬失败: 敏感路径越界,任务 failed,下游 blocked
+        const msg = `[敏感路径越界] 任务 ${taskId} 未声明修改了敏感文件: ${sensitiveViolations.join(', ')}`
+        const failTrace = appendTrace(taskForTrace?.trace || '[]', {
+          ts: new Date().toISOString(), event: 'error', message: msg,
+        })
+        await prisma.task.update({
+          where: { id: taskId },
+          // 不持久化 result(避免污染下游 priorResults)
+          data: { status: 'failed', cliSessionId: cliSessionId || null, trace: failTrace },
+        })
+        if (taskForTrace) taskForTrace.status = 'failed'
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
+        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
+        continue  // 跳过本任务后续的 success 处理 / monitoring
+      }
+
       const successTrace = appendTrace(taskForTrace?.trace || '[]', {
         ts: new Date().toISOString(), event: 'success',
       })
-      // contract v1 §1.1: 持久化 result 到 DB，作为跨批权威载体
+      // contract v1 §1.1: 持久化 result 到 DB,作为跨批权威载体
       await prisma.task.update({
         where: { id: taskId },
         data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace, result },
       })
       if (taskForTrace) taskForTrace.result = result
-      // 同步 sessionId 到 SessionMember，供后续任务 fallback
+      // 同步 sessionId 到 SessionMember,供后续任务 fallback
       if (cliSessionId && taskForTrace?.assignedAgentId) {
         await prisma.sessionMember.updateMany({
           where: { sessionId, agentId: taskForTrace.assignedAgentId },
@@ -235,15 +266,13 @@ export async function handleExecution(
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })
       hasProgress = true
 
-      const declaredFiles: string[] = JSON.parse(task?.declaredFiles || '[]')
-      const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
-      const undeclared = changedFiles.filter(f => !declaredFiles.includes(f))
+      // contract v1 §1.2 b: 普通越界软警告(敏感越界已在上方硬失败 + continue 处理)
       if (undeclared.length > 0) {
         const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${undeclared.join(', ')}`
         await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
         sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
       } else if (changedFiles.length > 0) {
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成，修改了 ${changedFiles.join(', ')}` })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成,修改了 ${changedFiles.join(', ')}` })
       } else {
         sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成` })
       }
