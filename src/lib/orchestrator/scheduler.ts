@@ -4,6 +4,7 @@ export interface ScheduledTask {
   assignedAgent: string
   dependencies: string[]
   declaredFiles: string[]
+  outputSchema?: string  // contract v1 §1.2 a: 简化版 JSON schema，架构师拆任务时声明
   batch: number
 }
 
