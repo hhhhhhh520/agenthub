@@ -127,7 +127,7 @@ export async function handleArchitectPlan(
       )
 
       try {
-        const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[] }> }>(result, ['tasks'])
+        const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[]; output_schema?: string[] }> }>(result, ['tasks'])
         const idMap = new Map<number, string>()
         parsed.tasks.forEach(t => idMap.set(t.id, crypto.randomUUID()))
         scheduledTasks = topologicalSort(parsed.tasks.map(t => ({
@@ -136,6 +136,7 @@ export async function handleArchitectPlan(
           assignedAgent: t.assignedAgent,
           dependencies: t.dependencies.map(d => idMap.get(d)!).filter(Boolean),
           declaredFiles: t.declared_files || [],
+          outputSchema: t.output_schema ? JSON.stringify(t.output_schema) : undefined,
           batch: 0,
         })))
       } catch {
@@ -171,6 +172,7 @@ export async function handleArchitectPlan(
         sessionId,
         dependencies: JSON.stringify(task.dependencies),
         declaredFiles: JSON.stringify(task.declaredFiles),
+        outputSchema: task.outputSchema ?? null,
       },
     })
   }

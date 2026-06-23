@@ -99,6 +99,7 @@ model Task {
   correctionCount Int      @default(0)        // 纠偏重试计数器
   trace           String   @default("[]")     // JSON 数组，执行轨迹
   result          String?                     // contract v1 §1.1 主源：跨批权威交付物（持久化）
+  outputSchema    String?                     // contract v1 §1.2 a 简化版 schema：架构师拆任务时声明，动作 5 实施校验
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

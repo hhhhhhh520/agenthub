@@ -172,7 +172,8 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
 - [ ] 工程实现(待新 session 专项处理)
   - [x] 动作 1: 影子 git 模式追踪 workDir 变更(2026-06-23, commit 8417ccf / e851160)
   - [x] 动作 2: task.result 持久化到 DB(2026-06-23) — Task 表加 `result String?`,executeTaskBatch 接受 priorResults,handleExecution 启动时从 DB 读旧 result、跑完后写回 DB
-  - [ ] 动作 3-9: 见第 4 节
+  - [x] 动作 3: 架构师 prompt 重写 + outputSchema 持久化(2026-06-23) — Task 表加 `outputSchema String?`,TASK_DECOMPOSITION_PROMPT 增加 output_schema 字段+强化 declared_files 校验语义,alignment.ts 和 decomposeTasks 同步解析持久化(校验逻辑留待动作 5)
+  - [ ] 动作 4-9: 见第 4 节
 - [ ] 在 PROGRESS.md 引用本契约
 - [ ] 跑通端到端最小用例验证 contract 可行性
 
