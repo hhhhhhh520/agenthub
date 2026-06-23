@@ -571,4 +571,112 @@ describe('Execution — git diff boundary detection', () => {
     const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
     expect(allTextEvents.some(c => typeof c === 'string' && c.includes('schema 警告'))).toBe(false)
   })
+
+  // ─── contract v1 §1.3 P0 动作 7: cliSessionId invalidate ───
+  it('[动作 7] 敏感越界硬失败 → task.cliSessionId 和 SessionMember.cliSessionId 同时清空', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({
+      declaredFiles: '["src/app/page.tsx"]',
+      cliSessionId: 'cli-sess-old',
+    })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 'cli-sess-new' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockGetChangedFiles.mockReturnValue(['.env'])  // 敏感越界
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // task 标 failed 时 cliSessionId 必须为 null(即使本批跑出了新 sessionId)
+    const failedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'failed'
+    )
+    expect(failedUpdate).toBeDefined()
+    expect(failedUpdate[0].data.cliSessionId).toBeNull()
+
+    // SessionMember.cliSessionId 也被清
+    const memberClear = mocks.mockSessionMemberUpdateMany.mock.calls.find(
+      (c: any[]) => c[0].where.sessionId === 'sess-1' && c[0].where.agentId === 'a1' && c[0].data.cliSessionId === null
+    )
+    expect(memberClear).toBeDefined()
+  })
+
+  it('[动作 7] monitoring 纠偏退回 pending → task.cliSessionId 和 SessionMember.cliSessionId 同时清空', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '[]', cliSessionId: null })  // 跳过文件校验
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+
+    // 第一批:任务跑完,monitoring 说 needsCorrection;第二批:重试通过
+    let callCount = 0
+    mocks.mockExecuteTaskBatch.mockImplementation(async () => {
+      callCount++
+      if (callCount === 1) {
+        return {
+          results: new Map([['task-1', { result: '初次产出', sessionId: 'cli-sess-first' }]]),
+          failedTaskIds: [],
+        }
+      }
+      return {
+        results: new Map([['task-1', { result: '重试产出', sessionId: 'cli-sess-retry' }]]),
+        failedTaskIds: [],
+      }
+    })
+
+    // monitoring 第一次说要纠偏,第二次说不用
+    let monCall = 0
+    mocks.mockExecuteSingleAgent.mockImplementation(async () => {
+      monCall++
+      if (monCall === 1) return { result: JSON.stringify({ needsCorrection: true, correctionNote: '请重写' }) }
+      return { result: JSON.stringify({ needsCorrection: false }) }
+    })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 纠偏发生时:task 被退回 pending,cliSessionId 必须被显式置 null
+    const correctionUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'pending' && c[0].data.correctionCount === 1
+    )
+    expect(correctionUpdate).toBeDefined()
+    expect(correctionUpdate[0].data.cliSessionId).toBeNull()
+
+    // SessionMember.cliSessionId 也在纠偏路径被清
+    const memberClear = mocks.mockSessionMemberUpdateMany.mock.calls.find(
+      (c: any[]) => c[0].where.sessionId === 'sess-1' && c[0].where.agentId === 'a1' && c[0].data.cliSessionId === null
+    )
+    expect(memberClear).toBeDefined()
+  })
+
+  it('[动作 7] 任务正常完成(无纠偏)→ cliSessionId 保留,不 invalidate', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '[]', cliSessionId: null })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: '产出', sessionId: 'cli-sess-keep' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 任务标 completed 时 cliSessionId 保留(传新值,不为 null)
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+    expect(completedUpdate[0].data.cliSessionId).toBe('cli-sess-keep')
+
+    // SessionMember 被更新为新值,不为 null
+    const memberUpdate = mocks.mockSessionMemberUpdateMany.mock.calls.find(
+      (c: any[]) => c[0].where.sessionId === 'sess-1' && c[0].where.agentId === 'a1'
+    )
+    expect(memberUpdate).toBeDefined()
+    expect(memberUpdate[0].data.cliSessionId).toBe('cli-sess-keep')
+  })
 })
