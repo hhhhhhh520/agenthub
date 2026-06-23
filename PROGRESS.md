@@ -151,6 +151,7 @@
 | ProcessRegistry 重构 第2c.1步 | 清理统一(改动 4):抽 `cleanupEntry(entry)`(幂等,cleanedUp 守卫),职责为清非进程资源+唤醒 waiters,不杀进程。killEntryIfCurrent/exit handler/gracefulShutdown Phase 2 三处统一调用。补 `pendingPermissions.clear()`(review #5)+readNdjsonRound 对称 flush(NDJSON 字段名 sessionID)+lockAcquired 紧邻 await 的 CONTRACT 注释。3 新测试。671 测试全绿 | 2026-06-22 |
 | ProcessRegistry 重构 第2c.2步 | 配置指纹(改动 5):`buildConfigHash` 把 apiKey/model/baseUrl/mcpConfig/permissionMode/command/args/format/disallowedTools hash 进 effectiveKey,解决 review #13 配置改 10 分钟不生效。env/sessionId/workDir/allowedTools 不进指纹(env 开放容器可能含动态值)。model strip `[1m]` 后缀、disallowedTools 排序后 join 防 spurious miss。SHA-256 截断 16 字符,apiKey 明文不外泄。killEntry 无 config 时走 prefix-match 兼容。6 新测试。677 测试全绿 | 2026-06-22 |
 | #3+#4 RCE 链修复 + #26 下载越界读 | accept 路由:sessionId UUID 校验+findUnique 归属校验+isPathSafe 替换自证守卫(原 startsWith 自证无效)+敏感列表前缀匹配/扩展/大小写不敏感+禁用 target=project 写源码树(死代码,RCE 入口)。下载路由:同 UUID+findUnique 堵 .. 注入读 .env。Security Engineer 对抗性审查通过。accept 21+download 7 新测试,697 全绿 | 2026-06-22 |
+| #34 apiKey 明文 + #43 file-card XSS | #34 后端出站掩码(providers/db 4处+providers 聚合移除 database/cc-switch-db unmask)+方案 ④ providerRef(agents POST/PUT 接收 id 或 {name},服务端 resolveProvider 拿真 key,忽略 body.apiKey)+前端编辑表单不预填(setApiKey('') 配契约 ...(apiKey && {apiKey}) 跳过更新)+create-agent-dialog 切换 Provider 走 ref 不传明文。#43 isValidDownloadUrl 白名单(new URL().protocol 严判 http:/https: / 以 / 开头但非 //,拒反斜杠/前导空白)。SE 审查抓 3 事实纠正 + 方案 ④ 替代 3 选 1。40 新测试,737 全绿。4 安全高危清零 3 项 | 2026-06-22 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
