@@ -28,7 +28,34 @@ export async function PUT(
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
   }
 
-  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor } = body
+  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor, providerRef } = body
+
+  // #34 修复 ④:providerRef 路径——服务端解析真 apiKey,前端永远不传明文
+  let resolvedApiKey: string | undefined
+  let resolvedBaseUrl: string | undefined
+  if (providerRef) {
+    if (typeof providerRef === 'string') {
+      const provider = await prisma.provider.findUnique({
+        where: { id: providerRef },
+        select: { apiKey: true, baseUrl: true },
+      })
+      if (!provider) {
+        return NextResponse.json({ error: 'providerRef not found' }, { status: 400 })
+      }
+      resolvedApiKey = provider.apiKey
+      resolvedBaseUrl = provider.baseUrl
+    } else if (typeof providerRef === 'object' && typeof providerRef.name === 'string') {
+      const { resolveProvider } = await import('@/lib/provider-resolve')
+      const resolved = await resolveProvider(providerRef.name)
+      if (!resolved) {
+        return NextResponse.json({ error: 'providerRef not found' }, { status: 400 })
+      }
+      resolvedApiKey = resolved.apiKey
+      resolvedBaseUrl = resolved.baseUrl
+    } else {
+      return NextResponse.json({ error: 'providerRef must be string id or { name }' }, { status: 400 })
+    }
+  }
 
   const updated = await prisma.agent.update({
     where: { id },
@@ -38,8 +65,9 @@ export async function PUT(
       ...(systemPrompt !== undefined && { systemPrompt }),
       ...(platform !== undefined && { platform }),
       ...(model !== undefined && { model }),
-      ...(baseUrl && { baseUrl }),
-      ...(apiKey && { apiKey }),
+      // baseUrl / apiKey:providerRef 优先,否则用 body 值
+      ...(resolvedBaseUrl !== undefined ? { baseUrl: resolvedBaseUrl } : (baseUrl && { baseUrl })),
+      ...(resolvedApiKey !== undefined ? { apiKey: resolvedApiKey } : (apiKey && { apiKey })),
       ...(tools !== undefined && { tools: JSON.stringify(tools) }),
       ...(capabilities !== undefined && { capabilities: JSON.stringify(capabilities) }),
       ...(accentColor !== undefined && { accentColor }),

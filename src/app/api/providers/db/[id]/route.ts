@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { maskApiKey } from '@/lib/utils'
 
 export async function GET(
   request: Request,
@@ -13,7 +14,8 @@ export async function GET(
   if (!provider) {
     return NextResponse.json({ error: 'Provider not found' }, { status: 404 })
   }
-  return NextResponse.json(provider)
+  // #34: 出站前掩码
+  return NextResponse.json({ ...provider, apiKey: maskApiKey(provider.apiKey) })
 }
 
 export async function PUT(
@@ -41,7 +43,8 @@ export async function PUT(
     },
     select: { id: true, name: true, baseUrl: true, apiKey: true, model: true, category: true, createdAt: true },
   })
-  return NextResponse.json(updated)
+  // #34: 出站前掩码
+  return NextResponse.json({ ...updated, apiKey: maskApiKey(updated.apiKey) })
 }
 
 export async function DELETE(

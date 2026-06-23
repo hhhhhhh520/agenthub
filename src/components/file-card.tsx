@@ -1,5 +1,7 @@
 'use client'
 
+import { isValidDownloadUrl } from '@/lib/url-safety'
+
 interface FileCardProps {
   fileName: string
   fileSize?: number
@@ -14,6 +16,9 @@ function formatSize(bytes?: number): string {
 }
 
 export function FileCard({ fileName, fileSize, downloadUrl }: FileCardProps) {
+  // #43: agent 输出的 artifact downloadUrl 可被注入(javascript:fetch(...) 等),
+  // 必须经过 scheme 白名单校验后才渲染为 <a href>,否则只展示禁用文本。
+  const safeUrl = isValidDownloadUrl(downloadUrl) ? downloadUrl : undefined
   return (
     <div className="border rounded-lg p-3 bg-gray-50 flex items-center gap-3">
       <div className="text-2xl">📄</div>
@@ -23,9 +28,9 @@ export function FileCard({ fileName, fileSize, downloadUrl }: FileCardProps) {
           <div className="text-xs text-gray-500">{formatSize(fileSize)}</div>
         )}
       </div>
-      {downloadUrl && (
+      {safeUrl && (
         <a
-          href={downloadUrl}
+          href={safeUrl}
           download
           className="text-sm text-blue-500 hover:underline shrink-0"
         >
