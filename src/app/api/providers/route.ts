@@ -102,8 +102,9 @@ export async function GET() {
     }
   } catch { /* ignore */ }
 
-  // Deduplicate by baseUrl (falling back to name), mask apiKey for discovered sources
-  const unmaskSources = new Set(['database', 'cc-switch-db'])
+  // #34: 任何 HTTP 出站的 apiKey 都掩码(包括 database / cc-switch-db DB 源)
+  // 之前 unmaskSources 包含 database 和 cc-switch-db,导致 #34 在聚合接口仍泄露
+  // 前端需要真 key 应走服务端 resolveProvider 路径,不再依赖此接口的明文返回
   const seen = new Set<string>()
   const unique = providers.filter(p => {
     const key = p.baseUrl ? `url:${p.baseUrl}` : `name:${p.name}`
@@ -112,7 +113,7 @@ export async function GET() {
     return true
   }).map(p => ({
     ...p,
-    apiKey: unmaskSources.has(p.source) ? p.apiKey : maskApiKey(p.apiKey),
+    apiKey: maskApiKey(p.apiKey),
   }))
 
   return NextResponse.json(unique)

@@ -66,6 +66,9 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   const [model, setModel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  // #34 修复 ④:Provider 引用——选 Provider 时记 id/name,提交时让服务端解析真 key
+  // 替代之前 setApiKey(p.apiKey) 把(可能已被掩码的)key 写入表单的不安全模式
+  const [providerRef, setProviderRef] = useState<string | { name: string } | null>(null)
   const [accentColor, setAccentColor] = useState('#6366f1')
   const [capInput, setCapInput] = useState('')
   const [capabilities, setCapabilities] = useState<string[]>([])
@@ -181,7 +184,14 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
   const applyProvider = (p: Provider) => {
     setBaseUrl(p.baseUrl)
     setModel(p.model)
-    setApiKey(p.apiKey)
+    // #34 修复 ④:不再把(可能已掩码的)p.apiKey 写入表单 input。
+    // 而是按来源记 providerRef,提交时让服务端 resolveProvider 拿真 key。
+    setApiKey('')
+    if (p.source === 'database' && p.id) {
+      setProviderRef(p.id)
+    } else if (p.name) {
+      setProviderRef({ name: p.name })
+    }
     setPlatform(p.agentType === 'opencode' ? 'opencode' : 'claude-code')
     setShowProviders(false)
   }
@@ -203,7 +213,8 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
         platform,
         model: model || undefined,
         baseUrl: baseUrl || undefined,
-        apiKey: apiKey || undefined,
+        // #34 修复 ④:providerRef 优先,服务端解析真 key;否则用 input apiKey
+        ...(providerRef ? { providerRef } : { apiKey: apiKey || undefined }),
         accentColor,
         capabilities,
         tools,
@@ -436,7 +447,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
           </div>
           <div>
             <label className="text-sm font-medium">API Key</label>
-            <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
+            <Input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); setProviderRef(null) }} placeholder={editAgent ? '留空保留原 API Key' : 'sk-...'} />
           </div>
 
           <div>
@@ -536,19 +547,19 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
             .then(r => r.json())
             .then(data => { if (Array.isArray(data)) setProviders(data) })
             .catch(console.error)
-          // Auto-select the new provider
-          const providerKey = newProvider.id
+          // #34 修复 ④:Auto-select 新建 Provider 时,POST 返回的 newProvider.apiKey 已是掩码(***xxxx),
+          // 不能用它填表单。改走 providerRef.id 路径,提交时服务端按 id 拿真 key。
           applyProvider({
             id: newProvider.id,
             name: newProvider.name,
             displayName: newProvider.name,
             baseUrl: newProvider.baseUrl,
             model: newProvider.model,
-            apiKey: newProvider.apiKey,
+            apiKey: '',  // 不传明文,走 providerRef
             agentType: 'claudecode',
             source: 'database',
           })
-          setSelectedProviderId(providerKey)
+          setSelectedProviderId(newProvider.id)
         }}
       />
     </Dialog>

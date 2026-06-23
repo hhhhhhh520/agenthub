@@ -20,7 +20,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json()
-  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor } = body
+  const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor, providerRef } = body
 
   if (!name || !expertise || !systemPrompt || typeof name !== 'string' || typeof expertise !== 'string' || typeof systemPrompt !== 'string') {
     return NextResponse.json(
@@ -40,6 +40,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'accentColor must be a string' }, { status: 400 })
   }
 
+  // #34 修复 ④:providerRef 路径——服务端解析真 apiKey,前端永远不传明文
+  // providerRef 接受:① string(DB Provider id);② { name: string }(用 resolveProvider 跨 4 源查)
+  // 防止前端拿到掩码字符串(***xxxx)后误当真 key 提交污染 DB
+  let resolvedApiKey: string | undefined
+  let resolvedBaseUrl: string | undefined
+  if (providerRef) {
+    if (typeof providerRef === 'string') {
+      const provider = await prisma.provider.findUnique({
+        where: { id: providerRef },
+        select: { apiKey: true, baseUrl: true },
+      })
+      if (!provider) {
+        return NextResponse.json({ error: 'providerRef not found' }, { status: 400 })
+      }
+      resolvedApiKey = provider.apiKey
+      resolvedBaseUrl = provider.baseUrl
+    } else if (typeof providerRef === 'object' && typeof providerRef.name === 'string') {
+      const { resolveProvider } = await import('@/lib/provider-resolve')
+      const resolved = await resolveProvider(providerRef.name)
+      if (!resolved) {
+        return NextResponse.json({ error: 'providerRef not found' }, { status: 400 })
+      }
+      resolvedApiKey = resolved.apiKey
+      resolvedBaseUrl = resolved.baseUrl
+    } else {
+      return NextResponse.json({ error: 'providerRef must be string id or { name }' }, { status: 400 })
+    }
+  }
+
   try {
     const agent = await prisma.agent.create({
       data: {
@@ -48,8 +77,8 @@ export async function POST(request: Request) {
         systemPrompt,
         platform: platform || 'claude-code',
         model: model || '',
-        baseUrl: baseUrl || '',
-        apiKey: apiKey || '',
+        baseUrl: resolvedBaseUrl ?? baseUrl ?? '',
+        apiKey: resolvedApiKey ?? apiKey ?? '',
         tools: JSON.stringify(tools || []),
         capabilities: JSON.stringify(capabilities || []),
         accentColor: accentColor || '#6366f1',

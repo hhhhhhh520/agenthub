@@ -47,7 +47,9 @@ export function CreateProviderDialog({ open, onOpenChange, onCreated, editProvid
     if (open && editProvider) {
       setName(editProvider.name)
       setBaseUrl(editProvider.baseUrl)
-      setApiKey(editProvider.apiKey)
+      // #34 修复 ④:编辑时不预填 apiKey(GET 已掩码,预填会把 ***xxxx 当真 key 写回 DB)
+      // 留空时服务端契约 ...(apiKey && {apiKey}) 跳过更新,保留原值
+      setApiKey('')
       setModel(editProvider.model)
       setCategory(editProvider.category as ProviderCategory)
     } else if (open) {
@@ -123,7 +125,7 @@ export function CreateProviderDialog({ open, onOpenChange, onCreated, editProvid
 
           <div>
             <label className="text-sm font-medium">API Key</label>
-            <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." />
+            <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder={editProvider ? '留空保留原 API Key' : 'sk-...'} />
           </div>
 
           <div>
