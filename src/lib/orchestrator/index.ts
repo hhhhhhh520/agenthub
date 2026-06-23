@@ -310,11 +310,21 @@ export async function executeTaskBatch(
   agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
   chatSessionId?: string,
-  projectDir?: string
+  projectDir?: string,
+  // contract v1 §1.1: 跨批权威 result（来自 DB task.result）。本批 task 若依赖前批 task，从这里查
+  priorResults?: Map<string, string>
 ): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[] }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
   const failedTaskIds: string[] = []
+
+  // contract v1 §1.1: 合并 DB 中已完成 task 的 result（跨批权威），
+  // 使 task.dependencies 查找时能命中前批 task 的交付物
+  if (priorResults) {
+    for (const [taskId, result] of priorResults) {
+      results.set(taskId, { result })
+    }
+  }
 
   // 提取讨论摘要（在循环外提取一次，所有任务共享）
   let discussionSummary = ''

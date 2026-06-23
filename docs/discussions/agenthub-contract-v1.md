@@ -170,6 +170,9 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
 - [x] 三道题已答(2026-06-23)
 - [x] 落盘为正式 contract
 - [ ] 工程实现(待新 session 专项处理)
+  - [x] 动作 1: 影子 git 模式追踪 workDir 变更(2026-06-23, commit 8417ccf / e851160)
+  - [x] 动作 2: task.result 持久化到 DB(2026-06-23) — Task 表加 `result String?`,executeTaskBatch 接受 priorResults,handleExecution 启动时从 DB 读旧 result、跑完后写回 DB
+  - [ ] 动作 3-9: 见第 4 节
 - [ ] 在 PROGRESS.md 引用本契约
 - [ ] 跑通端到端最小用例验证 contract 可行性
 
