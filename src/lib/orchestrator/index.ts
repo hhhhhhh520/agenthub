@@ -306,6 +306,11 @@ export async function decomposeTasks(taskDescription: string, agents: Array<{ na
   return topologicalSort(tasks)
 }
 
+export interface PriorTaskMeta {
+  description: string
+  outputSchema?: string
+}
+
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
   agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
@@ -313,7 +318,9 @@ export async function executeTaskBatch(
   chatSessionId?: string,
   projectDir?: string,
   // contract v1 §1.1: 跨批权威 result（来自 DB task.result）。本批 task 若依赖前批 task，从这里查
-  priorResults?: Map<string, string>
+  priorResults?: Map<string, string>,
+  // contract v1 §1.1: 前批 task 的描述 + outputSchema，用于结构化注入 <dependency> 标签
+  priorTaskMeta?: Map<string, PriorTaskMeta>
 ): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[] }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
@@ -327,14 +334,15 @@ export async function executeTaskBatch(
     }
   }
 
-  // 提取讨论摘要（在循环外提取一次，所有任务共享）
-  let discussionSummary = ''
-  if (chatSessionId) {
-    try {
-      const { buildDiscussionSummary } = await import('../services/context-builder')
-      discussionSummary = await buildDiscussionSummary(chatSessionId)
-    } catch (error) {
-      console.warn('[executeTaskBatch] 提取讨论摘要失败:', error)
+  // contract v1 §1.1: 构建 taskId -> {description, outputSchema} 元数据查找表
+  // 本批任务自己的描述/schema 直接从 tasks 取，前批的从 priorTaskMeta 补
+  const taskMetaMap = new Map<string, PriorTaskMeta>()
+  for (const t of tasks) {
+    taskMetaMap.set(t.id, { description: t.description, outputSchema: t.outputSchema })
+  }
+  if (priorTaskMeta) {
+    for (const [taskId, meta] of priorTaskMeta) {
+      if (!taskMetaMap.has(taskId)) taskMetaMap.set(taskId, meta)
     }
   }
 
@@ -351,12 +359,7 @@ export async function executeTaskBatch(
       const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
       if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
-      // 依赖任务的文本结果（拼到 prompt 中，不走 context）
-      const depContext = task.dependencies
-        .map(depId => results.get(depId)?.result)
-        .filter(Boolean)
-        .join('\n\n')
-
+      // 依赖任务的文本结果以 <dependency> 块形式注入（见下方 depBlocks 构造）
       let result = ''
       let capturedSessionId: string | undefined
 
@@ -386,25 +389,36 @@ export async function executeTaskBatch(
         const fileConstraint = task.declaredFiles?.length > 0
           ? `[任务边界] 只能修改: ${task.declaredFiles.join(', ')}。禁止修改其他文件。\n\n`
           : ''
-        // 依赖任务结果作为 prompt 前缀
-        const depPrefix = depContext ? `[依赖任务结果]\n${depContext}\n\n` : ''
 
-        // 构建 prompt：注入讨论摘要
+        // contract v1 §1.1: 结构化注入依赖任务的交付物
+        // 每个上游任务渲染成 <dependency name="..." output_schema="..."> ... </dependency>
+        // 下游 LLM 看到的就是 orchestrator 决定让它看到的，不再自行选通道
+        const depBlocks = task.dependencies
+          .map(depId => {
+            const upstreamResult = results.get(depId)?.result
+            if (!upstreamResult) return ''
+            const meta = taskMetaMap.get(depId)
+            const name = meta?.description ?? depId
+            const schemaAttr = meta?.outputSchema ? ` output_schema=${JSON.stringify(meta.outputSchema)}` : ''
+            return `<dependency name=${JSON.stringify(name)}${schemaAttr}>\n${upstreamResult}\n</dependency>`
+          })
+          .filter(Boolean)
+        const depPrefix = depBlocks.length > 0 ? depBlocks.join('\n\n') + '\n\n' : ''
+
+        // 构建 prompt：依赖块 + 文件约束 + 任务描述（contract v1 §1.1 确定性注入）
         let prompt = depPrefix + fileConstraint + task.description
-        if (discussionSummary) {
-          prompt = `[项目背景]\n${discussionSummary}\n\n${prompt}`
-        }
-        // 如果总 prompt 超过 4000 字，按比例缩减讨论摘要
+
+        // 通用 prompt 截断保护：超过上限时按比例截掉 depPrefix（保留 fileConstraint + 任务描述完整）
         const MAX_PROMPT_LEN = 4000
-        if (prompt.length > MAX_PROMPT_LEN && discussionSummary) {
-          const excess = prompt.length - MAX_PROMPT_LEN
-          const newSummaryLen = Math.max(100, discussionSummary.length - excess)
-          // 按句子边界截断
-          const truncated = discussionSummary.slice(0, newSummaryLen)
-          const lastPeriod = Math.max(truncated.lastIndexOf('。'), truncated.lastIndexOf('！'), truncated.lastIndexOf('\n'))
-          const shrunkSummary = lastPeriod > newSummaryLen * 0.5 ? truncated.slice(0, lastPeriod + 1) : truncated
-          prompt = `[项目背景]\n${shrunkSummary}\n\n${depPrefix}${fileConstraint}${task.description}`
-          console.warn(`[executeTaskBatch] 讨论摘要已缩减: ${discussionSummary.length} -> ${shrunkSummary.length} 字符`)
+        if (prompt.length > MAX_PROMPT_LEN && depPrefix) {
+          const tailLen = (fileConstraint + task.description).length
+          const allowedDepLen = Math.max(0, MAX_PROMPT_LEN - tailLen)
+          const truncatedDep = depPrefix.slice(0, allowedDepLen)
+          const truncationNote = allowedDepLen < depPrefix.length
+            ? '\n[...依赖内容已截断...]\n\n'
+            : ''
+          prompt = truncatedDep + truncationNote + fileConstraint + task.description
+          console.warn(`[executeTaskBatch] 依赖块已截断: ${depPrefix.length} -> ${truncatedDep.length} 字符`)
         }
 
         const registryKey = buildRegistryKey(platform, chatSessionId, agentId, projectDir)

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db'
-import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent } from '@/lib/orchestrator'
+import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent, type PriorTaskMeta } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './shadow-git'
@@ -79,7 +79,11 @@ export async function handleExecution(
   // contract v1 §1.1: 从 DB 读取跨批权威 result（已完成 task 的交付物）
   // 重启后或前批已完成时，新批次依赖任务能从这里查到上游交付物
   const allResults = new Map<string, string>()
+  // contract v1 §1.1: 同步保存所有 task 的 description + outputSchema 元数据，
+  // 用于下游 prompt 的 <dependency name="..." output_schema="..."> 标签注入
+  const allTaskMeta = new Map<string, PriorTaskMeta>()
   for (const t of tasks) {
+    allTaskMeta.set(t.id, { description: t.description, outputSchema: t.outputSchema ?? undefined })
     if (t.status === 'completed' && t.result) {
       allResults.set(t.id, t.result)
     }
@@ -172,7 +176,8 @@ export async function handleExecution(
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content, data: chunk.data }),
         sessionId,
         projectRoot,
-        allResults  // contract v1 §1.1: 跨批权威 result
+        allResults,  // contract v1 §1.1: 跨批权威 result
+        allTaskMeta  // contract v1 §1.1: 跨批 task 元数据（description + outputSchema）
       )
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
