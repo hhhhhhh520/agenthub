@@ -4,6 +4,7 @@ import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './shadow-git'
 import { pickSensitive } from './sensitive-paths'
+import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
 
@@ -275,6 +276,14 @@ export async function handleExecution(
         sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成,修改了 ${changedFiles.join(', ')}` })
       } else {
         sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成` })
+      }
+
+      // contract v1 §1.2 a (动作 5,降级版): outputSchema 软校验
+      // 不影响任务状态,只在缺字段/缺 JSON 块时发警告
+      const schemaCheck = validateAgainstSchema(result, taskForTrace?.outputSchema)
+      if (!schemaCheck.valid) {
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: schemaCheck.message, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: schemaCheck.message })
       }
 
       try {
