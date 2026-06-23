@@ -51,8 +51,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
   enforceFileOverlap: vi.fn(),
 }))
 
-// Mock git-utils
-vi.mock('@/lib/services/git-utils', () => ({
+// Mock shadow-git
+vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: vi.fn().mockReturnValue([]),
   getGitSnapshot: vi.fn().mockReturnValue(new Set()),
 }))

@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
-import { getChangedFiles, getGitSnapshot } from './git-utils'
+import { getChangedFiles, getGitSnapshot } from './shadow-git'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
 
@@ -103,8 +103,8 @@ export async function handleExecution(
 
     if (readyTasks.length === 0) break
 
-    // Create git snapshot at batch level for boundary detection
-    const gitBefore = getGitSnapshot(projectRoot)
+    // Create shadow-git snapshot at batch level for boundary detection
+    const gitBefore = getGitSnapshot(projectRoot, sessionId)
 
     for (const task of readyTasks) {
       const startTrace = appendTrace(task.trace || '[]', {
@@ -221,7 +221,7 @@ export async function handleExecution(
       hasProgress = true
 
       const declaredFiles: string[] = JSON.parse(task?.declaredFiles || '[]')
-      const changedFiles = getChangedFiles(projectRoot, gitBefore)
+      const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
       const undeclared = changedFiles.filter(f => !declaredFiles.includes(f))
       if (undeclared.length > 0) {
         const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${undeclared.join(', ')}`
