@@ -76,7 +76,14 @@ export async function handleExecution(
   })
   const memberSessionMap = new Map(sessionMembers.map(m => [m.agentId, m.cliSessionId]))
 
+  // contract v1 §1.1: 从 DB 读取跨批权威 result（已完成 task 的交付物）
+  // 重启后或前批已完成时，新批次依赖任务能从这里查到上游交付物
   const allResults = new Map<string, string>()
+  for (const t of tasks) {
+    if (t.status === 'completed' && t.result) {
+      allResults.set(t.id, t.result)
+    }
+  }
   let hasProgress = true
   const MAX_ITERATIONS = tasks.length * 3
   let iteration = 0
@@ -164,7 +171,8 @@ export async function handleExecution(
         }),
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content, data: chunk.data }),
         sessionId,
-        projectRoot
+        projectRoot,
+        allResults  // contract v1 §1.1: 跨批权威 result
       )
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
@@ -203,10 +211,12 @@ export async function handleExecution(
       const successTrace = appendTrace(taskForTrace?.trace || '[]', {
         ts: new Date().toISOString(), event: 'success',
       })
+      // contract v1 §1.1: 持久化 result 到 DB，作为跨批权威载体
       await prisma.task.update({
         where: { id: taskId },
-        data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace },
+        data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace, result },
       })
+      if (taskForTrace) taskForTrace.result = result
       // 同步 sessionId 到 SessionMember，供后续任务 fallback
       if (cliSessionId && taskForTrace?.assignedAgentId) {
         await prisma.sessionMember.updateMany({
