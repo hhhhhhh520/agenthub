@@ -12,9 +12,9 @@
 | 严重度 | 原始数量 | 已解决 | 未解决 |
 |--------|----------|--------|--------|
 | 🔴 P1 真高危 | 4 | 4 | **0** |
-| 🟠 P2 中等 | 25 | 9 | **16** |
+| 🟠 P2 中等 | 25 | 11 | **14** |
 | 🟡 P3 加固 | 19 | 0 | **19** |
-| **合计** | **48** | **13** | **35** |
+| **合计** | **48** | **15** | **33** |
 
 > **数字说明**: 原始报告声明 48 条（4 P1 + 25 P2 + 19 P3）。本报告逐条核对当前代码状态，P2 实际按编号列出至 #43（跨 6 个模块），编号延续至 #62；以原始声明总数为准，逐条状态见下文标注。
 
@@ -211,7 +211,7 @@
 **文件**: `src/app/api/sessions/[id]/messages/[messageId]/route.ts:24-34`
 **问题**: 先 count 判断 >=10 再 update，两步非原子。并发 PATCH 各读到 9 时都通过校验，最终 Pin 数超过 10。
 
-### #34 providers/db 明文返回 apiKey ⚠️🟠 未解决（安全高危）
+### #34 providers/db 明文返回 apiKey ✅ 已解决（2026-06-22 commit `b59932d`，方案 ④ providerRef）
 **文件**: `src/app/api/providers/db/route.ts:4-9` 和 `db/[id]/route.ts:11`
 **问题**: select 含 apiKey 且不做任何掩码，明文返回浏览器。而 `/api/providers` 对 settings.json/toml 来源是掩码的，同一份存储两接口不同策略。
 **后果**: F12 抓包就能拿到完整 API Key。
@@ -259,7 +259,7 @@
 **问题**: setTasks 按下标比 status/trace，长度不变时漏检测；effect 依赖 [sessionId, redoPollFast]，点击重做翻转 redoPollFast 让 effect 重建，开头执行 `setTasks([])` 把列表清空。
 **后果**: 任务面板可能显示过期数据；每次重做开始/结束任务列表闪烁清空。
 
-### #43 file-card downloadUrl 无 scheme 校验 ⚠️🟠 未解决（安全高危）
+### #43 file-card downloadUrl 无 scheme 校验 ✅ 已解决（2026-06-22 commit `b59932d`，isValidDownloadUrl 白名单）
 **文件**: `src/components/file-card.tsx:26-34` + `src/lib/message-parser.ts:41-52`
 **问题**: parseMessage 从 agent 消息解析 `<!-- artifact:file downloadUrl=... -->`，按空格分割，不限制值。FileCard 直接 `<a href={downloadUrl} download>`。Agent 输出可被提示注入，产出 `downloadUrl=javascript:fetch(...)`。
 **后果**: 点击下载即在应用同源执行任意 JS，可调用全部 API。存储型/反射型 XSS。
@@ -294,7 +294,7 @@
 
 # 状态核对（2026-06-22 ProcessRegistry 6 步重构后）
 
-## 已解决 13 条
+## 已解决 15 条
 
 | # | 严重度 | 问题 | 解决于 | Commit |
 |---|--------|------|--------|--------|
@@ -311,6 +311,8 @@
 | #3 | P1 | sessionId 无校验/自证守卫 → RCE | 2026-06-22 UUID+isPathSafe+禁用 target | `170d5c0` |
 | #4 | P1 | 敏感路径绕过 + target=project RCE | 2026-06-22 前缀匹配+扩展+禁用 target | `170d5c0` |
 | #26 | P2 | 下载路由 sessionId 无校验 → 读 .env | 2026-06-22 UUID+findUnique | `170d5c0` |
+| #34 | P2 安全 | providers/db 明文返回 apiKey | 2026-06-22 出站掩码+方案 ④ providerRef | `b59932d` |
+| #43 | P2 安全 | file-card downloadUrl XSS | 2026-06-22 isValidDownloadUrl 白名单 | `b59932d` |
 
 ## ⚠️ #54 诚实修正
 
@@ -328,18 +330,18 @@
 | M1 编排核心 | 5 | #5 #6 #7 #8 #10 #11（cliSessionId 丢失 / 依赖结果恒空 / parseJSON / 静默换人） |
 | M2 适配器层 | 1 | #19（OpenCode 权限白名单） |
 | M3 API 安全敏感 | 4 | #20 #22-#25（锁泄漏 / SVG XSS / symlink）— #3#4#26 已于 2026-06-22 修复 |
-| M4 API CRUD | 9 | #27-#35（含 #34 密钥明文） |
+| M4 API CRUD | 8 | #27-#33 #35（含 #31 PUT 校验弱）— #34 已于 2026-06-22 修复 |
 | M5 lib+MCP | 3 | #36-#38（含 #38 主进程与 MCP 操作不同库） |
-| M6 前端 | 5 | #39-#43（含 #43 XSS） |
+| M6 前端 | 4 | #39-#42 — #43 已于 2026-06-22 修复 |
 | P3 散布 | 19 | #44-#62（含 #54 部分解决） |
 
-## 安全高危（应优先修的 4 个）
+## 安全高危（剩 1 个）
 
 | # | 问题 | 风险 |
 |---|------|------|
-| #34 | providers/db 明文返回 apiKey | F12 抓包即拿到完整 API Key |
-| #43 | file-card downloadUrl 无 scheme 校验 | 存储型 XSS，可执行任意 JS |
 | #21 | SVG 内联 XSS | 同源脚本执行（次要，无登录态故无会话窃取） |
+
+**2026-06-22 已清零**:#3+#4(RCE 链,commit `170d5c0`)、#34(明文 apiKey,commit `b59932d`)、#43(file-card XSS,commit `b59932d`)。仅剩 #21 一项次要高危。
 
 ---
 
@@ -349,23 +351,32 @@
 
 | # | 问题 | 本地（当前） | 多用户/网络部署后 |
 |---|------|--------------|-------------------|
-| #34 | providers/db 明文返回 apiKey | 用户自己看自己的 key | 任意用户读所有用户的 key → P1 凭证泄露 |
-| #44 | permission/route.ts 权限响应未绑 sessionId/agentId | 本地无并发用户 | 任意用户可批准任意会话的工具调用 → P1 |
-| #45 | attachments/[id]/route.ts 无归属鉴权（IDOR） | 单用户文件随便看 | 任意用户读他人附件 → P1 |
-| #26 衍生 | accept/download 的 `findUnique` 在所有路径校验**之后**（line 73-81）| SQLite 本地 µs 级查询无压力 | 攻击者构造合法 UUID 批量探测 → 高频 DB 查询 + 时序攻击 → DB 嗅探向量 |
-| #50 | sessions PUT 缺 lone surrogate 校验 | 自己输入自己看 | 跨用户数据污染 |
+| #34 | providers/db 明文返回 apiKey | 用户自己看自己的 key | 任意用户读所有用户的 key → P1 凭证泄露 | ✅ 2026-06-22 commit `b59932d`(出站掩码+方案 ④) |
+| #44 | permission/route.ts 权限响应未绑 sessionId/agentId | 本地无并发用户 | 任意用户可批准任意会话的工具调用 → P1 | 未修 |
+| #45 | attachments/[id]/route.ts 无归属鉴权（IDOR） | 单用户文件随便看 | 任意用户读他人附件 → P1 | 未修 |
+| #26 衍生 | accept/download 的 `findUnique` 在所有路径校验**之后**（line 73-81）| SQLite 本地 µs 级查询无压力 | 攻击者构造合法 UUID 批量探测 → 高频 DB 查询 + 时序攻击 → DB 嗅探向量 | 未修 |
+| #50 | sessions PUT 缺 lone surrogate 校验 | 自己输入自己看 | 跨用户数据污染 | 未修 |
 
 **关键判断**：这些不是"现在可以不修",而是"现在评估不充分"。AgentHub 在 README 里若宣传"可部署"，本节列出的项必须先修完。本节同时承担"复审增量"角色——SE 单点审查容易聚焦在直接攻击链（如 #3+#4 的 RCE），跨场景的次生风险（如查询顺序变嗅探）需要复审 / 多视角才能抓到，未来类似复审发现请追加到本节。
+
+---
+
+| 状态 | 增量 |
+|---|---|
+| 已加 | 多用户重评清单加 \"状态\" 列;`#34` 标已解决,commit `b59932d` |
+| 仍需 | `#44` `#45` `#26衍生` `#50` 未修 — 网络部署前必修 |
+
+为防止 `#34` 已修后被误以为\"重评清单空了\",**保留条目并标已解决**,而非删除。其他 4 条保持\"未修\"红线警示。
 
 ---
 
 # 优先级建议
 
 **今天就修**:
-- #34 #43（密钥明文 / 存储型 XSS，两个安全高危）
+- (空,4 安全高危已 ✅ 3 清零)
 
 **这周修**:
-- #21（SVG XSS）
+- #21（SVG XSS,唯一剩余高危,次要）
 - #20 #23 #24（锁泄漏相关，影响正常请求体验）
 
 **下周修**:
@@ -375,8 +386,9 @@
 **记下但不急**:
 - 其余 P2/P3，等顺手重构相关模块时一起带掉
 
-**本轮已修**（2026-06-22 commit `170d5c0`，Security Engineer 对抗性审查）:
-- #3 #4（accept RCE 链）+ #26（下载越界读 .env）
+**本轮已修**（2026-06-22）:
+- #3 #4（accept RCE 链）+ #26（下载越界读 .env）— commit `170d5c0`
+- #34 #43（apiKey 明文 + file-card XSS）— commit `b59932d`
 
 ---
 
