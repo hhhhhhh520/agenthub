@@ -495,4 +495,80 @@ describe('Execution — git diff boundary detection', () => {
     )
     expect(downstreamBlocked).toBeDefined()
   })
+
+  // ─── contract v1 §1.2 a 动作 5: outputSchema 软校验 ───
+  it('[动作 5] outputSchema 缺字段 → 发警告,但任务仍 completed', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({
+      declaredFiles: '["src/app/page.tsx"]',
+      outputSchema: JSON.stringify(['component_path:string - 路径', 'exports:string[] - 符号']),
+    })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    // Agent 输出缺 exports 字段
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: '我做完了。\n```json\n{"component_path":"src/app/page.tsx"}\n```', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 任务仍 completed(不影响状态)
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+
+    // schema 警告应当发送
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('schema 警告'))).toBe(true)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('exports'))).toBe(true)
+  })
+
+  it('[动作 5] outputSchema 没设 → 不发 schema 警告', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({
+      declaredFiles: '["src/app/page.tsx"]',
+      // outputSchema 字段不存在
+    })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: '任意输出无 JSON', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('schema 警告'))).toBe(false)
+  })
+
+  it('[动作 5] outputSchema 完整满足 → 不发警告', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({
+      declaredFiles: '["src/app/page.tsx"]',
+      outputSchema: JSON.stringify(['name:string - 名字']),
+    })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: '完成。\n```json\n{"name":"foo"}\n```', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
+    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('schema 警告'))).toBe(false)
+  })
 })
