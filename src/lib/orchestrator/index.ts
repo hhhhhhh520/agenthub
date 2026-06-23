@@ -405,19 +405,28 @@ export async function executeTaskBatch(
           .filter(Boolean)
         const depPrefix = depBlocks.length > 0 ? depBlocks.join('\n\n') + '\n\n' : ''
 
-        // 构建 prompt：依赖块 + 文件约束 + 任务描述（contract v1 §1.1 确定性注入）
-        let prompt = depPrefix + fileConstraint + task.description
+        // contract v1 §1.3 P0 (动作 8): 用 <authoritative_input> 包装权威输入
+        // 告知 LLM:以下内容是 orchestrator 注入的当前权威输入,与历史冲突时以此为准
+        // CLI 历史在 prompt 之前由 --resume 拼接,本包装放在历史之后,利用 LLM 末尾注意力偏向引导
+        const AUTHORITATIVE_HEADER =
+          '<authoritative_input>\n' +
+          '以下是 orchestrator 本轮注入的权威输入(依赖产出 + 任务边界 + 任务描述)。\n' +
+          '如与你之前会话历史冲突,**以下内容为准**,历史记录作废。\n\n'
+        const AUTHORITATIVE_FOOTER = '\n</authoritative_input>'
+        const innerPrompt = depPrefix + fileConstraint + task.description
+        let prompt = AUTHORITATIVE_HEADER + innerPrompt + AUTHORITATIVE_FOOTER
 
-        // 通用 prompt 截断保护：超过上限时按比例截掉 depPrefix（保留 fileConstraint + 任务描述完整）
+        // 通用 prompt 截断保护:超过上限时按比例截掉 depPrefix(保留 fileConstraint + 任务描述 + 权威包装完整)
         const MAX_PROMPT_LEN = 4000
+        const wrapperLen = AUTHORITATIVE_HEADER.length + AUTHORITATIVE_FOOTER.length
         if (prompt.length > MAX_PROMPT_LEN && depPrefix) {
           const tailLen = (fileConstraint + task.description).length
-          const allowedDepLen = Math.max(0, MAX_PROMPT_LEN - tailLen)
+          const allowedDepLen = Math.max(0, MAX_PROMPT_LEN - tailLen - wrapperLen)
           const truncatedDep = depPrefix.slice(0, allowedDepLen)
           const truncationNote = allowedDepLen < depPrefix.length
             ? '\n[...依赖内容已截断...]\n\n'
             : ''
-          prompt = truncatedDep + truncationNote + fileConstraint + task.description
+          prompt = AUTHORITATIVE_HEADER + truncatedDep + truncationNote + fileConstraint + task.description + AUTHORITATIVE_FOOTER
           console.warn(`[executeTaskBatch] 依赖块已截断: ${depPrefix.length} -> ${truncatedDep.length} 字符`)
         }
 

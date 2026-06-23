@@ -99,8 +99,15 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
 |---|---|---|
 | task.result 修正时 invalidate 相关 cliSessionId | 强制起新 session,避免历史脏数据 | P0 |
 | prompt 注入放最末尾 + 显著分隔符 + "以此为准"声明 | 引导 attention 偏向新内容 | P0 |
-| 历史长度上限(超过 N 轮自动起新 session) | 防止历史膨胀挤掉 prompt 注入 | P1 |
+| ~~历史长度上限(超过 N 轮自动起新 session)~~ | ~~防止历史膨胀挤掉 prompt 注入~~ | ~~P1~~ **降级不做** |
 | debug 钩子(dump 进程历史 + 注入 prompt 双份) | 出错时人能对比定位 | P1 |
+
+**"历史长度上限"为什么不做**(2026-06-23 实施动作 9 时修订):
+- Claude Code / OpenCode CLI 内置历史压缩(compact)机制,Context 撑满前 CLI 自己处理
+- 我们要拦的不是"context 满"(CLI 已管),而是"Agent 带过时角色感继续干" —— 后者只跟"是否经历过 task.result 修正/纠偏/敏感失败"相关,跟历史长度无强相关
+- 真正解决"过时角色感"的是 P0 第一条(纠偏/失败时主动 invalidate),不是按轮数定时重置
+- 按轮数强制重置反而会让"还没经历过修正,本该连续的 Agent"被打断,丢掉合理的角色记忆
+- 见第 6 节失效条件"实施中发现 what 站不住,回来改这份"
 
 **P0 护栏不做,1.3 不成立,等同于 default-off 选错。**
 
@@ -155,7 +162,7 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
 6. **declaredFiles 分级校验代码** — 1.2 b (2026-06-23 修订:敏感路径硬失败 + 其他越界软警告)
 7. **cliSessionId invalidate 机制** — 1.3 P0 护栏
 8. **prompt 注入分隔符 + 声明** — 1.3 P0 护栏
-9. **历史长度上限 + debug 钩子** — 1.3 P1 护栏
+9. ~~**历史长度上限**~~ — 不做(CLI 内置 compact 已管,见 §1.3 修订);debug 钩子按需添加
 
 具体修法、文件改动、测试用例,**留待新 session 专项处理**。本契约只定 what,不定 how。
 
@@ -198,7 +205,9 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
   - [x] 动作 4: orchestrator prompt 确定性注入(2026-06-23, commit a552db3) — executeTaskBatch 新增 priorTaskMeta 参数,依赖结果以 `<dependency name="..." output_schema="...">` 结构化注入下游 prompt,删除 discussionSummary 注入,截断保护改为通用形式
   - [x] 动作 6: declaredFiles 分级校验(2026-06-23) — 实施时修订 contract §1.2 b 为分级语义。新增 sensitive-paths.ts(敏感路径黑名单:.env / package.json / prisma/schema.prisma / node_modules/ / 配置文件等)。execution.ts 越界检测后:敏感越界 → 任务硬失败 + 下游 blocked + 不写 result;普通越界 → 软警告 + 任务仍 completed;declaredFiles 为空 → 跳过校验。20 sensitive-paths 单测 + 5 集成测试
   - [x] 动作 5: outputSchema 软校验(2026-06-23) — 实施时修订 contract §1.2 a 为软语义,与动作 6 对称。新增 schema-validator.ts(提取 result 末尾 JSON 块 + 字段名比对)。execution.ts 在普通越界检测后插入校验:no-schema/ok 静默,no-json/parse-error/missing-fields 发警告但任务仍 completed。20 schema-validator 单测 + 3 集成测试
-  - [ ] 动作 7-9: 见第 4 节
+  - [x] 动作 7: cliSessionId invalidate 机制(2026-06-23) — §1.3 P0 护栏。execution.ts 在两个事件清 cliSessionId:**敏感越界硬失败** → 同时清 task.cliSessionId 和 SessionMember.cliSessionId(避免该 agent 进程内存里"我交付成功"的错误信念污染后续任务);**monitoring 纠偏退回 pending** → 同时清两层 cliSessionId(task.result 即将被推翻,agent 历史里"我做对了"的认知是脏数据)。正常完成路径不动 cliSessionId。3 集成测试
+  - [x] 动作 8: prompt 权威包装(2026-06-23) — §1.3 P0 护栏。orchestrator/index.ts 的 prompt 组装在依赖块 + 文件约束 + 任务描述外层包一层 `<authoritative_input> ... </authoritative_input>`,头部声明"如与历史冲突,以下内容为准,历史作废"。CLI 历史在 prompt 之前由 --resume 拼接,本包装放在历史之后利用 LLM 末尾注意力偏向。截断保护同步保留头尾标签完整。4 测试
+  - [x] 动作 9: 历史长度上限(2026-06-23,**降级不做**) — 实施动作 9 前发现 Claude Code / OpenCode CLI 内置 compact 机制已处理 context 增长问题。我们要拦的不是"context 满"(CLI 已管),而是"Agent 带过时角色感继续干" —— 后者由动作 7 的事件型 invalidate 解决,跟历史长度无强相关。按合同第 6 节"实施中发现 what 站不住,回来改这份"原则,在 §1.3 修订表格,将"历史长度上限"标 ~~删除~~。debug 钩子按需添加,本批次未实施
 - [ ] 在 PROGRESS.md 引用本契约
 - [ ] 跑通端到端最小用例验证 contract 可行性
 

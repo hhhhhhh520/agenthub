@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-22
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-23
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -157,6 +157,7 @@
 | contract v1 动作 4: orchestrator prompt 确定性注入(commit a552db3) | §1.1 数据流契约核心闭环:executeTaskBatch 新增 priorTaskMeta 参数(`Map<taskId, {description, outputSchema}>`),依赖结果以 `<dependency name="..." output_schema="...">` 结构化标签注入下游 prompt;删除 discussionSummary 注入路径(buildDiscussionSummary 死代码留在 context-builder.ts);截断保护改为通用形式 — 超长时截 depBlocks 保留 fileConstraint + task.description + 显式 `[...依赖内容已截断...]` 提示;execution.ts 同步构建 allTaskMeta 传入。10 新测试,771 全绿 | 2026-06-23 |
 | contract v1 动作 6: declaredFiles 分级校验 | §1.2 b 实施时修订 contract 为分级语义(理由:架构师 LLM 文件声明本质是猜测,Agent 顺手改邻文件是常态,硬失败级联会让 90%+ 任务挂)。新增 sensitive-paths.ts:敏感路径黑名单(.env / package.json / package-lock.json / prisma/schema.prisma / .gitignore / tsconfig.json / node_modules\* / .agenthub\* / .next\* / next.config.* / vite.config.* / vitest.config.* 等)。execution.ts 越界检测后分级:**敏感越界** → 任务 failed + 下游 blocked + 不写 result(避免污染 priorResults);**普通越界** → 软警告 + 任务仍 completed;**declaredFiles 为空** → 跳过校验(允许纯讨论任务)。20 sensitive-paths 单测 + 5 集成测试,802 全绿 | 2026-06-23 |
 | contract v1 动作 5: outputSchema 软校验 | §1.2 a 实施时修订 contract 为软语义,与动作 6 对称(理由:output_schema 当前仅由下游 LLM 通过 prompt 标签消费,不需要程序化 JSON;硬失败拦的主要是格式问题而非内容问题,误伤大)。新增 schema-validator.ts:从 result 末尾提取 JSON 块(```json``` fenced 优先,fallback 裸 `{...}`,支持对象/数组识别但只接受对象),JSON.parse 后比对 outputSchema 声明的字段名。状态:no-schema(跳过)/ok/no-json/parse-error/missing-fields。execution.ts 普通越界检测后插入校验,不通过只发警告任务仍 completed。20 schema-validator 单测 + 3 集成测试,825 全绿 | 2026-06-23 |
+| contract v1 动作 7+8: cliSessionId invalidate + prompt 权威包装 | §1.3 P0 双护栏。**动作 7**(invalidate):execution.ts 在敏感越界硬失败 + monitoring 纠偏退回 pending 两处事件同时清 task.cliSessionId 和 SessionMember.cliSessionId,避免 agent 进程内存里的脏角色感污染后续任务/重试。正常完成路径不动 cliSessionId。**动作 8**(权威包装):orchestrator/index.ts 的 prompt 组装外层包 `<authoritative_input>...</authoritative_input>` 标签,头部声明"以下内容为准,历史作废",利用 LLM 末尾注意力偏向引导。截断保护同步保留头尾完整。**动作 9 降级不做**:实施前发现 CLI 内置 compact 机制已管 context 增长,我们要拦的"agent 过时角色感"由动作 7 的事件型 invalidate 解决,跟历史长度无强相关。3 动作 7 集成测试 + 4 动作 8 prompt 测试,832 全绿 | 2026-06-23 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator

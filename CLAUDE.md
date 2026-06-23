@@ -42,7 +42,9 @@ src/
 │   │   ├── review.ts          # 结果审查 + 纠偏 + delegate/discuss
 │   │   ├── agent-factory.ts   # Agent 创建
 │   │   ├── context-builder.ts # 历史上下文构建
-│   │   └── git-utils.ts       # Git 变更检测
+│   │   ├── shadow-git.ts       # 影子 git 追踪 workDir 变更(不污染 workDir)
+│   │   ├── sensitive-paths.ts  # 敏感路径黑名单(declaredFiles 硬失败判定)
+│   │   └── schema-validator.ts # outputSchema 软校验(提取 JSON 块 + 字段名比对)
 │   ├── hooks/                 # use-sessions, use-chat, use-chat-fab, use-mounted
 │   ├── attachment-cleanup.ts  # 附件文件清理（unlinkSync + 孤儿清理）
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
@@ -69,7 +71,7 @@ prisma/
 - **RecentDir**：存储最近打开的目录（`path` 唯一、`lastUsed`、`useCount`）
 - **Agent**：`platform`/`model`/`baseUrl`/`apiKey` 支持多供应商；`isOrchestrator` 标记 Orchestrator 特殊 Agent；默认 platform 为 `claude-code`；预设 Agent 的 model 默认为空（使用 CLI 默认模型，页面显示实际模型）
 - **Provider**：已保存的服务商配置模板（`name` 唯一、`baseUrl`、`apiKey`、`model`、`category`）。Agent 选中后复制字段，不是 FK
-- **Task**：`cliSessionId` 用于 CLI 会话恢复；`correctionCount` 纠偏重试计数（持久化，重启不丢失）；`trace` JSON 数组记录执行轨迹（start/error/success/correction/blocked）
+- **Task**:`cliSessionId` 用于 CLI 会话恢复;`correctionCount` 纠偏重试计数;`trace` JSON 数组(start/error/success/correction/blocked);`result` 持久化任务交付物(跨批权威载体);`outputSchema` 架构师声明的简化 schema(JSON 字符串)
 - **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status；`cliSessionId` 存储 CLI session ID 用于会话恢复
 - **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
 - **Attachment**：用户上传的图片/文件（`messageId` 可空，先上传后关联；`sessionId` 方便孤儿清理；`onDelete: Cascade` 只删 DB 记录，需 `cleanupAttachmentFiles()` 删磁盘文件）
@@ -236,12 +238,14 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - 不一致返回 `409 { error: 'file_modified' }`，前端弹确认框，确认后带 `force: true` 重试跳过检查
 - 新文件（文件不存在）跳过检查，直接写入
 
-### 文件变更检测
+### 文件变更检测(影子 git)
 
-- 每批任务执行后自动 `git diff --name-only HEAD` 检测实际改动文件
-- 对比 `declaredFiles`（Agent 声明的文件）和实际改动，越界修改发送告警
-- 未初始化 Git 的项目 fallback 到无检测
-- 实现：`src/lib/services/git-utils.ts` 中的 `getGitSnapshot` / `getChangedFiles`
+- 每批任务跑完通过**影子 git**(`<workDir>/.agenthub/shadow-git/<sessionId>/`)对比 `declaredFiles` 和实际改动
+- **workDir 本身不被 git init**,通过 `git --git-dir=... --work-tree=<workDir>` 调用,用户感知不到 git 存在
+- 越界判定分级(契约 §1.2 b):敏感路径(`.env` / `package.json` / `prisma/schema.prisma` 等,详见 `src/lib/services/sensitive-paths.ts`)→ 任务硬失败 + 下游 blocked;普通越界 → 软警告 + 任务仍 completed;`declaredFiles` 为空 → 跳过校验
+- outputSchema 软校验(契约 §1.2 a):从 `task.result` 末尾提取 JSON 块比对字段名,缺字段只发警告不阻断
+- 实现:`src/lib/services/shadow-git.ts` / `sensitive-paths.ts` / `schema-validator.ts`
+- 设计源文档:`docs/discussions/agenthub-contract-v1.md`
 
 ### Agent 边界防护
 
@@ -252,7 +256,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
   - **协作规范**：任务完成必须汇报、里程碑进度汇报、阻塞立即上报、依赖明确说明、代码修改后测试
   - **安全边界**：不越界、不破坏、修改前确认可回滚
   - **汇报模板**：任务完成时必须包含（完成内容、产出位置、验证方式、遗留问题、影响范围）
-- **流程**：检测越界 → LLM 审查 → 状态改回 pending → 注入纠偏信息重试（最多 2 次）
+- **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界软警告 → LLM 监督审查 → 状态改回 pending → 注入纠偏信息重试(最多 2 次)
 
 ### Chat API Session Lock
 
@@ -271,13 +275,14 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - `type: 'group'` — 群聊，多 Agent 协作，通过拉群 Dialog 创建（可选 Agent）
 - `type: 'private'` — 私聊，直接与单个 Agent 对话，跳过 Orchestrator
 
-### 设计文档（必读）
+### 设计文档(必读)
 
-- **v2 设计决策**：`docs/design/agenthub-v2-design-decisions.md` — 当前架构设计（混合执行层、Agent 预设池、群聊协作、工件驱动等）
-- **工作区与权限**：`docs/design/workspace-and-permissions.md` — 项目目录、权限模式、变更检测
-- **实现计划**：`docs/design/implementation-plan.md` — 8 阶段任务拆分
-- 参考资料：`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
-- 新增功能前必须对照 v2 设计决策文档
+- **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
+- **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
+- **工作区与权限**:`docs/design/workspace-and-permissions.md`
+- **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
+- 参考资料:`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
+- **新增功能前必须先看 contract v1**(它定义了 Agent 协作的"应然"),再看 v2 设计决策(早期架构)
 
 ### 已知功能差距
 
