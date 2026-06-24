@@ -46,16 +46,18 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
   if (newDescription && newDescription.trim()) {
     updateData.description = newDescription.trim()
   }
-  await prisma.task.update({ where: { id: taskId }, data: updateData })
 
-  // 3. ❌-2 修复:同步清 SessionMember.cliSessionId(同 task)
-  //    用事务保证两表一致(配合 ⚠️-C2 修复的一致性原则)
-  if (task.assignedAgentId) {
-    await prisma.sessionMember.updateMany({
-      where: { sessionId, agentId: task.assignedAgentId },
-      data: { cliSessionId: null },
-    })
-  }
+  // 3. F3 修复:task + SessionMember 两表更新包事务,保持 ⚠️-C2 一致性
+  //    (原代码注释自称"用事务"但实际未用,review 抓出 — 这里补上真事务)
+  await prisma.$transaction([
+    prisma.task.update({ where: { id: taskId }, data: updateData }),
+    ...(task.assignedAgentId ? [
+      prisma.sessionMember.updateMany({
+        where: { sessionId, agentId: task.assignedAgentId },
+        data: { cliSessionId: null },
+      })
+    ] : [])
+  ])
 
   // 4. Unblock downstream tasks that were blocked by this task's failure
   const allTasks = await prisma.task.findMany({ where: { sessionId } })

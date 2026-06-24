@@ -395,8 +395,11 @@ export async function executeTaskBatch(
             const upstreamResult = results.get(depId)?.result
             if (!upstreamResult) return ''
             const meta = taskMetaMap.get(depId)
-            const name = meta?.description ?? depId
-            const schemaAttr = meta?.outputSchema ? ` output_schema=${JSON.stringify(meta.outputSchema)}` : ''
+            // ⚠️-C1 F4 修复:name 和 outputSchema 也来自架构师 LLM 输出,需要转义。
+            // JSON.stringify 只转义引号和反斜杠,不转义 < > —— 仅靠它无法阻挡闭合标签注入
+            const name = escapeContractTags(meta?.description ?? depId)
+            const safeOutputSchema = meta?.outputSchema ? escapeContractTags(meta.outputSchema) : ''
+            const schemaAttr = safeOutputSchema ? ` output_schema=${JSON.stringify(safeOutputSchema)}` : ''
             // ⚠️-C1: upstreamResult 来自上游 LLM,必须转义
             return `<dependency name=${JSON.stringify(name)}${schemaAttr}>\n${escapeContractTags(upstreamResult)}\n</dependency>`
           })

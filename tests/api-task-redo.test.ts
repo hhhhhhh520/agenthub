@@ -22,6 +22,8 @@ vi.mock('@/lib/db', () => ({
     message: { findMany: mockMessageFindMany },
     agent: { findMany: mockAgentFindMany },
     sessionMember: { updateMany: mockSessionMemberUpdateMany },
+    // F3 修复:redo 用 $transaction 包两表更新
+    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
   },
 }))
 

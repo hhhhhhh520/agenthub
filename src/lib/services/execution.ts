@@ -268,24 +268,32 @@ export async function handleExecution(
       // ⚠️-C3 修复:CLI 本次没吐 session chunk 时,不动 cliSessionId(保留旧值)
       // 而不是用 null 覆盖。与 contract v1 §1.3 "正常完成保留 cliSessionId(沿用历史是好的)"对齐。
       // 只有 ❌-1/纠偏路径才主动清 cliSessionId
-      await prisma.task.update({
-        where: { id: taskId },
-        data: {
-          status: 'completed',
-          correctionCount: 0,
-          trace: successTrace,
-          result,
-          ...(cliSessionId ? { cliSessionId } : {}),
-        },
-      })
+      //
+      // F10 修复:task + SessionMember 两表更新包事务,保持 ⚠️-C2 一致性
+      // (C2 只修了 failure/correction 路径,success 路径同源风险被遗漏 — review 抓出)
+      const successAgentId = taskForTrace?.assignedAgentId
+      await prisma.$transaction([
+        prisma.task.update({
+          where: { id: taskId },
+          data: {
+            status: 'completed',
+            correctionCount: 0,
+            trace: successTrace,
+            result,
+            ...(cliSessionId ? { cliSessionId } : {}),
+          },
+        }),
+        ...(cliSessionId && successAgentId ? [
+          prisma.sessionMember.updateMany({
+            where: { sessionId, agentId: successAgentId },
+            data: { cliSessionId },
+          })
+        ] : [])
+      ])
       if (taskForTrace) taskForTrace.result = result
-      // 同步 sessionId 到 SessionMember,供后续任务 fallback
-      if (cliSessionId && taskForTrace?.assignedAgentId) {
-        await prisma.sessionMember.updateMany({
-          where: { sessionId, agentId: taskForTrace.assignedAgentId },
-          data: { cliSessionId },
-        })
-        memberSessionMap.set(taskForTrace.assignedAgentId, cliSessionId)
+      // 同步 sessionId 到内存 memberSessionMap,供后续任务 fallback(事务外纯内存)
+      if (cliSessionId && successAgentId) {
+        memberSessionMap.set(successAgentId, cliSessionId)
       }
       const task = tasks.find(t => t.id === taskId)
       if (task) task.status = 'completed'
