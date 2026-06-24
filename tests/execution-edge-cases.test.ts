@@ -28,6 +28,12 @@ vi.mock('@/lib/db', () => ({
     task: { findMany: mocks.mockTaskFindMany, update: mocks.mockTaskUpdate, count: mocks.mockTaskCount },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findMany: mocks.mockSessionMemberFindMany, updateMany: mocks.mockSessionMemberUpdateMany },
+    // ⚠️-C2 修复:$transaction 接 promise 数组,逐项 await
+    // mock prisma 不能用 prisma.task.update(...) 形式拿"延迟 promise",
+    // 因为 .update() 已经立即 invoke mockTaskUpdate 了。
+    // 所以测试里调用 prisma.$transaction([prisma.task.update(...), ...])
+    // 等价于"逐项调 fn,收集 promise,然后 await all"——这正是 mock 行为
+    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
   },
 }))
 
@@ -678,5 +684,87 @@ describe('Execution — git diff boundary detection', () => {
     )
     expect(memberUpdate).toBeDefined()
     expect(memberUpdate[0].data.cliSessionId).toBe('cli-sess-keep')
+  })
+
+  // ─── ⚠️-C2 修复:cliSessionId 跨表更新加事务 ───
+  it('[C2] 敏感越界硬失败时 task.update + sessionMember.updateMany 走 $transaction(原子性)', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({
+      declaredFiles: '["src/x.ts"]',
+      cliSessionId: 'cli-old',
+    })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 'new' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockGetChangedFiles.mockReturnValue(['.env'])  // 触发敏感越界
+
+    // 拦截 $transaction:验证传入的 ops 数组包含 task.update + sessionMember.updateMany
+    // (普通 prisma.task.update 调用走的不是这条路径,只有事务内的才能拦到 ops 结构)
+    let txOps: unknown[] | null = null
+    const dbMod = await import('@/lib/db') as unknown as { prisma: { $transaction: (ops: Promise<unknown>[]) => Promise<unknown[]> } }
+    const originalTx = dbMod.prisma.$transaction
+    dbMod.prisma.$transaction = vi.fn(async (ops: Promise<unknown>[]) => {
+      txOps = ops
+      return Promise.all(ops)
+    })
+
+    try {
+      const sendEvent = vi.fn()
+      await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+      // 验证 $transaction 至少被调一次,且包 task.update + sessionMember.updateMany
+      expect(dbMod.prisma.$transaction).toHaveBeenCalled()
+      expect(txOps).not.toBeNull()
+      expect(Array.isArray(txOps)).toBe(true)
+      // 事务内应至少有 2 个操作(task.update + sessionMember.updateMany)
+      expect((txOps as unknown[]).length).toBeGreaterThanOrEqual(2)
+    } finally {
+      dbMod.prisma.$transaction = originalTx
+    }
+  })
+
+  it('[C2] 纠偏退回 pending 时 task.update + sessionMember.updateMany 走 $transaction', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '[]', cliSessionId: 'cli-old' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    let callCount = 0
+    mocks.mockExecuteTaskBatch.mockImplementation(async () => {
+      callCount++
+      if (callCount === 1) {
+        return { results: new Map([['task-1', { result: 'first', sessionId: 's1' }]]), failedTaskIds: [] }
+      }
+      return { results: new Map([['task-1', { result: 'second', sessionId: 's2' }]]), failedTaskIds: [] }
+    })
+    // monitoring 第一次说要纠偏,第二次说没问题
+    let monitorCount = 0
+    mocks.mockExecuteSingleAgent.mockImplementation(async () => {
+      monitorCount++
+      return { result: JSON.stringify(
+        monitorCount === 1
+          ? { needsCorrection: true, correctionNote: '需要改进' }
+          : { needsCorrection: false }
+      ) }
+    })
+
+    let txCallCount = 0
+    const dbMod = await import('@/lib/db') as unknown as { prisma: { $transaction: (ops: Promise<unknown>[]) => Promise<unknown[]> } }
+    const originalTx = dbMod.prisma.$transaction
+    dbMod.prisma.$transaction = vi.fn(async (ops: Promise<unknown>[]) => {
+      txCallCount++
+      return Promise.all(ops)
+    })
+
+    try {
+      const sendEvent = vi.fn()
+      await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+      // 纠偏路径触发了 $transaction
+      expect(txCallCount).toBeGreaterThanOrEqual(1)
+    } finally {
+      dbMod.prisma.$transaction = originalTx
+    }
   })
 })
