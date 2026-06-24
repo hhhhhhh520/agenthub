@@ -4,6 +4,18 @@
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
 
+## 核心规约
+
+**Agent 协作 Contract v1** — `docs/discussions/agenthub-contract-v1.md`
+管 Agent 之间怎么传数据、怎么校验、怎么跨 task 保留角色感。三条契约:
+- §1.1 数据流契约 — orchestrator 确定性注入,LLM 不再自选通道
+- §1.2 可信度契约 — 双层校验(outputSchema 软校验 + declaredFiles 分级校验)
+- §1.3 连续性契约 — cliSessionId default-on + 事件型 invalidate 护栏
+
+**实施状态**(2026-06-23): 9 项工程动作中 8 项完成 + 1 项经实施讨论确定不做。详见 contract 第 7 节。
+
+新增功能涉及 Agent 协作机制时,先看 contract。
+
 ## 当前进度
 
 ### ✅ 已完成

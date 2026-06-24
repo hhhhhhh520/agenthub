@@ -208,7 +208,7 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
   - [x] 动作 7: cliSessionId invalidate 机制(2026-06-23) — §1.3 P0 护栏。execution.ts 在两个事件清 cliSessionId:**敏感越界硬失败** → 同时清 task.cliSessionId 和 SessionMember.cliSessionId(避免该 agent 进程内存里"我交付成功"的错误信念污染后续任务);**monitoring 纠偏退回 pending** → 同时清两层 cliSessionId(task.result 即将被推翻,agent 历史里"我做对了"的认知是脏数据)。正常完成路径不动 cliSessionId。3 集成测试
   - [x] 动作 8: prompt 权威包装(2026-06-23) — §1.3 P0 护栏。orchestrator/index.ts 的 prompt 组装在依赖块 + 文件约束 + 任务描述外层包一层 `<authoritative_input> ... </authoritative_input>`,头部声明"如与历史冲突,以下内容为准,历史作废"。CLI 历史在 prompt 之前由 --resume 拼接,本包装放在历史之后利用 LLM 末尾注意力偏向。截断保护同步保留头尾标签完整。4 测试
   - [x] 动作 9: 历史长度上限(2026-06-23,**降级不做**) — 实施动作 9 前发现 Claude Code / OpenCode CLI 内置 compact 机制已处理 context 增长问题。我们要拦的不是"context 满"(CLI 已管),而是"Agent 带过时角色感继续干" —— 后者由动作 7 的事件型 invalidate 解决,跟历史长度无强相关。按合同第 6 节"实施中发现 what 站不住,回来改这份"原则,在 §1.3 修订表格,将"历史长度上限"标 ~~删除~~。debug 钩子按需添加,本批次未实施
-- [ ] 在 PROGRESS.md 引用本契约
+- [x] 在 PROGRESS.md 引用本契约(2026-06-23)
 - [ ] 跑通端到端最小用例验证 contract 可行性
 
 ---
