@@ -265,9 +265,18 @@ export async function handleExecution(
         ts: new Date().toISOString(), event: 'success',
       })
       // contract v1 §1.1: 持久化 result 到 DB,作为跨批权威载体
+      // ⚠️-C3 修复:CLI 本次没吐 session chunk 时,不动 cliSessionId(保留旧值)
+      // 而不是用 null 覆盖。与 contract v1 §1.3 "正常完成保留 cliSessionId(沿用历史是好的)"对齐。
+      // 只有 ❌-1/纠偏路径才主动清 cliSessionId
       await prisma.task.update({
         where: { id: taskId },
-        data: { status: 'completed', cliSessionId: cliSessionId || null, correctionCount: 0, trace: successTrace, result },
+        data: {
+          status: 'completed',
+          correctionCount: 0,
+          trace: successTrace,
+          result,
+          ...(cliSessionId ? { cliSessionId } : {}),
+        },
       })
       if (taskForTrace) taskForTrace.result = result
       // 同步 sessionId 到 SessionMember,供后续任务 fallback
