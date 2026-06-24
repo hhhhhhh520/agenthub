@@ -6,7 +6,7 @@ import { processRegistry } from '../adapter/process-registry'
 import { withTimeout, TIMEOUT, TimeoutError } from './timeout'
 import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
-import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
+import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT, escapeContractTags } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
 // ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
@@ -376,9 +376,15 @@ export async function executeTaskBatch(
           chatSessionId: chatSessionId,
         })
 
+        // ⚠️-C1 修复:外部内容拼进权威标签前必须 escapeContractTags
+        // 防止 task.description / declaredFiles / upstream result 中的字面
+        // </authoritative_input> </dependency> 闭合包装注入伪指令
+        const safeDescription = escapeContractTags(task.description)
+        const safeDeclaredFiles = task.declaredFiles?.map(f => escapeContractTags(f)) ?? []
+
         // P0: 注入文件约束，防止越界修改
-        const fileConstraint = task.declaredFiles?.length > 0
-          ? `[任务边界] 只能修改: ${task.declaredFiles.join(', ')}。禁止修改其他文件。\n\n`
+        const fileConstraint = safeDeclaredFiles.length > 0
+          ? `[任务边界] 只能修改: ${safeDeclaredFiles.join(', ')}。禁止修改其他文件。\n\n`
           : ''
 
         // contract v1 §1.1: 结构化注入依赖任务的交付物
@@ -391,7 +397,8 @@ export async function executeTaskBatch(
             const meta = taskMetaMap.get(depId)
             const name = meta?.description ?? depId
             const schemaAttr = meta?.outputSchema ? ` output_schema=${JSON.stringify(meta.outputSchema)}` : ''
-            return `<dependency name=${JSON.stringify(name)}${schemaAttr}>\n${upstreamResult}\n</dependency>`
+            // ⚠️-C1: upstreamResult 来自上游 LLM,必须转义
+            return `<dependency name=${JSON.stringify(name)}${schemaAttr}>\n${escapeContractTags(upstreamResult)}\n</dependency>`
           })
           .filter(Boolean)
         const depPrefix = depBlocks.length > 0 ? depBlocks.join('\n\n') + '\n\n' : ''
@@ -404,20 +411,20 @@ export async function executeTaskBatch(
           '以下是 orchestrator 本轮注入的权威输入(依赖产出 + 任务边界 + 任务描述)。\n' +
           '如与你之前会话历史冲突,**以下内容为准**,历史记录作废。\n\n'
         const AUTHORITATIVE_FOOTER = '\n</authoritative_input>'
-        const innerPrompt = depPrefix + fileConstraint + task.description
+        const innerPrompt = depPrefix + fileConstraint + safeDescription
         let prompt = AUTHORITATIVE_HEADER + innerPrompt + AUTHORITATIVE_FOOTER
 
         // 通用 prompt 截断保护:超过上限时按比例截掉 depPrefix(保留 fileConstraint + 任务描述 + 权威包装完整)
         const MAX_PROMPT_LEN = 4000
         const wrapperLen = AUTHORITATIVE_HEADER.length + AUTHORITATIVE_FOOTER.length
         if (prompt.length > MAX_PROMPT_LEN && depPrefix) {
-          const tailLen = (fileConstraint + task.description).length
+          const tailLen = (fileConstraint + safeDescription).length
           const allowedDepLen = Math.max(0, MAX_PROMPT_LEN - tailLen - wrapperLen)
           const truncatedDep = depPrefix.slice(0, allowedDepLen)
           const truncationNote = allowedDepLen < depPrefix.length
             ? '\n[...依赖内容已截断...]\n\n'
             : ''
-          prompt = AUTHORITATIVE_HEADER + truncatedDep + truncationNote + fileConstraint + task.description + AUTHORITATIVE_FOOTER
+          prompt = AUTHORITATIVE_HEADER + truncatedDep + truncationNote + fileConstraint + safeDescription + AUTHORITATIVE_FOOTER
           console.warn(`[executeTaskBatch] 依赖块已截断: ${depPrefix.length} -> ${truncatedDep.length} 字符`)
         }
 
