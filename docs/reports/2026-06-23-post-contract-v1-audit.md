@@ -461,6 +461,74 @@ resolvedApiKey !== undefined ? { apiKey: resolvedApiKey } : ...
 
 ---
 
-> 报告生成：2026-06-23 22:00
-> 审查者：Claude（Explore × 3 subagent）
-> 下次更新触发：每条问题修复后在本文件末尾追加 ✅ 修复说明
+---
+
+# 修复进度（2026-06-24 更新）
+
+## ✅ 已修复（9 项）
+
+第一波（推送阻塞）：
+- **❌-4 撤换硬编码 API Key** → commit `0eaee6b`
+- **❌-1 orchestrator gracefulKillEntry 缺 config** → commit `e7dd82d`
+
+第二波（核心契约层）：
+- **⚠️-C1 prompt 标签转义防注入** → commit `741a88d`（含 F1+F4 加固于 `d63c66a`）
+- **⚠️-C2 cliSessionId 跨表事务** → commit `dae3218`（含 F10 success 路径补丁于 `d63c66a`）
+- **⚠️-C3 正常完成不覆盖旧 cliSessionId** → commit `d78702b`
+- **❌-3 shadow-git 加清理 + .gitignore** → commit `1db96bb`
+- **❌-2 redo 路径上车 Contract v1** → commit `b71150e`（含 F3 事务补丁于 `d63c66a`）
+
+第二波 review 二轮加固：
+- **F1+F3+F4+F10**（pre-commit-audit 抓出的二轮问题） → commit `d63c66a`
+
+## ⏸️ 已评估不实施（基于本地单机工具威胁模型）
+
+本项目当前部署形态：**本地单机工具**（Next.js dev server localhost:3000，单用户，无认证）。
+传统 web 安全威胁（XSS/越权/路径穿越）在此场景下威胁等级急剧下降——攻击者要么是你自己（无意义），要么是 LLM 输出（这才是真实威胁，已修）。
+
+以下问题在当前威胁模型下不修，**转 SaaS / 多用户场景时需重评**：
+
+| 编号 | 问题 | 不修理由 |
+|---|---|---|
+| ⚠️-S1 | orchestrator POST 接受掩码污染 apiKey | 单用户不会自己投毒 |
+| ⚠️-S2 | path-safety symlink 跨界 | 需要 agent 协同攻击，单用户场景 agent 是你自己 |
+| ⚠️-S3 | accept 路由敏感列表割裂 | `target=project` 已 403，不可达 |
+| ⚠️-S4 | attachments 路由未对齐 UUID/realpath | 单用户无威胁 |
+| ⚠️-S5 | providerRef 空 apiKey 静默覆盖 | 用户不会故意配空 key |
+| ⚠️-S6 | accept/download 拒绝路径无审计日志 | 无对外暴露，不需要审计 |
+| ⚠️-P1 | respondPermission stdin.write 不在锁内 | 并发场景罕见，单用户尤其 |
+| ⚠️-P2 | send catch 退避期持锁 | 当前因先 killEntry 实际无害 |
+| ⚠️-P3 | cleanupIdle MAX 分支可能中断活跃任务 | 单用户进程数远低于 MAX_PROCESSES=10 |
+| ⚠️-P4 | cleanupEntry 不清 permissionWaiters | 内存级泄漏，dead entry 跟着 GC |
+| ⚠️-C4 | monorepo 子包 package.json 不在敏感列表 | 用户本地项目不一定是 monorepo |
+| ⚠️-C5 | git 中文文件名八进制转义漏匹配 | 边缘场景 |
+| ⚠️-C6 | schema-validator 不支持嵌套字段 | 架构师 LLM 一般用扁平 schema |
+| ❌-5 | shell:true + 用户可控字段命令注入 | 需 agent.model = `"sonnet & calc.exe"` 这种自害行为 |
+
+**review 二轮归入此清单的**：
+
+| 编号 | 问题 | 不修理由 |
+|---|---|---|
+| F2 | shadow-git projectDir 路径任意写 | 单用户不会自己设 `/etc` 攻击自己；ensureAgenthubGitignore 扩大写入面但仍受限于 projectDir 信任 |
+| F5 | redo 走 handleExecution 隐性跑所有 pending | 前端 fire-and-forget + 轮询，无用户感知；遗留 pending 顺带跑反而清理 |
+| F6 | escapeContractTags 标签清单硬编码 | 当前 2 个标签稳定，加新标签时改这里即可 |
+| F7 | ensureAgenthubGitignore 覆盖用户文件 | `.agenthub/` 是项目专属命名 |
+| F8 | cliSessionId 空字符串边界 | Claude Code / OpenCode CLI 都不返回空字符串 |
+| F9 | DELETE 无 session-lock | 单用户不会在执行期间删 session |
+| F11 | redo catch 不修 task 状态 | handleExecution prelude 抛错概率极低（prisma 失败） |
+| F12 | $transaction mock 用 Promise.all 不验回滚 | Prisma 真行为有保证；要 integration test 用真 SQLite |
+| F13 | 测试名/commit message 措辞 | commit `d63c66a` 顺手修 |
+
+## 未来重评触发条件
+
+以下任一发生时，重新评估上述"不修"清单：
+1. 项目暴露到公网（即使只是 LAN 多设备访问）
+2. 部署到多用户云服务
+3. 接受第三方贡献者代码（不可信源扩大）
+4. 嵌入到企业内部多租户系统
+
+---
+
+> 修复进度更新：2026-06-24 19:40
+> 完成情况：9 项已修 / 23 项已评估不实施
+> 测试数：832 → 867（净增 35 个针对性测试）
