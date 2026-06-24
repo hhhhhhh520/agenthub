@@ -1,3 +1,28 @@
+/**
+ * ⚠️-C1 修复:Contract v1 标签转义防注入
+ *
+ * orchestrator 在 prompt 中用两个标签包装权威输入:
+ *   <dependency>...</dependency>          — 注入上游任务结果
+ *   <authoritative_input>...</authoritative_input>  — 包装本轮权威输入
+ *
+ * 如果上游 LLM 输出 / 架构师拆出的 task.description / declaredFiles 含字面
+ * `</dependency>` 或 `</authoritative_input>`,会提前闭合包装,后续文本逃逸出
+ * 权威输入域,被攻击者利用作"伪权威指令注入"。
+ *
+ * 此函数把关闭标签替换为视觉等价但语义不闭合的形式(中间插空格),
+ * 保留可读性,杜绝闭合污染。
+ *
+ * 注:只挡 contract v1 用的两个特定标签,不挡其他 HTML/XML 标签(避免误伤业务文本)。
+ *
+ * 用法:任何拼接到 <dependency> / <authoritative_input> 内部的外部内容都要先过此函数。
+ */
+export function escapeContractTags(input: string | null | undefined): string {
+  if (!input) return ''
+  return input
+    .replace(/<\/(authoritative_input)>/gi, '< /$1 >')
+    .replace(/<\/(dependency)>/gi, '< /$1 >')
+}
+
 export const SCENE_ANALYSIS_PROMPT = `你是一个任务分析器。分析用户需求，判断任务类型。
 返回 JSON，不要包含其他文字：
 {
