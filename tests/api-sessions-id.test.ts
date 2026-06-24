@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mock setup ---
-const { mockFindUnique, mockUpdate, mockDelete, mockAttachmentFindMany, mockTaskFindMany, mockTaskUpdateMany } = vi.hoisted(() => ({
+const { mockFindUnique, mockUpdate, mockDelete, mockAttachmentFindMany, mockTaskFindMany, mockTaskUpdateMany, mockCleanupShadowGit } = vi.hoisted(() => ({
   mockFindUnique: vi.fn(),
   mockUpdate: vi.fn(),
   mockDelete: vi.fn(),
   mockAttachmentFindMany: vi.fn(),
   mockTaskFindMany: vi.fn(),
   mockTaskUpdateMany: vi.fn(),
+  mockCleanupShadowGit: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -25,6 +26,10 @@ vi.mock('@/lib/db', () => ({
       findMany: mockAttachmentFindMany,
     },
   },
+}))
+
+vi.mock('@/lib/services/shadow-git', () => ({
+  cleanupShadowGit: mockCleanupShadowGit,
 }))
 
 import { GET, PUT, DELETE } from '@/app/api/sessions/[id]/route'
@@ -119,10 +124,47 @@ describe('PUT /api/sessions/[id]', () => {
 
 describe('DELETE /api/sessions/[id]', () => {
   it('200 on successful deletion', async () => {
+    mockFindUnique.mockResolvedValueOnce({ projectDir: null })
     mockDelete.mockResolvedValueOnce({})
     const res = await DELETE(makeReq('DELETE'), params)
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ success: true })
     expect(mockDelete).toHaveBeenCalledWith({ where: { id: 's1' } })
+  })
+
+  // ❌-3 修复:删 session 时清影子 git 目录
+  it('[❌-3] 调 cleanupShadowGit 当 session 有 projectDir', async () => {
+    mockFindUnique.mockResolvedValueOnce({ projectDir: '/tmp/proj' })
+    mockDelete.mockResolvedValueOnce({})
+
+    await DELETE(makeReq('DELETE'), params)
+
+    expect(mockCleanupShadowGit).toHaveBeenCalledWith('/tmp/proj', 's1')
+    expect(mockDelete).toHaveBeenCalled()
+  })
+
+  it('[❌-3] 没 projectDir 时跳过 cleanupShadowGit,仍删 session', async () => {
+    mockFindUnique.mockResolvedValueOnce({ projectDir: null })
+    mockDelete.mockResolvedValueOnce({})
+
+    await DELETE(makeReq('DELETE'), params)
+
+    expect(mockCleanupShadowGit).not.toHaveBeenCalled()
+    expect(mockDelete).toHaveBeenCalled()
+  })
+
+  it('[❌-3] cleanupShadowGit 抛错不阻塞 session 删除', async () => {
+    mockFindUnique.mockResolvedValueOnce({ projectDir: '/tmp/proj' })
+    mockCleanupShadowGit.mockImplementationOnce(() => { throw new Error('权限错误') })
+    mockDelete.mockResolvedValueOnce({})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const res = await DELETE(makeReq('DELETE'), params)
+
+    expect(res.status).toBe(200)
+    expect(mockDelete).toHaveBeenCalled()  // 仍删了 session
+    expect(warnSpy).toHaveBeenCalled()  // 但报了 warn
+
+    warnSpy.mockRestore()
   })
 })
