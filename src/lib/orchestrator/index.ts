@@ -9,19 +9,10 @@ import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
 
-// 构建 ProcessRegistry key（与 adapter 内部 getRegistryKey 保持一致）
-// 注意：workDir 必须和 adapter.connect() 时的值一致，否则 gracefulKillEntry 查不到进程
-function buildRegistryKey(platform: string, chatSessionId?: string, agentId?: string, workDir?: string): string {
-  const sessionPart = chatSessionId || 'default'
-  const agentPart = agentId || 'default'
-  // ClaudeCodeAdapter: config.workDir || process.cwd()
-  // OpenCodeAdapter: config.workDir || join(process.cwd(), 'workspaces', `opencode-${Date.now()}`)
-  // OpenCode 的 key 含时间戳，超时时无法重建，但 ndjson 格式会自动清理
-  const dir = workDir || process.cwd()
-  return platform === 'opencode'
-    ? `opencode:${sessionPart}:${agentPart}:${dir}`
-    : `${sessionPart}:${agentPart}:${dir}`
-}
+// ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
+// 新模式:adapter.getRegistryKey() + adapter.getSpawnConfig() 拿权威值。
+// 这样保证 gracefulKillEntry 拿到的 key/config 与 spawn 时完全一致,
+// 不会因 buildConfigHash 字段算错 effectiveKey 导致静默 no-op。
 
 // 隐性行为准则：自动注入所有 Agent 的 System Prompt
 const AGENT_BEHAVIOR_RULES = `<role>你是 AgentHub 平台上的独立 Agent，与其他 Agent 协作完成用户任务。</role>
@@ -430,7 +421,6 @@ export async function executeTaskBatch(
           console.warn(`[executeTaskBatch] 依赖块已截断: ${depPrefix.length} -> ${truncatedDep.length} 字符`)
         }
 
-        const registryKey = buildRegistryKey(platform, chatSessionId, agentId, projectDir)
         try {
           for await (const chunk of withTimeout(
             adapter.send({
@@ -439,7 +429,18 @@ export async function executeTaskBatch(
               systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
             }),
             TIMEOUT.AGENT_TASK,
-            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey, { workDir: projectDir }) },
+            {
+              onTimeout: async () => {
+                // ❌-1 修复:用 adapter.getSpawnConfig() 拿权威完整 config 杀进程
+                const spawnConfig = adapter.getSpawnConfig()
+                if (spawnConfig) {
+                  await processRegistry.gracefulKillEntry(adapter.getRegistryKey(), spawnConfig)
+                } else {
+                  // send 还没进 spawn 阶段(adapter 未真正起进程),无需杀
+                  console.warn(`[orchestrator/executeTaskBatch] onTimeout: adapter.getSpawnConfig() returned null, no process to kill`)
+                }
+              }
+            },
           )) {
             if (chunk.type === 'session') {
               capturedSessionId = chunk.content
@@ -527,7 +528,6 @@ export async function executeSingleAgent(
 
     let result = ''
     let capturedSessionId: string | undefined
-    const registryKey = buildRegistryKey(platform, chatSessionId, agent.id, agent.workDir)
     try {
       for await (const chunk of withTimeout(
         adapter.send({
@@ -538,10 +538,15 @@ export async function executeSingleAgent(
         }),
         TIMEOUT.AGENT_TASK,
         {
-          onTimeout: () => processRegistry.gracefulKillEntry(registryKey, {
-            workDir: agent.workDir,
-            allowedTools: toolsList.length > 0 ? toolsList : undefined,
-          })
+          onTimeout: async () => {
+            // ❌-1 修复:用 adapter.getSpawnConfig() 拿权威完整 config 杀进程
+            const spawnConfig = adapter.getSpawnConfig()
+            if (spawnConfig) {
+              await processRegistry.gracefulKillEntry(adapter.getRegistryKey(), spawnConfig)
+            } else {
+              console.warn(`[orchestrator/executeSingleAgent] onTimeout: adapter.getSpawnConfig() returned null, no process to kill`)
+            }
+          }
         },
       )) {
         if (chunk.type === 'session') {
@@ -591,12 +596,21 @@ export async function runDiscussion(
         await adapter.connect({ platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
 
         let result = ''
-        const registryKey = buildRegistryKey(platform, chatSessionId, undefined, projectDir)
         try {
           for await (const chunk of withTimeout(
             adapter.send({ prompt: combinedPrompt }),
             TIMEOUT.DISCUSSION,
-            { onTimeout: () => processRegistry.gracefulKillEntry(registryKey, { workDir: projectDir || '' }) },
+            {
+              onTimeout: async () => {
+                // ❌-1 修复:用 adapter.getSpawnConfig() 拿权威完整 config 杀进程
+                const spawnConfig = adapter.getSpawnConfig()
+                if (spawnConfig) {
+                  await processRegistry.gracefulKillEntry(adapter.getRegistryKey(), spawnConfig)
+                } else {
+                  console.warn(`[orchestrator/runDiscussion] onTimeout: adapter.getSpawnConfig() returned null, no process to kill`)
+                }
+              }
+            },
           )) {
             if (chunk.type === 'text') result += chunk.content
             onChunk(agent.name, chunk)

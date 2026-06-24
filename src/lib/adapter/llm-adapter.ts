@@ -76,4 +76,17 @@ export class LLMAdapter implements AgentAdapter {
   async close(): Promise<void> {
     this.abortController.abort()
   }
+
+  /**
+   * LLMAdapter 不走 ProcessRegistry(直接调 SDK,无子进程)。
+   * 实现接口以满足 TS 编译,实际不会被 orchestrator 调用。
+   * (当前 llm-adapter 是死代码备用,主链路全走 CLI adapter — 见 CLAUDE.md)
+   */
+  getRegistryKey(): string {
+    return `llm-adapter:${this.config.platform}:${this.config.agentId ?? 'default'}`
+  }
+
+  getSpawnConfig(): null {
+    return null
+  }
 }
