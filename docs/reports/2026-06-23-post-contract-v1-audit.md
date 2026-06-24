@@ -181,7 +181,7 @@ redo 路径走的是 `executeSingleAgent` 而不是 `handleExecution`，导致 C
 **位置**：`tests/e2e-contract.test.ts:39`
 
 **问题描述**：
-明文写死真实 MIMO API Key：`tp-c****fogf4`
+明文写死真实 MIMO API Key（已脱敏，原 key 已 revoked）：`tp-c****fogf4`
 
 当前文件状态：**未跟踪（Untracked）**，未进 git。但 26 个本地提交还没推 `origin/master`，下次 `git add .` 容易顺手带进去。
 
