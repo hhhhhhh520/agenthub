@@ -141,4 +141,47 @@ describe('shadow-git 集成测试', () => {
     const onlyAgenthub = entries.filter(e => e !== '.agenthub')
     expect(onlyAgenthub.length).toBe(0) // 空的 workDir
   })
+
+  // ❌-3 修复:防 .agenthub/ 被用户误提交进 git
+  it('[❌-3] ensureShadowInit 后,projectRoot/.agenthub/.gitignore 存在且内容为 *', () => {
+    getGitSnapshot(tmpRoot, TEST_SESSION)
+
+    const gitignorePath = path.join(tmpRoot, '.agenthub', '.gitignore')
+    expect(fs.existsSync(gitignorePath)).toBe(true)
+    expect(fs.readFileSync(gitignorePath, 'utf-8')).toBe('*\n')
+  })
+
+  it('[❌-3] projectRoot 是 git 仓库时,.agenthub/ 不会出现在 user git status 中', () => {
+    // 把 tmpRoot 初始化成真实 git 仓库
+    execSync('git init', { cwd: tmpRoot, stdio: 'ignore' })
+    execSync('git config user.email "test@example.com"', { cwd: tmpRoot, stdio: 'ignore' })
+    execSync('git config user.name "test"', { cwd: tmpRoot, stdio: 'ignore' })
+    fs.writeFileSync(path.join(tmpRoot, 'README.md'), 'init')
+    execSync('git add . && git commit -m init', { cwd: tmpRoot, stdio: 'ignore' })
+
+    // 跑影子 git
+    getGitSnapshot(tmpRoot, TEST_SESSION)
+    fs.writeFileSync(path.join(tmpRoot, 'work.txt'), 'agent output')
+
+    // 用户视角 git status:work.txt 应可见,.agenthub/ 应被 .gitignore 忽略
+    const userStatus = execSync('git status --porcelain', {
+      cwd: tmpRoot, encoding: 'utf-8',
+    })
+
+    expect(userStatus).toMatch(/work\.txt/)
+    expect(userStatus).not.toMatch(/\.agenthub/)
+  })
+
+  it('[❌-3] cleanupShadowGit 删除影子目录后,再调 getGitSnapshot 重新 init 仍正常', () => {
+    getGitSnapshot(tmpRoot, TEST_SESSION)
+    const shadowDir = path.join(tmpRoot, '.agenthub/shadow-git', TEST_SESSION)
+    expect(fs.existsSync(shadowDir)).toBe(true)
+
+    cleanupShadowGit(tmpRoot, TEST_SESSION)
+    expect(fs.existsSync(shadowDir)).toBe(false)
+
+    // 重新调,应该重新 init
+    getGitSnapshot(tmpRoot, TEST_SESSION)
+    expect(fs.existsSync(shadowDir)).toBe(true)
+  })
 }, 30_000)
