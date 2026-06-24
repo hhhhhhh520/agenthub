@@ -47,6 +47,8 @@ vi.mock('@/lib/db', () => ({
       findMany: mockSessionMemberFindMany,
       updateMany: mockSessionMemberUpdateMany,
     },
+    // F10:execution.ts success 路径用 $transaction 包两表
+    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
   },
 }))
 

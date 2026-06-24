@@ -12,15 +12,23 @@
  * 此函数把关闭标签替换为视觉等价但语义不闭合的形式(中间插空格),
  * 保留可读性,杜绝闭合污染。
  *
+ * F1 加固:regex 允许标签内空白(`</  dependency\n>` 等),因为
+ *   1. LLM 自然输出可能带空白(换行/缩进)
+ *   2. 宽容 HTML/XML 解析器会接受标签内空白,LLM 也一样
+ * 不防御就等于没防。
+ *
  * 注:只挡 contract v1 用的两个特定标签,不挡其他 HTML/XML 标签(避免误伤业务文本)。
  *
  * 用法:任何拼接到 <dependency> / <authoritative_input> 内部的外部内容都要先过此函数。
+ *      包括标签的 attr 值(name="..."、output_schema="...") — JSON.stringify 不转义 < >,
+ *      attr 值同样需要过此函数。
  */
 export function escapeContractTags(input: string | null | undefined): string {
   if (!input) return ''
+  // \s* 允许标签内任意空白(空格/换行/制表),覆盖 </  dependency\n> 等绕过形式
   return input
-    .replace(/<\/(authoritative_input)>/gi, '< /$1 >')
-    .replace(/<\/(dependency)>/gi, '< /$1 >')
+    .replace(/<\s*\/\s*(authoritative_input)\s*>/gi, '< / $1 >')
+    .replace(/<\s*\/\s*(dependency)\s*>/gi, '< / $1 >')
 }
 
 export const SCENE_ANALYSIS_PROMPT = `你是一个任务分析器。分析用户需求，判断任务类型。
