@@ -686,6 +686,54 @@ describe('Execution — git diff boundary detection', () => {
     expect(memberUpdate[0].data.cliSessionId).toBe('cli-sess-keep')
   })
 
+  // ─── ⚠️-C3 修复:正常完成时,本批没返回 sessionId 不覆盖旧值 ───
+  it('[C3] 正常完成 + 本批 CLI 没吐 sessionId → task.cliSessionId 字段不被设置(保留旧值)', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '[]', cliSessionId: 'cli-keep-me' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      // 关键:result 有,但 sessionId 是 undefined(本批 CLI 没吐 session chunk)
+      results: new Map([['task-1', { result: '产出', sessionId: undefined }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // task 标 completed 时 data 里**不应**含 cliSessionId 字段(用 ...spread 跳过)
+    // 这样 prisma 不会用 null 覆盖旧值,DB 中 cliSessionId 保留 'cli-keep-me'
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+    expect(completedUpdate[0].data).not.toHaveProperty('cliSessionId')
+    // result 仍写入
+    expect(completedUpdate[0].data.result).toBe('产出')
+  })
+
+  it('[C3] 正常完成 + 本批 CLI 吐了新 sessionId → task.cliSessionId 写入新值', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ declaredFiles: '[]', cliSessionId: 'cli-old' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: '产出', sessionId: 'cli-new' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+    )
+    expect(completedUpdate).toBeDefined()
+    expect(completedUpdate[0].data.cliSessionId).toBe('cli-new')
+  })
+
   // ─── ⚠️-C2 修复:cliSessionId 跨表更新加事务 ───
   it('[C2] 敏感越界硬失败时 task.update + sessionMember.updateMany 走 $transaction(原子性)', async () => {
     const { handleExecution } = await import('@/lib/services/execution')
