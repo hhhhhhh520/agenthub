@@ -2,7 +2,7 @@ import { join } from 'path'
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
-import { processRegistry } from './process-registry'
+import { processRegistry, type SpawnConfig } from './process-registry'
 
 export class OpenCodeAdapter implements AgentAdapter {
   private config: AdapterConfig = { platform: 'opencode' }
@@ -12,6 +12,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   private chatSessionId: string | undefined
   private allowedTools: string[] | undefined
   private permissionMode: string = 'default'
+  // ❌-1 修复:send() 时缓存真正用于 spawn 的 SpawnConfig 对象引用
+  // (注:adapter.close() 时会清零此字段)
+  private lastSpawnConfig: SpawnConfig | null = null
 
   async connect(config: AdapterConfig): Promise<void> {
     this.config = config
@@ -23,10 +26,25 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.permissionMode = config.permissionMode || 'default'
   }
 
-  private getRegistryKey(): string {
+  private getRegistryKeyInternal(): string {
     const sessionPart = this.chatSessionId || 'default'
     const agentPart = this.agentId || 'default'
     return `opencode:${sessionPart}:${agentPart}:${this.workDir}`
+  }
+
+  /**
+   * ❌-1 修复:暴露 registry key,orchestrator 不再自己拼 key
+   */
+  getRegistryKey(): string {
+    return this.getRegistryKeyInternal()
+  }
+
+  /**
+   * ❌-1 修复:返回最后一次 send() 时的完整 SpawnConfig 快照
+   * send 之前调用返回 null
+   */
+  getSpawnConfig(): SpawnConfig | null {
+    return this.lastSpawnConfig
   }
 
   /**
@@ -184,7 +202,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       }
     }
 
-    const spawnConfig = {
+    const spawnConfig: SpawnConfig = {
       workDir: this.workDir,
       command: 'opencode',
       args,
@@ -194,7 +212,15 @@ export class OpenCodeAdapter implements AgentAdapter {
       shell: true,
     }
 
+    // ❌-1 修复:在第一个 chunk 抵达后才缓存 spawnConfig
+    // 这样 spawn 失败(generator 第一帧就 throw)时不会留下假 lastSpawnConfig,
+    // 避免 onTimeout 误报"effectiveKey miss"(实际是进程根本没起来)
+    let cachedSpawnConfig = false
     for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
+      if (!cachedSpawnConfig) {
+        this.lastSpawnConfig = spawnConfig
+        cachedSpawnConfig = true
+      }
       if (chunk.type === 'session') {
         this.sessionId = chunk.content
       }
@@ -208,5 +234,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   async close(): Promise<void> {
     // ProcessRegistry 的 ndjson 格式在 send() 后自动清理
+    // ❌-1 修复:清敏感快照,对齐 close 释放协议
+    this.lastSpawnConfig = null
   }
 }

@@ -64,6 +64,8 @@ interface SpawnConfig {
   shell?: boolean
 }
 
+export type { SpawnConfig }
+
 const MAX_PROCESSES = 10
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 const MAX_SEND_RETRIES = 3
@@ -1153,7 +1155,20 @@ class ProcessRegistry {
   async gracefulKillEntry(key: string, config?: SpawnConfig): Promise<void> {
     const effectiveKey = this.toEffectiveKey(key, config)
     const entry = this.registry.get(effectiveKey)
-    if (!entry || !entry.alive) return
+    if (!entry || !entry.alive) {
+      // 两条静默 return 路径,语义不同:
+      // - !entry:caller 传的 config 缺字段,effectiveKey 算错 → 必须 warn 提醒 caller(❌-1 防御)
+      // - entry 存在但 alive=false:exit handler 已触发或 cleanupEntry 在跑,进程正在清理中 → 有意 silent(本来就在清)
+      if (!entry) {
+        console.warn(
+          `[ProcessRegistry] gracefulKillEntry: effectiveKey miss for key="${key}" ` +
+          `(effectiveKey="${effectiveKey}"). ` +
+          `caller 可能没传完整 SpawnConfig,或进程未成功 spawn。` +
+          `建议用 adapter.getRegistryKey() + adapter.getSpawnConfig()。`
+        )
+      }
+      return
+    }
     const pid = entry.process.pid
     if (!pid) { this.killEntryIfCurrent(effectiveKey, entry); return }
 
