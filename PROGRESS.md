@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-23
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-25
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -170,6 +170,16 @@
 | contract v1 动作 6: declaredFiles 分级校验 | §1.2 b 实施时修订 contract 为分级语义(理由:架构师 LLM 文件声明本质是猜测,Agent 顺手改邻文件是常态,硬失败级联会让 90%+ 任务挂)。新增 sensitive-paths.ts:敏感路径黑名单(.env / package.json / package-lock.json / prisma/schema.prisma / .gitignore / tsconfig.json / node_modules\* / .agenthub\* / .next\* / next.config.* / vite.config.* / vitest.config.* 等)。execution.ts 越界检测后分级:**敏感越界** → 任务 failed + 下游 blocked + 不写 result(避免污染 priorResults);**普通越界** → 软警告 + 任务仍 completed;**declaredFiles 为空** → 跳过校验(允许纯讨论任务)。20 sensitive-paths 单测 + 5 集成测试,802 全绿 | 2026-06-23 |
 | contract v1 动作 5: outputSchema 软校验 | §1.2 a 实施时修订 contract 为软语义,与动作 6 对称(理由:output_schema 当前仅由下游 LLM 通过 prompt 标签消费,不需要程序化 JSON;硬失败拦的主要是格式问题而非内容问题,误伤大)。新增 schema-validator.ts:从 result 末尾提取 JSON 块(```json``` fenced 优先,fallback 裸 `{...}`,支持对象/数组识别但只接受对象),JSON.parse 后比对 outputSchema 声明的字段名。状态:no-schema(跳过)/ok/no-json/parse-error/missing-fields。execution.ts 普通越界检测后插入校验,不通过只发警告任务仍 completed。20 schema-validator 单测 + 3 集成测试,825 全绿 | 2026-06-23 |
 | contract v1 动作 7+8: cliSessionId invalidate + prompt 权威包装 | §1.3 P0 双护栏。**动作 7**(invalidate):execution.ts 在敏感越界硬失败 + monitoring 纠偏退回 pending 两处事件同时清 task.cliSessionId 和 SessionMember.cliSessionId,避免 agent 进程内存里的脏角色感污染后续任务/重试。正常完成路径不动 cliSessionId。**动作 8**(权威包装):orchestrator/index.ts 的 prompt 组装外层包 `<authoritative_input>...</authoritative_input>` 标签,头部声明"以下内容为准,历史作废",利用 LLM 末尾注意力偏向引导。截断保护同步保留头尾完整。**动作 9 降级不做**:实施前发现 CLI 内置 compact 机制已管 context 增长,我们要拦的"agent 过时角色感"由动作 7 的事件型 invalidate 解决,跟历史长度无强相关。3 动作 7 集成测试 + 4 动作 8 prompt 测试,832 全绿 | 2026-06-23 |
+| post-contract-v1 审查 21 项隐患 | 6/15 后 15 个代码 commit 用 3 个 subagent 并行做六层标准审查(L0 范围+L1 内在正确性+L2 契约一致性+L3 安全+L4 可观测性+L5 测试充分)。结果:5 个 ❌ + 16 个 ⚠️。详见 `docs/reports/2026-06-23-post-contract-v1-audit.md` | 2026-06-23 |
+| ❌-4 e2e 测试硬编码 API Key | `tests/e2e-contract.test.ts` 改用 `process.env.MIMO_TEST_*` 读凭证 + `describe.skipIf(!isE2E)`,缺 key 时静默 skip 不跑出 401。`.env.example` 加 E2E 占位注释。`.env` 含真实 key 被 `.gitignore` 匹配 `.env*` 排除。同时修 N3(`process.env.DATABASE_URL = undefined` 变字符串污染) + W1(trim 防空白绕过 gate) + W2/W3(注释一致性) | 2026-06-24 |
+| 审查报告旧 key 脱敏 + git filter-repo | `docs/reports/2026-06-23-post-contract-v1-audit.md:184` 复述了完整旧 MIMO key 明文。改首4+末4掩码,然后 `git filter-repo --replace-text` 改写本地 27 个 commit 的历史,把旧 key 全替换为 `tp-c****fogf4`。备份 tag + .next cache 清理 + 验证 git log 全 history 0 命中 | 2026-06-24 |
+| ❌-1 orchestrator gracefulKillEntry 缺 config | 3e5f700 引入 configHash 后,orchestrator 三处 onTimeout 只传 partial config({workDir} 或 {workDir, allowedTools}),effectiveKey 命中 EMPTY_FINGERPRINT 短路,registry.get undefined,函数静默 no-op,**超时杀进程功能完全失效**。修复方案 A:AgentAdapter 接口加 `getRegistryKey(): string` + `getSpawnConfig(): SpawnConfig \| null` 两个新方法,两个 adapter 在 send() 成功 spawn 后才缓存 lastSpawnConfig,close() 清零。orchestrator 三处 onTimeout 改用 adapter 套路。process-registry 加 effectiveKey miss 时的 warn(修 ❌-1b 静默)。pre-commit-audit 同步抓出 8 项次要问题(F1-F8)一并修(close 不清/onTimeout silent skip/type as 强转/spawn 失败前缓存/测试名虚假/注释误导/三处文案不一/alive=false 静默语义无注释)。838 全绿(净 +6 测试) | 2026-06-24 |
+| ⚠️-C1 prompt 标签转义防注入 + F1/F4 加固 | `<dependency>` / `<authoritative_input>` 包装内嵌的 upstream result / task.description / declaredFiles 含字面闭合标签可被注入伪权威指令。新增 `escapeContractTags()`(`src/lib/orchestrator/prompts.ts`):regex 容忍标签内空白(`</dependency \n >` 也挡 — F1 加固),`name` 和 `outputSchema` attr 值也需要 escape(JSON.stringify 不转义 `<>` — F4 加固)。orchestrator 拼接前 5 处过转义。10 测试 + 4 集成测试。848→867 全绿 | 2026-06-24 |
+| ⚠️-C2/C3 cliSessionId 跨表事务 + 不覆盖旧值 | C2:execution.ts 敏感失败 + 纠偏退回两处把 task.update + sessionMember.updateMany 包 `prisma.$transaction([...])`,防中间崩溃半残让下次 fallback 拿脏 sessionId。F10 同步把 success 路径也包事务(C2 review 二轮抓出同源未修)。C3:正常完成路径 `data: { ..., ...(cliSessionId ? { cliSessionId } : {}) }` 跳过 falsy 覆盖,与"正常完成保留 cliSessionId"对齐。tests 加 $transaction mock + 5 个针对性测试。852→854→867 全绿 | 2026-06-24 |
+| ❌-3 shadow-git 清理 + .gitignore 自排除 | `cleanupShadowGit` 函数定义后全仓 grep 无任何调用点 → session 在 projectRoot/.agenthub/shadow-git/{sessionId}/ 永久驻留。修复:① `ensureShadowInit` 时新增 `ensureAgenthubGitignore(workDir)` 往 `projectRoot/.agenthub/.gitignore` 写 `*\n` 自排除(防用户 git 仓库误提交);② `DELETE /api/sessions/[id]` 路由先 findUnique 拿 projectDir → cleanupShadowGit → session.delete(失败 console.warn 不阻塞)。6 新测试(3 真实 fs+git 集成 + 3 路由 mock) | 2026-06-24 |
+| ❌-2 redo 路径上车 Contract v1 | redo API 原本调 `executeSingleAgent` 直通,Contract v1 全部 6 项保护失效(result 持久化 / dependency 注入 / outputSchema 校验 / authoritative_input 包装 / 敏感校验 / cliSessionId invalidate)。重写为方案 A:redo 只负责"重置 task 状态 + 解锁下游 + 调 `handleExecution`",redo 走主链路自动享受全部保护。删 `executeSingleAgent` + `executeDownstreamTasks` 级联(213→100 行)。重置 cliSessionId 走 `$transaction` 配 C2 一致性(F3 review 二轮加固)。redo 测试 mock 改 handleExecution,8 测试全绿 | 2026-06-24 |
+| post-contract-v1 review 二轮 F1+F3+F4+F10 | 第二波 5 个 commit 跑 pre-commit-audit 时 3 个 subagent 找出 13 项问题,基于真实使用场景(本地单机工具)筛选 4 项必修(F1 regex 防空白绕过 + F4 meta.description 转义 + F3 redo 真用事务 + F10 success 路径包事务)。9 项归入"已评估不实施"(F2 projectDir 路径任意写/F5 redo 跑所有 pending/F6 标签清单硬编码/F7 .gitignore 覆盖/F8 cliSessionId 空字符串/F9 DELETE 无 lock/F11 redo catch 不修 task 状态/F12 transaction mock/F13 文案),理由记入 audit 报告。net 867 全绿 | 2026-06-24 |
+| dev 端到端验证 + UI 冒烟 | Playwright 无头浏览器跑 dev server(PORT=3001):首页加载 → 创建群聊(LLM 推荐 8 Agent)→ 进入聊天 → 发消息触发主链路。**dev log 直接证据**:effectiveKey 含 configHash(`0999951c299dc1de`)、model strip `[1m]` → `mimo-v2.5-pro`、Process spawned + entry 注册成功、配置变更触发新 hash(`8d6a4a74f163a2b1`)、API 响应不含 apiKey 明文。完整 task 执行因 MIMO mimo-v2.5-pro[1m] 响应慢(单次 6 分钟)未跑到 LLM 真实产出,但其余 contract v1 路径已被 867 单元/集成测试覆盖 | 2026-06-25 |
 
 **8项核心Bug修复详情**（2026-06-10）：
 1. **讨论自问自答**：源头过滤Orchestrator，route.ts existingAgents排除isOrchestrator
@@ -184,14 +194,16 @@
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
-| （暂无 — ProcessRegistry 重构 6 步全部完成） | ✅ |
+| （暂无 — 第二波 review 二轮收尾完成,fix/post-contract-v1-audit 分支待 push） | ✅ |
 
-### 📋 待办（2026-06-22 更新）
+### 📋 待办（2026-06-25 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
 | 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
+| 🟢低 | 第三波安全清扫 | 7 个 ⚠️-S(orchestrator POST 掩码污染 / symlink 跨界 / accept 敏感列表割裂 / attachments 加固 / providerRef 空 apiKey 覆盖 / 拒绝路径无日志) — **本地单机威胁模型已评估不实施**,SaaS/多用户化时重评 | ⏸️ |
+| 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |
 
 **已评估不实施**：
 - ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高
