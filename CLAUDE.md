@@ -219,7 +219,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
 - **ProcessRegistry 内部禁止直接调 `killEntry(key)`** — 内部已持有 entry 的路径必须用私有 `killEntryIfCurrent(key, expectedEntry)`,它会校验 `registry.get(key) === expectedEntry`。公开 `killEntry(key)` 仅作外部兼容入口。违反会让旧进程的 exit handler 误删同 key 新 entry(僵尸进程泄漏)
-- **`gracefulKillEntry(key, config?)` 调用方必须传 config** — 当 agent 配了 allowedTools 时,registry 用 `key+toolsHash` 索引,不传 config 内部 `toEffectiveKey` 会 miss → 杀进程无效,超时变哑炮。orchestrator 三处 onTimeout 都需要传完整的 `{ workDir, allowedTools? }`
+- **杀进程必须走 adapter 套路,不准自拼 key/config** — orchestrator 调 `gracefulKillEntry` 时必须用 `adapter.getRegistryKey()` + `adapter.getSpawnConfig()` 拿权威值,**不准**自己 `buildRegistryKey` 或自拼 partial config。原因:`toEffectiveKey` 含 `configHash`(apiKey/baseUrl/model/permissionMode/mcpConfig 等指纹),partial config 算出来的 effectiveKey 跟 spawn 时不一致,`registry.get` 返回 undefined,函数静默 no-op,超时杀进程失效。adapter 接口契约见 `src/lib/adapter/types.ts`,两个 adapter 在 `send()` 真正 spawn 后才缓存 `lastSpawnConfig`(send 前调 `getSpawnConfig()` 返回 null)
 - **同 effectiveKey 并发 send 必须经 `acquireLock`/`releaseLock`** — ProcessRegistry 的 entry 互斥锁用 FIFO baton-passing(`entry.busy` + `entry.busyWaiters`),保护 stdin.write + readRound 临界区。绕过会让两路 send 的 stdin/stdout 交错 → Claude CLI 收到乱码 JSON。release 必须在 `finally`,同步 throw 路径也要释放。retry iteration 独立 acquire/release,不跨 retry
 - **`toEffectiveKey` 的指纹字段不能漏** — 改 apiKey/model/baseUrl/mcpConfig/permissionMode/command/args/format/disallowedTools 必须触发新进程(进 `buildConfigHash`),否则旧 entry 用老配置继续跑(review #13:配置改了 10 分钟不生效)。`env`/`sessionId`/`workDir`/`allowedTools` 不进 config hash(env 开放容器可能含动态值,进指纹会破坏进程复用)
 - **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`,共享同一个 CLI 进程,并行执行时输出完全相同
@@ -242,9 +242,14 @@ Orchestrator 自主决定流程，支持 8 种 action：
 
 - 每批任务跑完通过**影子 git**(`<workDir>/.agenthub/shadow-git/<sessionId>/`)对比 `declaredFiles` 和实际改动
 - **workDir 本身不被 git init**,通过 `git --git-dir=... --work-tree=<workDir>` 调用,用户感知不到 git 存在
+- **`.agenthub/.gitignore` 自排除** — `ensureShadowInit` 时写入 `*\n`,防止用户 projectRoot 是 git 仓库时把影子目录误提交。每次 init 都幂等校验,内容不同则覆盖(防外部脏写)
+- **session 删除时清理影子目录** — `DELETE /api/sessions/[id]` 调 `cleanupShadowGit(projectDir, sessionId)`,失败 console.warn 不阻塞 session 删除
 - 越界判定分级(契约 §1.2 b):敏感路径(`.env` / `package.json` / `prisma/schema.prisma` 等,详见 `src/lib/services/sensitive-paths.ts`)→ 任务硬失败 + 下游 blocked;普通越界 → 软警告 + 任务仍 completed;`declaredFiles` 为空 → 跳过校验
 - outputSchema 软校验(契约 §1.2 a):从 `task.result` 末尾提取 JSON 块比对字段名,缺字段只发警告不阻断
-- 实现:`src/lib/services/shadow-git.ts` / `sensitive-paths.ts` / `schema-validator.ts`
+- **prompt 注入防御** — `<dependency>` / `<authoritative_input>` 标签内嵌的所有外部内容(upstream result / task.description / declaredFiles / dep name / outputSchema)必须先过 `escapeContractTags()`(`src/lib/orchestrator/prompts.ts`),否则字面 `</dependency>` 可闭合包装注入伪指令。regex 容忍标签内空白(`</dependency \n >` 也挡)。**JSON.stringify 不转义 `<>`,attr 值同样需要 escape**
+- **cliSessionId 跨表更新必须用 `prisma.$transaction`** — `task.cliSessionId` 与 `SessionMember.cliSessionId` 两表写入必须原子,中间崩溃半残会让 fallback 拿脏 sessionId 污染下次执行。成功 / 纠偏 / 敏感失败三条路径都包事务。**正常完成路径**:CLI 没返回 sessionId 时用 `...(cliSessionId ? { cliSessionId } : {})` 跳过更新(保留旧值),不用 `|| null` 覆盖
+- **redo 路径走主链路** — `POST /api/sessions/[id]/tasks/[taskId]/redo` 只负责"重置 task 状态 + 解锁下游 + 调 `handleExecution`",**不直接调 `executeSingleAgent`**。否则 contract v1 全部保护(result 持久化 / dependency 注入 / authoritative_input 包装 / 敏感校验 / outputSchema 校验 / cliSessionId invalidate)在 redo 路径都失效。重置时清 task + sessionMember 的 cliSessionId,同样包事务
+- 实现:`src/lib/services/shadow-git.ts` / `sensitive-paths.ts` / `schema-validator.ts` / `orchestrator/prompts.ts`(escapeContractTags)
 - 设计源文档:`docs/discussions/agenthub-contract-v1.md`
 
 ### Agent 边界防护

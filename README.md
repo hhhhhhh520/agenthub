@@ -86,11 +86,11 @@ npm run dev
 ## 测试
 
 ```bash
-# 运行全部单元测试（664 个）
+# 运行全部单元测试（867 个）
 npm test
 
-# 运行 E2E 测试
-npm run test:e2e
+# 运行 E2E 测试(默认 skip,需 MIMO_TEST_API_KEY 环境变量)
+E2E=1 npm run test:e2e
 ```
 
 测试覆盖率：Statements 85% / Branches 75% / Functions 81% / Lines 86%
@@ -102,9 +102,10 @@ src/app/api/         — REST API + SSE
 src/components/      — UI 组件
 src/lib/adapter/     — 适配器层（Claude Code CLI / OpenCode CLI）
 src/lib/orchestrator/ — 编排器（8 action 智能编排 + 调度 + 执行）
+src/lib/services/    — 业务服务(chat-router / alignment / execution / review / shadow-git / schema-validator / sensitive-paths)
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（664 个测试）
+tests/               — Vitest 单元测试（867 个测试 + 1 个 E2E gate）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
@@ -112,6 +113,7 @@ issues/              — 开发问题记录
 
 ## 文档
 
+- [Agent 协作 Contract v1](docs/discussions/agenthub-contract-v1.md) — 核心协作契约(数据流/可信度/连续性三条)
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md) — 当前架构设计
 - [对齐流程实现](docs/design/alignment-flow-plan.md) — Orchestrator 智能编排实现计划
 - [已实施方案](docs/archive/已实施/) — CLI-first 改造、ChatFab 私聊、SSE 超时等

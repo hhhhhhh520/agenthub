@@ -16,8 +16,15 @@
 
 ## 审查报告
 
-- [全面代码审查报告](reports/CODE_REVIEW_REPORT.md) — 2026-06-06，安全/架构/性能/代码质量/API 四维度审查
+- [2026-06-23 post-contract-v1 隐患审查](reports/2026-06-23-post-contract-v1-audit.md) — 6/15 后 15 个 commit 用 3 个 subagent 六层标准审查,21 项发现(5 ❌ + 16 ⚠️),含修复进度更新和已评估不实施清单
+- [2026-06-22 全量代码审查](reports/2026-06-22-code-review.md) — 6 模块并行 + 对抗性验证(19 agent),48 项问题(4 P1 + 25 P2 + 19 P3)
+- [全面代码审查报告](reports/CODE_REVIEW_REPORT.md) — 2026-06-06,安全/架构/性能/代码质量/API 四维度审查
 - [测试清单](reports/TEST_CHECKLIST.md) — 测试用例清单
+
+## Contract 与规约
+
+- [Agent 协作 Contract v1](discussions/agenthub-contract-v1.md) — 核心协作契约(§1.1 数据流 + §1.2 可信度 + §1.3 连续性)
+- [2026-06-23 协作 contract 讨论](discussions/2026-06-23-collaboration-contract.md) — contract v1 设计讨论原始记录
 
 ## QA 报告
 
