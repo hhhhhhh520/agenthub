@@ -244,7 +244,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - **workDir 本身不被 git init**,通过 `git --git-dir=... --work-tree=<workDir>` 调用,用户感知不到 git 存在
 - **`.agenthub/.gitignore` 自排除** — `ensureShadowInit` 时写入 `*\n`,防止用户 projectRoot 是 git 仓库时把影子目录误提交。每次 init 都幂等校验,内容不同则覆盖(防外部脏写)
 - **session 删除时清理影子目录** — `DELETE /api/sessions/[id]` 调 `cleanupShadowGit(projectDir, sessionId)`,失败 console.warn 不阻塞 session 删除
-- 越界判定分级(契约 §1.2 b):敏感路径(`.env` / `package.json` / `prisma/schema.prisma` 等,详见 `src/lib/services/sensitive-paths.ts`)→ 任务硬失败 + 下游 blocked;普通越界 → 软警告 + 任务仍 completed;`declaredFiles` 为空 → 跳过校验
+- 越界判定分级(契约 §1.2 b):敏感路径(`.env` / `package.json` / `prisma/schema.prisma` 等,详见 `src/lib/services/sensitive-paths.ts`)→ 任务硬失败 + 下游 blocked;普通越界 → 自动清理越界文件(保留其他批次声明的文件) + 任务仍 completed;`declaredFiles` 为空 → 跳过校验
 - outputSchema 软校验(契约 §1.2 a):从 `task.result` 末尾提取 JSON 块比对字段名,缺字段只发警告不阻断
 - **prompt 注入防御** — `<dependency>` / `<authoritative_input>` 标签内嵌的所有外部内容(upstream result / task.description / declaredFiles / dep name / outputSchema)必须先过 `escapeContractTags()`(`src/lib/orchestrator/prompts.ts`),否则字面 `</dependency>` 可闭合包装注入伪指令。regex 容忍标签内空白(`</dependency \n >` 也挡)。**JSON.stringify 不转义 `<>`,attr 值同样需要 escape**
 - **cliSessionId 跨表更新必须用 `prisma.$transaction`** — `task.cliSessionId` 与 `SessionMember.cliSessionId` 两表写入必须原子,中间崩溃半残会让 fallback 拿脏 sessionId 污染下次执行。成功 / 纠偏 / 敏感失败三条路径都包事务。**正常完成路径**:CLI 没返回 sessionId 时用 `...(cliSessionId ? { cliSessionId } : {})` 跳过更新(保留旧值),不用 `|| null` 覆盖
@@ -261,7 +261,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
   - **协作规范**：任务完成必须汇报、里程碑进度汇报、阻塞立即上报、依赖明确说明、代码修改后测试
   - **安全边界**：不越界、不破坏、修改前确认可回滚
   - **汇报模板**：任务完成时必须包含（完成内容、产出位置、验证方式、遗留问题、影响范围）
-- **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界软警告 → LLM 监督审查 → 状态改回 pending → 注入纠偏信息重试(最多 2 次)
+- **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界自动清理(保留其他批次文件) → LLM 监督审查(越界已清空不触发纠偏) → 任务 completed
 
 ### Chat API Session Lock
 
