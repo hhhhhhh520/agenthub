@@ -1,3 +1,5 @@
+import * as fs from 'fs'
+import * as path from 'path'
 import { prisma } from '@/lib/db'
 import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent, type PriorTaskMeta } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
@@ -262,6 +264,53 @@ export async function handleExecution(
         sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
         continue  // 跳过本任务后续的 success 处理 / monitoring
+      }
+
+      // 普通越界清理：删除本批次创建的越界文件，保留其他批次声明的文件
+      // 设计决策：不触发全任务重试，只外科手术式清理，避免误伤其他批次产出
+      if (undeclared.length > 0) {
+        // 收集其他批次声明的文件（包括尚未执行的批次）
+        const otherDeclared = new Set(
+          tasks
+            .filter(t => t.id !== taskId)
+            .flatMap(t => JSON.parse(t.declaredFiles || '[]'))
+            .map(normalizePath)
+        )
+
+        let cleanedCount = 0
+        let protectedCount = 0
+        for (const file of undeclared) {
+          if (otherDeclared.has(normalizePath(file))) {
+            // 文件属于其他批次，不清理（保守策略：宁可不删，也不误删）
+            protectedCount++
+          } else {
+            // 文件不属于任何批次，尝试清理
+            const fullPath = path.join(projectRoot, file)
+            try {
+              if (fs.existsSync(fullPath)) {
+                fs.unlinkSync(fullPath)
+                cleanedCount++
+              }
+            } catch (e) {
+              // 文件删除失败不阻塞执行（可能是文件被占用）
+              console.warn(`[越界清理] 无法删除 ${file}: ${e instanceof Error ? e.message : String(e)}`)
+            }
+          }
+        }
+
+        // 清理后清空 undeclared，避免监控审查再次看到越界文件触发纠偏重试
+        undeclared.splice(0)
+
+        if (cleanedCount > 0) {
+          const warningMsg = `[越界警告] 任务 ${taskId} 创建了 ${cleanedCount} 个越界文件，已自动清理`
+          await prisma.message.create({ data: { role: 'orchestrator', rawContent: warningMsg, sessionId } })
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: warningMsg })
+        }
+        if (protectedCount > 0) {
+          const protectedMsg = `[越界保护] ${protectedCount} 个文件属于其他任务声明范围，未清理`
+          await prisma.message.create({ data: { role: 'orchestrator', rawContent: protectedMsg, sessionId } })
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: protectedMsg })
+        }
       }
 
       const successTrace = appendTrace(taskForTrace?.trace || '[]', {
