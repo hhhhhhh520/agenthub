@@ -77,7 +77,9 @@ async function updateAgentSessionStatus(sessionId: string | undefined, agentId: 
         await prisma.sessionMember.updateMany({ where: { sessionId, agentId: agent.id }, data: { status } })
       }
     }
-  } catch {}
+  } catch (err) {
+    console.warn(`[updateAgentSessionStatus] Failed to update status for ${agentName}: ${err}`)
+  }
 }
 
 export interface OrchestratorDecision {

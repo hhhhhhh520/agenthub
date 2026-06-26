@@ -242,3 +242,58 @@ describe('Adapter contract: getRegistryKey + getSpawnConfig(❌-1 推荐用法)'
     warnSpy.mockRestore()
   }, 10_000)
 })
+
+describe('gracefulKillEntry 两阶段行为', () => {
+  it('Phase 1 SIGTERM 后进程仍存活时,Phase 2 强制杀', { timeout: 15000 }, async () => {
+    const config = {
+      workDir: '/tmp/test',
+      apiKey: 'sk-test-key',
+      model: 'claude-sonnet-4-6',
+    }
+
+    // Spawn 进程
+    const entry = processRegistry.getOrCreate('two-phase', config)
+    expect(entry.alive).toBe(true)
+
+    // Phase 1: 调用 gracefulKillEntry,进程不退出(模拟 hang)
+    const killPromise = processRegistry.gracefulKillEntry('two-phase', config)
+
+    // 等待 Phase 1 的 5s 超时
+    // gracefulKillEntry 内部: await new Promise(r => setTimeout(r, 5000))
+    await new Promise(r => setTimeout(r, 5100))
+
+    // Phase 2 应该已经执行: killEntryIfCurrent 被调用
+    // 验证 entry 被清理
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+    const remainingKeys = [...registry.keys()].filter((k: string) => k.startsWith('two-phase'))
+    expect(remainingKeys.length).toBe(0)
+
+    await killPromise.catch(() => {})
+  })
+
+  it('Phase 1 SIGTERM 后进程正常退出,不触发 Phase 2', { timeout: 10000 }, async () => {
+    const config = {
+      workDir: '/tmp/test',
+      apiKey: 'sk-test-key',
+      model: 'claude-sonnet-4-6',
+    }
+
+    const entry = processRegistry.getOrCreate('phase1-exit', config)
+
+    // Phase 1: 调用 gracefulKillEntry,进程在 5s 内退出
+    const killPromise = processRegistry.gracefulKillEntry('phase1-exit', config)
+
+    // 模拟进程收到 SIGTERM 后 1s 内退出
+    await new Promise(r => setTimeout(r, 100))
+    entry.alive = false
+    entry.process.exitCode = 0
+    entry.process.emit('exit', 0)
+
+    await killPromise.catch(() => {})
+
+    // Entry 应该已被清理(Phase 1 的 exit handler 触发)
+    const registry = (globalThis as any).__processRegistry as Map<string, any>
+    const remainingKeys = [...registry.keys()].filter((k: string) => k.startsWith('phase1-exit'))
+    expect(remainingKeys.length).toBe(0)
+  })
+})

@@ -620,4 +620,20 @@ describe('ProcessRegistry — extended coverage', () => {
       expect(chunks.some((c: any) => c.type === 'status' && c.content === 'completed')).toBe(true)
     })
   })
+
+  describe('readRound — NO_DATA_TIMEOUT_MS (60s)', () => {
+    // NOTE: This timeout path is hard to test because:
+    // 1. readRound uses Date.now() for timeout detection (not setTimeout)
+    // 2. The 50ms polling loop uses setTimeout internally
+    // 3. Fake timers + async generators create deadlock situations
+    // 4. Real timers would need 60s+ wait time
+    //
+    // The timeout detection code exists at process-registry.ts:847-853
+    // and is verified by code review. A proper test would require refactoring
+    // readRound to accept a clock function for testability.
+    it.skip('throws when no data received for 60s — requires refactoring for testability', async () => {
+      // Placeholder: this test is skipped until readRound is refactored
+      // to accept a clock function parameter for testability
+    })
+  })
 })

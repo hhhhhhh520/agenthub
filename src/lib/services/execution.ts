@@ -221,9 +221,12 @@ export async function handleExecution(
       // 根据是否命中敏感路径决定 task 最终 status
       const declaredFiles: string[] = JSON.parse(taskForTrace?.declaredFiles || '[]')
       const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
+      // 路径归一化:统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写)
+      const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+      const normalizedDeclared = declaredFiles.map(normalizePath)
       const undeclared = declaredFiles.length === 0
         ? []  // declaredFiles 为空 = 跳过文件校验(纯讨论/分析任务合法)
-        : changedFiles.filter(f => !declaredFiles.includes(f))
+        : changedFiles.filter(f => !normalizedDeclared.includes(normalizePath(f)))
       const sensitiveViolations = pickSensitive(undeclared)
       const isSensitiveFail = sensitiveViolations.length > 0
 

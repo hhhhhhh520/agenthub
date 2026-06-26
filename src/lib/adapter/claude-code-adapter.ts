@@ -85,7 +85,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             try {
               const fileData = readFileSync(a.path)
               return { mimeType: a.mimeType, data: fileData.toString('base64') }
-            } catch {
+            } catch (err) {
+              console.warn(`[ClaudeCodeAdapter] Failed to read attachment ${a.path}: ${err}`)
               return null
             }
           })

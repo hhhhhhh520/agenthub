@@ -264,6 +264,34 @@ describe('Execution — safety limits', () => {
     mocks.mockMessageCreate.mockResolvedValue({})
   })
 
+  it('breaks loop and sends error when globalDeadline exceeded', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+
+    // executeTaskBatch should not be called if deadline is already passed
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+
+    const sendEvent = vi.fn()
+    // Pass a deadline that's already in the past
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent, undefined, Date.now() - 1000)
+
+    // Should send timeout error
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        content: expect.stringContaining('超时'),
+      })
+    )
+
+    // Should NOT call executeTaskBatch (deadline already passed)
+    expect(mocks.mockExecuteTaskBatch).not.toHaveBeenCalled()
+  })
+
   it('handles empty task list gracefully', async () => {
     const { handleExecution } = await import('@/lib/services/execution')
 
