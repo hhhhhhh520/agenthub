@@ -1,5 +1,62 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { EventEmitter } from 'events'
+import { PassThrough } from 'stream'
 import { isPermanentError, getRetryDelay } from '../src/lib/adapter/process-registry'
+
+// --- Mock child_process for retry tests ---
+function createFakeProcess() {
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  const stderr = new PassThrough()
+  const proc: any = new EventEmitter()
+  proc.pid = Math.floor(Math.random() * 10000) + 1000
+  proc.stdin = stdin
+  proc.stdout = stdout
+  proc.stderr = stderr
+  proc.exitCode = null
+  proc.kill = vi.fn()
+  return proc
+}
+
+let fakeProc: ReturnType<typeof createFakeProcess>
+const mockSpawn = vi.fn(() => fakeProc)
+
+vi.mock('child_process', () => ({
+  spawn: (...args: any[]) => mockSpawn(...args),
+}))
+
+vi.mock('fs', () => ({
+  existsSync: vi.fn().mockReturnValue(true),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+}))
+
+let processRegistry: any
+
+beforeEach(async () => {
+  vi.clearAllMocks()
+  vi.useFakeTimers()
+  delete (globalThis as any).__processRegistry
+  delete (globalThis as any).__processRegistryCleanupTimer
+  delete (globalThis as any).__processRegistryShutdownRegistered
+  vi.resetModules()
+  const mod = await import('@/lib/adapter/process-registry')
+  processRegistry = mod.processRegistry
+  fakeProc = createFakeProcess()
+  mockSpawn.mockReturnValue(fakeProc)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+  try { processRegistry.killAll() } catch {}
+})
+
+async function collect(gen: AsyncIterable<any>): Promise<any[]> {
+  const results: any[] = []
+  for await (const chunk of gen) results.push(chunk)
+  return results
+}
 
 describe('ProcessRegistry error classification', () => {
   describe('isPermanentError', () => {
@@ -57,5 +114,52 @@ describe('ProcessRegistry error classification', () => {
     it('should cap at 16s', () => {
       expect(getRetryDelay(10)).toBe(16000)
     })
+  })
+})
+
+describe('ProcessRegistry send() — max retries exhaustion', () => {
+  it('should yield error and throw after MAX_SEND_RETRIES exhausted', { timeout: 15000 }, async () => {
+    vi.useRealTimers()
+    let spawnCount = 0
+
+    mockSpawn.mockImplementation((...args: any[]) => {
+      const proc = createFakeProcess()
+      const cmd = args[0]?.toString() || ''
+      if (!cmd.includes('taskkill') && !cmd.includes('kill')) {
+        spawnCount++
+        // Process crashes immediately each time (non-permanent error)
+        setTimeout(() => {
+          proc.exitCode = 1
+          setImmediate(() => {
+            proc.stdout.end()
+            proc.emit('exit')
+          })
+        }, 5)
+      }
+      fakeProc = proc
+      return proc
+    })
+
+    // Collect chunks manually, capturing the error chunk before throw
+    const chunks: any[] = []
+    let thrownError: Error | null = null
+    try {
+      for await (const chunk of processRegistry.send('max-retry', 'test', { workDir: '/dir' })) {
+        chunks.push(chunk)
+      }
+    } catch (err) {
+      thrownError = err as Error
+    }
+
+    // Should have spawned 4 times (initial + 3 retries)
+    expect(spawnCount).toBe(4)
+
+    // Should have thrown with retry exhaustion error
+    expect(thrownError).not.toBeNull()
+    expect(thrownError!.message).toMatch(/Process failed after.*attempts/)
+
+    // Should have yielded error chunk before throwing
+    const errorChunks = chunks.filter((c: any) => c.type === 'error')
+    expect(errorChunks.length).toBeGreaterThanOrEqual(1)
   })
 })

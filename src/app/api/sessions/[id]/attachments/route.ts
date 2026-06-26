@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/db'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const ALLOWED_MIME_TYPES = new Set([
   'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml',
   'application/pdf', 'text/plain', 'text/markdown', 'application/json',
@@ -16,6 +17,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: sessionId } = await params
+
+  // sessionId 必须是合法 UUID（防路径遍历：join(cwd,'uploads','..','.env') 可逃逸）
+  if (!UUID_RE.test(sessionId)) {
+    return NextResponse.json({ error: 'Invalid session ID' }, { status: 400 })
+  }
 
   // Verify session exists
   const session = await prisma.session.findUnique({ where: { id: sessionId } })

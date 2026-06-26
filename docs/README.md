@@ -16,6 +16,7 @@
 
 ## 审查报告
 
+- [2026-06-25 审查验证结果](reports/2026-06-25-verified-findings.md) — 6维度并行审查94项发现,验证后20项真实问题(误报率79%→21%),含修复方案和代码示例
 - [2026-06-23 post-contract-v1 隐患审查](reports/2026-06-23-post-contract-v1-audit.md) — 6/15 后 15 个 commit 用 3 个 subagent 六层标准审查,21 项发现(5 ❌ + 16 ⚠️),含修复进度更新和已评估不实施清单
 - [2026-06-22 全量代码审查](reports/2026-06-22-code-review.md) — 6 模块并行 + 对抗性验证(19 agent),48 项问题(4 P1 + 25 P2 + 19 P3)
 - [全面代码审查报告](reports/CODE_REVIEW_REPORT.md) — 2026-06-06,安全/架构/性能/代码质量/API 四维度审查

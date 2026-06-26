@@ -386,7 +386,8 @@ class ProcessRegistry {
     if (proc.stderr) {
       proc.stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString()
-        entry.stderrBuffer += text
+        // 只保留最近 4KB，防止长时间运行进程的 stderr 无限增长
+        entry.stderrBuffer = (entry.stderrBuffer + text).slice(-4096)
         console.error(`[ProcessRegistry ${key}] stderr:`, text)
       })
     }

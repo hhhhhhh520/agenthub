@@ -102,7 +102,9 @@ export async function reviewResult(
       }
       return { quality: review.quality || 'good' }
     }
-  } catch { /* monitoring failed, skip */ }
+  } catch (err) {
+    console.warn(`[reviewResult] Monitoring failed, skipping: ${err}`)
+  }
   return { quality: 'good' }
 }
 
