@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-25
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-26
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -192,6 +192,7 @@
 6. **auto模式需确认**：process-registry添加auto模式自动批准+getOrchestratorDecision补传permissionMode
 7. **详情页白屏**：session.messages添加空值保护
 8. **迁移缺失**：创建SessionMember.cliSessionId迁移文件
+| 越界清理逻辑 | execution.ts边界检测阶段增加非敏感越界文件自动清理，保留其他批次声明的文件，清理后清空undeclared避免监控审查触发纠偏重试。新增8测试+更新2测试，74相关测试全通过 | 2026-06-26 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
