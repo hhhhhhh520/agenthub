@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
 
 // ── Mock declarations ──────────────────────────────────────────────
 const mocks = vi.hoisted(() => ({
@@ -335,31 +338,45 @@ describe('Execution — git diff boundary detection', () => {
     mocks.mockMessageCreate.mockResolvedValue({})
   })
 
-  it('detects undeclared file modifications and sends warning', async () => {
-    const { handleExecution } = await import('@/lib/services/execution')
+  it('detects undeclared file modifications and cleans up', async () => {
+    // 创建临时目录和越界文件
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-test-'))
+    const orphanFile = path.join(tmpDir, 'src', 'lib', 'utils.ts')
+    fs.mkdirSync(path.dirname(orphanFile), { recursive: true })
+    fs.writeFileSync(orphanFile, '// orphan file')
 
-    const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
-    mocks.mockTaskFindMany.mockResolvedValue([task])
-    mocks.mockExecuteTaskBatch.mockResolvedValue({
-      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
-      failedTaskIds: [],
-    })
-    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
-      needsCorrection: false, quality: 'good',
-    }) })
-    // Agent modified undeclared file
-    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
+    try {
+      const { handleExecution } = await import('@/lib/services/execution')
 
-    const sendEvent = vi.fn()
-    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+      // 使用临时目录作为 projectDir
+      mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: tmpDir, permissionMode: 'default' })
 
-    // Should send warning about undeclared modification
-    expect(sendEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'text',
-        content: expect.stringContaining('越界修改'),
+      const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
+      mocks.mockTaskFindMany.mockResolvedValue([task])
+      mocks.mockExecuteTaskBatch.mockResolvedValue({
+        results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+        failedTaskIds: [],
       })
-    )
+      mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+        needsCorrection: false, quality: 'good',
+      }) })
+      // Agent modified declared file + undeclared file
+      mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
+
+      const sendEvent = vi.fn()
+      await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+      // 越界文件应被清理
+      expect(fs.existsSync(orphanFile)).toBe(false)
+
+      // 应发送越界警告（包含清理信息）
+      const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界警告'))).toBe(true)
+      // 不应发送敏感路径越界（因为 utils.ts 不是敏感文件）
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('no warning when only declared files are modified', async () => {
@@ -439,35 +456,52 @@ describe('Execution — git diff boundary detection', () => {
     expect(failedUpdate).toBeDefined()
   })
 
-  it('[动作 6] 普通越界(非敏感)→ 任务仍 completed + 软警告', async () => {
-    const { handleExecution } = await import('@/lib/services/execution')
+  it('[动作 6] 普通越界(非敏感)→ 任务仍 completed + 越界清理', async () => {
+    // 创建临时目录和越界文件
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-test-'))
+    const orphanFile = path.join(tmpDir, 'src', 'lib', 'utils.ts')
+    fs.mkdirSync(path.dirname(orphanFile), { recursive: true })
+    fs.writeFileSync(orphanFile, '// orphan file')
 
-    const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
-    mocks.mockTaskFindMany.mockResolvedValue([task])
-    mocks.mockExecuteTaskBatch.mockResolvedValue({
-      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
-      failedTaskIds: [],
-    })
-    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
-      needsCorrection: false, quality: 'good',
-    }) })
-    // 越界但都不是敏感路径
-    mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
+    try {
+      const { handleExecution } = await import('@/lib/services/execution')
 
-    const sendEvent = vi.fn()
-    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+      // 使用临时目录作为 projectDir
+      mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: tmpDir, permissionMode: 'default' })
 
-    // 任务仍标 completed
-    const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
-      (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
-    )
-    expect(completedUpdate).toBeDefined()
-    expect(completedUpdate![0].data.result).toBe('done')
+      const task = makeTask({ declaredFiles: '["src/app/page.tsx"]' })
+      mocks.mockTaskFindMany.mockResolvedValue([task])
+      mocks.mockExecuteTaskBatch.mockResolvedValue({
+        results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+        failedTaskIds: [],
+      })
+      mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+        needsCorrection: false, quality: 'good',
+      }) })
+      // 越界但都不是敏感路径
+      mocks.mockGetChangedFiles.mockReturnValue(['src/app/page.tsx', 'src/lib/utils.ts'])
 
-    // 软警告仍发送
-    const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
-    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界修改'))).toBe(true)
-    expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
+      const sendEvent = vi.fn()
+      await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+      // 任务仍标 completed
+      const completedUpdate = mocks.mockTaskUpdate.mock.calls.find(
+        (c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'completed'
+      )
+      expect(completedUpdate).toBeDefined()
+      expect(completedUpdate![0].data.result).toBe('done')
+
+      // 越界文件应被清理
+      expect(fs.existsSync(orphanFile)).toBe(false)
+
+      // 应发送越界警告（包含清理信息）
+      const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界警告'))).toBe(true)
+      // 不应发送敏感路径越界
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('[动作 6] declaredFiles 为空 → 跳过文件校验,任务 completed,无越界报警', async () => {
