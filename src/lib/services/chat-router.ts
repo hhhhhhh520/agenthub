@@ -195,3 +195,66 @@ ${agentList || '（无）'}
   })
   sendEvent({ agentId: 'orchestrator', type: 'done', content: result })
 }
+
+/**
+ * @所有人 讨论：调用 runMultiAgentDiscussion（含质量审查）
+ * 从 chat/route.ts 提取，消除重复逻辑。
+ */
+export async function handleMentionAllDiscussion(
+  message: string,
+  sessionId: string,
+  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  sendEvent: SendEvent,
+  workDir: string
+) {
+  sendEvent({ agentId: 'orchestrator', type: 'status', content: '开始多轮讨论...' })
+  await runMultiAgentDiscussion(
+    agents.map(a => a.name),
+    message,
+    sessionId,
+    agents,
+    sendEvent
+  )
+}
+
+/**
+ * 直接与指定 Agent 对话（@提及 或 私聊）
+ * 从 chat/route.ts 提取，消除 targetAgent / private 两条路径的重复代码。
+ */
+export async function handleDirectAgentChat(
+  agent: { id: string; name: string; systemPrompt: string; platform: string; model: string; baseUrl: string; apiKey: string },
+  message: string,
+  sessionId: string,
+  sendEvent: SendEvent,
+  workDir: string,
+  permissionMode: string,
+  attachments?: TaskAttachment[]
+) {
+  // 从 SessionMember 读取 cliSessionId 用于会话恢复
+  const member = await prisma.sessionMember.findUnique({
+    where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+  })
+
+  sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
+  const { result, sessionId: cliSessionId } = await executeSingleAgent(
+    { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode, sessionId: member?.cliSessionId || undefined },
+    message,
+    '',
+    (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
+    sessionId,
+    workDir,
+    attachments
+  )
+
+  // 保存 cliSessionId 到 SessionMember
+  if (cliSessionId) {
+    await prisma.sessionMember.update({
+      where: { sessionId_agentId: { sessionId, agentId: agent.id } },
+      data: { cliSessionId },
+    })
+  }
+
+  await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
+  const { quality } = await reviewResult(result, message, sessionId, sendEvent)
+  sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality } })
+}

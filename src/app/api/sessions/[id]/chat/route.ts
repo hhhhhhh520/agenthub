@@ -1,9 +1,8 @@
 import { prisma } from '@/lib/db'
-import { executeSingleAgent, runDiscussion } from '@/lib/orchestrator'
+import { executeSingleAgent } from '@/lib/orchestrator'
 import { acquireSessionLock } from '@/lib/session-lock'
-import { reviewResult } from '@/lib/services/review'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
-import { handleOrchestratorDecision, handleOrchestratorChat } from '@/lib/services/chat-router'
+import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat } from '@/lib/services/chat-router'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -140,86 +139,19 @@ export async function POST(
             sendEvent({ agentId: agentName, type: 'done', content: result, messageId: regenerate })
           }
         } else if (mentionAll && existingAgents.length > 0) {
-          sendEvent({ agentId: 'orchestrator', type: 'status', content: '开始多轮讨论...' })
-
-          const opinions = await runDiscussion(
-            message,
-            existingAgents.map(a => ({ name: a.name, systemPrompt: a.systemPrompt, platform: a.platform, model: a.model || undefined, baseUrl: a.baseUrl, apiKey: a.apiKey })),
-            3,
-            (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data }),
-            sessionId,
-            workDir
-          )
-
-          const summary = opinions.join('\n\n')
-          // 判断讨论是否成功：至少有一个 Agent 给出了有效内容（非超时/出错）
-          const hasValidContent = opinions.some(
-            op => !op.includes('讨论超时') && !op.includes('讨论出错') && !op.includes('未返回有效内容')
-          )
-          const statusTag = hasValidContent ? '[STATUS:success]' : '[STATUS:failed]'
-          await prisma.message.create({ data: { role: 'orchestrator', rawContent: `[DISCUSSION_SUMMARY]${statusTag}${summary}`, sessionId } })
-          sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
+          await handleMentionAllDiscussion(message, sessionId, existingAgents, sendEvent, workDir)
         } else if (targetAgent) {
           const agent = existingAgents.find(a => a.name === targetAgent)
           if (!agent) {
             sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
           } else {
-            // 从 SessionMember 读取 cliSessionId 用于会话恢复
-            const member = await prisma.sessionMember.findUnique({
-              where: { sessionId_agentId: { sessionId, agentId: agent.id } },
-            })
-
-            sendEvent({ agentId: agent.name, type: 'status', content: '执行中...' })
-            const { result, sessionId: cliSessionId } = await executeSingleAgent(
-              { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode, sessionId: member?.cliSessionId || undefined },
-              message,
-              '',  // 不传 context，CLI 通过 session 恢复管理历史
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
-              sessionId,
-              workDir,
-              msgAttachments
-            )
-            // 保存 cliSessionId 到 SessionMember
-            if (cliSessionId) {
-              await prisma.sessionMember.update({
-                where: { sessionId_agentId: { sessionId, agentId: agent.id } },
-                data: { cliSessionId },
-              })
-            }
-            await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
-            const { quality: mentionQuality } = await reviewResult(result, message, sessionId, sendEvent)
-            sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality: mentionQuality } })
+            await handleDirectAgentChat(agent, message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
           }
         } else if (session.type === 'private' && existingAgents.length > 0) {
-          const agent = existingAgents[0]
           try {
-            // 从 SessionMember 读取 cliSessionId 用于会话恢复
-            const member = await prisma.sessionMember.findUnique({
-              where: { sessionId_agentId: { sessionId, agentId: agent.id } },
-            })
-
-            sendEvent({ agentId: agent.name, type: 'status', content: '思考中...' })
-            const { result, sessionId: cliSessionId } = await executeSingleAgent(
-              { id: agent.id, name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, workDir, permissionMode, sessionId: member?.cliSessionId || undefined },
-              message,
-              '',  // 不传 context，CLI 通过 session 恢复管理历史
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
-              sessionId,
-              workDir,
-              msgAttachments
-            )
-            // 保存 cliSessionId 到 SessionMember
-            if (cliSessionId) {
-              await prisma.sessionMember.update({
-                where: { sessionId_agentId: { sessionId, agentId: agent.id } },
-                data: { cliSessionId },
-              })
-            }
-            await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name } })
-            const { quality: privQuality } = await reviewResult(result, message, sessionId, sendEvent)
-            sendEvent({ agentId: agent.name, type: 'done', content: result, data: { quality: privQuality } })
+            await handleDirectAgentChat(existingAgents[0], message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
           } catch (err) {
-            sendEvent({ agentId: agent.name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
+            sendEvent({ agentId: existingAgents[0].name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
           }
         } else {
           const isCreateIntent = /创建|新建|添加|帮我建|create.*agent|建一?个/i.test(message) && /agent|智能体|助手/i.test(message)
