@@ -92,8 +92,9 @@ export async function reviewResult(
               ...retryContext,
               currentRetry: currentRetry + 1,
             }, orchSessionId, startTime)
-          } catch {
+          } catch (retryErr) {
             // 重试失败，明确标记为差
+            console.warn(`[reviewResult] Agent retry failed (attempt ${currentRetry + 1}/${maxRetries}): ${retryErr}`)
             return { quality: 'poor' }
           }
         }
