@@ -1,12 +1,12 @@
 const AGENT_COLORS = [
-  { bg: 'bg-rose-100 text-rose-900', avatar: 'bg-rose-200 text-rose-800' },
-  { bg: 'bg-emerald-100 text-emerald-900', avatar: 'bg-emerald-200 text-emerald-800' },
-  { bg: 'bg-amber-100 text-amber-900', avatar: 'bg-amber-200 text-amber-800' },
-  { bg: 'bg-cyan-100 text-cyan-900', avatar: 'bg-cyan-200 text-cyan-800' },
-  { bg: 'bg-pink-100 text-pink-900', avatar: 'bg-pink-200 text-pink-800' },
-  { bg: 'bg-lime-100 text-lime-900', avatar: 'bg-lime-200 text-lime-800' },
-  { bg: 'bg-violet-100 text-violet-900', avatar: 'bg-violet-200 text-violet-800' },
-  { bg: 'bg-teal-100 text-teal-900', avatar: 'bg-teal-200 text-teal-800' },
+  { bg: 'bg-rose-100 text-rose-900 dark:bg-rose-900 dark:text-rose-100', avatar: 'bg-rose-200 text-rose-800 dark:bg-rose-800 dark:text-rose-200' },
+  { bg: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100', avatar: 'bg-emerald-200 text-emerald-800 dark:bg-emerald-800 dark:text-emerald-200' },
+  { bg: 'bg-amber-100 text-amber-900 dark:bg-amber-900 dark:text-amber-100', avatar: 'bg-amber-200 text-amber-800 dark:bg-amber-800 dark:text-amber-200' },
+  { bg: 'bg-cyan-100 text-cyan-900 dark:bg-cyan-900 dark:text-cyan-100', avatar: 'bg-cyan-200 text-cyan-800 dark:bg-cyan-800 dark:text-cyan-200' },
+  { bg: 'bg-pink-100 text-pink-900 dark:bg-pink-900 dark:text-pink-100', avatar: 'bg-pink-200 text-pink-800 dark:bg-pink-800 dark:text-pink-200' },
+  { bg: 'bg-lime-100 text-lime-900 dark:bg-lime-900 dark:text-lime-100', avatar: 'bg-lime-200 text-lime-800 dark:bg-lime-800 dark:text-lime-200' },
+  { bg: 'bg-violet-100 text-violet-900 dark:bg-violet-900 dark:text-violet-100', avatar: 'bg-violet-200 text-violet-800 dark:bg-violet-800 dark:text-violet-200' },
+  { bg: 'bg-teal-100 text-teal-900 dark:bg-teal-900 dark:text-teal-100', avatar: 'bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200' },
 ]
 
 function hashName(name: string): number {
@@ -45,8 +45,8 @@ export function getAgentStyle(agentId: string, accentColor?: string) {
   if (accentColor) {
     const [h, s] = hexToHsl(accentColor)
     return {
-      bg: `bg-[hsl(${h},${Math.min(s, 40)}%,92%)] text-[hsl(${h},${Math.min(s, 60)}%,20%)]`,
-      avatarBg: `bg-[hsl(${h},${Math.min(s, 50)}%,85%)] text-[hsl(${h},${Math.min(s, 60)}%,25%)]`,
+      bg: `bg-[hsl(${h},${Math.min(s, 40)}%,92%)] text-[hsl(${h},${Math.min(s, 60)}%,20%)] dark:bg-[hsl(${h},${Math.min(s, 40)}%,18%)] dark:text-[hsl(${h},${Math.min(s, 60)}%,88%)]`,
+      avatarBg: `bg-[hsl(${h},${Math.min(s, 50)}%,85%)] text-[hsl(${h},${Math.min(s, 60)}%,25%)] dark:bg-[hsl(${h},${Math.min(s, 50)}%,25%)] dark:text-[hsl(${h},${Math.min(s, 60)}%,85%)]`,
       initial: agentId.charAt(0).toUpperCase(),
     }
   }

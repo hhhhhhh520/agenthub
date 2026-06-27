@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@/lib/hooks/use-chat'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -239,7 +239,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                         ))}
                       </div>
                     )}
-                    <MessageContent parsed={parsed} sessionId={sessionId} />
+                    <MessageErrorBoundary><MessageContent parsed={parsed} sessionId={sessionId} /></MessageErrorBoundary>
                   </div>
                 </div>
               )
@@ -286,7 +286,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                     ))}
                   </div>
                 )}
-                <MessageContent parsed={parsed} sessionId={sessionId} />
+                <MessageErrorBoundary><MessageContent parsed={parsed} sessionId={sessionId} /></MessageErrorBoundary>
               </div>
             )
           })}
@@ -482,6 +482,17 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
       </Dialog>
     </div>
   )
+}
+
+class MessageErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false }
+  static getDerivedStateFromError() { return { hasError: true } }
+  render() {
+    if (this.state.hasError) {
+      return <div className="text-xs text-red-500 dark:text-red-400 italic p-2 rounded bg-red-50 dark:bg-red-950">消息渲染失败</div>
+    }
+    return this.props.children
+  }
 }
 
 function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionId: string }) {
