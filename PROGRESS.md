@@ -196,6 +196,7 @@
 | 5维度并行审查 | 5个Agent并行审查(安全/架构/代码质量/测试/性能)，逐项代码验证后确认6个真问题+5个理论风险(本地工具不适用)+2个过度泛化。详见下方审查结论 | 2026-06-26 |
 | 虚假测试修复+catch日志 | #1:提取cleanupUndeclared+normalizePath为export函数，测试改为import源码(原测副本)。#2:review.ts重试失败catch加console.warn。879测试全绿 | 2026-06-26 |
 | 5角度Review修复(3项) | 5个Agent并行审查(架构/安全/测试/前端/性能)产出70项发现。逐项代码验证后确认3个真Critical。**Fix1**:MessageErrorBoundary包裹MessageContent防畸形消息白屏(chat-area.tsx +17行)。**Fix2**:AGENT_COLORS加dark:变体+动态HSL亮度85%→18%适配暗色模式(agent-colors.ts)。**Fix3**:mentionAll/targetAgent/private路径提取到chat-router.ts(handleMentionAllDiscussion+handleDirectAgentChat)，route层-80行只做调度，消除与review.ts重复。879测试全绿 | 2026-06-26 |
+| 安全审查补跑 | Security Engineer Agent审查12项：2个High(shell注入shadow-git.ts execSync字符串拼接+shell:true默认)、3个Medium(无认证已知+config无白名单+SVG上传白名单)、2个Low。5项积极发现(iframe安全/路径遍历/SQL防护/DoS限制/附件控制)。本地单用户场景下High触发概率低，公开部署前需修复 | 2026-06-27 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
