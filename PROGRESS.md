@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-26
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-27
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -195,6 +195,7 @@
 | 越界清理逻辑 | execution.ts边界检测阶段增加非敏感越界文件自动清理，保留其他批次声明的文件，清理后清空undeclared避免监控审查触发纠偏重试。新增8测试+更新2测试，74相关测试全通过 | 2026-06-26 |
 | 5维度并行审查 | 5个Agent并行审查(安全/架构/代码质量/测试/性能)，逐项代码验证后确认6个真问题+5个理论风险(本地工具不适用)+2个过度泛化。详见下方审查结论 | 2026-06-26 |
 | 虚假测试修复+catch日志 | #1:提取cleanupUndeclared+normalizePath为export函数，测试改为import源码(原测副本)。#2:review.ts重试失败catch加console.warn。879测试全绿 | 2026-06-26 |
+| 5角度Review修复(3项) | 5个Agent并行审查(架构/安全/测试/前端/性能)产出70项发现。逐项代码验证后确认3个真Critical。**Fix1**:MessageErrorBoundary包裹MessageContent防畸形消息白屏(chat-area.tsx +17行)。**Fix2**:AGENT_COLORS加dark:变体+动态HSL亮度85%→18%适配暗色模式(agent-colors.ts)。**Fix3**:mentionAll/targetAgent/private路径提取到chat-router.ts(handleMentionAllDiscussion+handleDirectAgentChat)，route层-80行只做调度，消除与review.ts重复。879测试全绿 | 2026-06-26 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

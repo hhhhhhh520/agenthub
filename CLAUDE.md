@@ -25,7 +25,7 @@ src/
 │   └── layout.tsx             # 根 layout（ThemeProvider + Toaster + 字体 + body）
 ├── components/
 │   ├── ui/                    # shadcn/ui 组件（含 sonner Toast）
-│   ├── chat-area.tsx          # 聊天区 + SSE 流式
+│   ├── chat-area.tsx          # 聊天区 + SSE 流式 + MessageErrorBoundary
 │   ├── session-sidebar.tsx    # 会话侧边栏
 │   ├── agent-panel.tsx        # Agent 面板 + 任务看板
 │   ├── chat-fab.tsx           # 右下角浮窗聊天卡片
@@ -36,7 +36,7 @@ src/
 │   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
 │   ├── orchestrator/          # 编排器（prompt + 调度 + 执行 + 超时控制）
 │   ├── services/              # 业务服务层（从 chat route 拆分）
-│   │   ├── chat-router.ts     # Orchestrator 决策路由 + validateDecision
+│   │   ├── chat-router.ts     # Orchestrator 决策路由 + validateDecision + handleMentionAllDiscussion + handleDirectAgentChat
 │   │   ├── alignment.ts       # 对齐流程（PM确认→架构师拆解→Q&A）
 │   │   ├── execution.ts       # 任务执行引擎
 │   │   ├── review.ts          # 结果审查 + 纠偏 + delegate/discuss
