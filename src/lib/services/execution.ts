@@ -10,6 +10,45 @@ import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
 
+/** 路径归一化：统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写) */
+export const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
+
+/**
+ * 清理越界文件:删除不属于任何批次的文件,保留其他批次声明的文件。
+ * 会原地清空 undeclared 数组(避免监控审查再次触发纠偏)。
+ *
+ * @returns cleanedCount: 已清理文件数, protectedCount: 受保护文件数
+ */
+export function cleanupUndeclared(
+  undeclared: string[],
+  otherDeclaredFiles: string[],
+  projectRoot: string,
+): { cleanedCount: number; protectedCount: number } {
+  const otherDeclared = new Set(otherDeclaredFiles.map(normalizePath))
+  let cleanedCount = 0
+  let protectedCount = 0
+
+  for (const file of undeclared) {
+    if (otherDeclared.has(normalizePath(file))) {
+      protectedCount++
+    } else {
+      const fullPath = path.join(projectRoot, file)
+      try {
+        if (fs.existsSync(fullPath)) {
+          fs.unlinkSync(fullPath)
+          cleanedCount++
+        }
+      } catch (e) {
+        console.warn(`[越界清理] 无法删除 ${file}: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  }
+
+  // 清空 undeclared，避免监控审查再次看到越界文件触发纠偏重试
+  undeclared.splice(0)
+  return { cleanedCount, protectedCount }
+}
+
 interface TraceEntry {
   ts: string
   event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction'
@@ -223,8 +262,6 @@ export async function handleExecution(
       // 根据是否命中敏感路径决定 task 最终 status
       const declaredFiles: string[] = JSON.parse(taskForTrace?.declaredFiles || '[]')
       const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
-      // 路径归一化:统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写)
-      const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
       const normalizedDeclared = declaredFiles.map(normalizePath)
       const undeclared = declaredFiles.length === 0
         ? []  // declaredFiles 为空 = 跳过文件校验(纯讨论/分析任务合法)
@@ -269,37 +306,10 @@ export async function handleExecution(
       // 普通越界清理：删除本批次创建的越界文件，保留其他批次声明的文件
       // 设计决策：不触发全任务重试，只外科手术式清理，避免误伤其他批次产出
       if (undeclared.length > 0) {
-        // 收集其他批次声明的文件（包括尚未执行的批次）
-        const otherDeclared = new Set(
-          tasks
-            .filter(t => t.id !== taskId)
-            .flatMap(t => JSON.parse(t.declaredFiles || '[]'))
-            .map(normalizePath)
-        )
-
-        let cleanedCount = 0
-        let protectedCount = 0
-        for (const file of undeclared) {
-          if (otherDeclared.has(normalizePath(file))) {
-            // 文件属于其他批次，不清理（保守策略：宁可不删，也不误删）
-            protectedCount++
-          } else {
-            // 文件不属于任何批次，尝试清理
-            const fullPath = path.join(projectRoot, file)
-            try {
-              if (fs.existsSync(fullPath)) {
-                fs.unlinkSync(fullPath)
-                cleanedCount++
-              }
-            } catch (e) {
-              // 文件删除失败不阻塞执行（可能是文件被占用）
-              console.warn(`[越界清理] 无法删除 ${file}: ${e instanceof Error ? e.message : String(e)}`)
-            }
-          }
-        }
-
-        // 清理后清空 undeclared，避免监控审查再次看到越界文件触发纠偏重试
-        undeclared.splice(0)
+        const otherDeclaredFiles = tasks
+          .filter(t => t.id !== taskId)
+          .flatMap(t => JSON.parse(t.declaredFiles || '[]'))
+        const { cleanedCount, protectedCount } = cleanupUndeclared(undeclared, otherDeclaredFiles, projectRoot)
 
         if (cleanedCount > 0) {
           const warningMsg = `[越界警告] 任务 ${taskId} 创建了 ${cleanedCount} 个越界文件，已自动清理`
