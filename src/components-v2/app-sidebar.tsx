@@ -79,26 +79,16 @@ export function AppSidebar() {
           {mounted && (
             <SidebarMenuItem>
               <SidebarMenuButton
-                onClick={() => {
-                  if (theme === 'system') setTheme('light')
-                  else if (theme === 'light') setTheme('dark')
-                  else setTheme('system')
-                }}
-                tooltip={
-                  theme === 'system' ? '跟随系统（点击切换亮色）' :
-                  theme === 'light' ? '亮色模式（点击切换暗色）' :
-                  '暗色模式（点击跟随系统）'
-                }
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                tooltip={theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}
                 className="w-full"
               >
-                {theme === 'system' ? (
-                  <Sun className="h-4 w-4 opacity-50" />
-                ) : theme === 'dark' ? (
+                {theme === 'dark' ? (
                   <Moon className="h-4 w-4" />
                 ) : (
                   <Sun className="h-4 w-4" />
                 )}
-                <span>{theme === 'system' ? '系统' : theme === 'dark' ? '暗色' : '亮色'}</span>
+                <span>{theme === 'dark' ? '亮色' : '暗色'}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
