@@ -127,22 +127,33 @@ export function useChat(sessionId: string | null) {
           }
 
           if (event.type === 'done') {
+            // Bug fix: extract message from orchestrator decision JSON if present
+            let content = event.content
+            if (event.agentId === 'orchestrator') {
+              try {
+                const parsed = JSON.parse(content)
+                if (parsed.action && parsed.message && parsed.reason) {
+                  content = parsed.message
+                }
+              } catch { /* not JSON, use as-is */ }
+            }
+
             if (event.messageId) {
               // Regenerate: replace existing message
               setMessages(prev => prev.map(m =>
-                m.id === event.messageId ? { ...m, rawContent: event.content } : m
+                m.id === event.messageId ? { ...m, rawContent: content } : m
               ))
             } else {
               // New message: add to messages list
               setMessages(prev => [...prev, {
                 id: crypto.randomUUID(),
                 role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
-                rawContent: event.content,
+                rawContent: content,
                 agentId: event.agentId === 'orchestrator' ? undefined : event.agentId,
                 createdAt: new Date().toISOString(),
               }])
             }
-            // Clear streaming, thinking, and toolCalls
+            // Bug fix: clear streaming for this agent to prevent duplicate display
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))

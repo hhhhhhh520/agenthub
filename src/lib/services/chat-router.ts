@@ -148,7 +148,9 @@ ${agentList || '（无）'}
 - 和用户闲聊、回答问题、解释功能
 - 当用户下达开发任务（包含"开发/实现/做/写/搭建"等关键词）时，启动对齐流程
 - 当用户 @某个 Agent 时，告诉用户该 Agent 的能力和状态
-- 回复简洁，不要用 emoji，控制在 200 字以内`
+- 回复简洁，不要用 emoji，控制在 200 字以内
+
+重要：直接回复自然语言文本，不要返回 JSON 格式。不要包含 action、target、reason 等字段。`
 
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   const workDir = session?.projectDir && session.projectDir.trim()
