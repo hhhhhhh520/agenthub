@@ -56,6 +56,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   const [showRecovery, setShowRecovery] = useState(false)
   const [recoveredCount, setRecoveredCount] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const nearBottomRef = useRef(true)
 
   useEffect(() => {
     if (!sessionId) return
@@ -86,7 +87,11 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         .catch(console.error),
     ])
   }, [sessionId, loadMessages])
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streaming])
+  useEffect(() => {
+    if (nearBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, streaming])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
@@ -181,7 +186,10 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           )}
         </div>
       )}
-      <ScrollArea className="flex-1 min-h-0 overflow-hidden p-4">
+      <ScrollArea className="flex-1 min-h-0 overflow-hidden p-4" onScroll={(e) => {
+        const el = e.currentTarget
+        nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+      }}>
         <div className="space-y-3 max-w-3xl mx-auto">
           {messages.map(msg => {
             const replyPreview = msg.replyTo

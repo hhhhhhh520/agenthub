@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 
 interface Attachment {
   id: string
@@ -279,6 +279,14 @@ export function useChat(sessionId: string | null) {
     })
     setPendingPermissions(prev => prev.filter(p => p.requestId !== requestId))
   }, [sessionId, pendingPermissions])
+
+  // Cleanup streaming throttle timer on unmount
+  useEffect(() => () => {
+    if (streamTimerRef.current) {
+      clearTimeout(streamTimerRef.current)
+      streamTimerRef.current = null
+    }
+  }, [])
 
   return { messages, streaming, loading, send, stop, loadMessages, phase, awaitingInput, pendingPermissions, respondPermission, thinking, toolCalls }
 }
