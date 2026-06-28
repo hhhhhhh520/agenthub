@@ -4,13 +4,13 @@ import { buildContextFromHistory } from './context-builder'
 import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review'
 import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution } from './alignment'
 import type { SendEvent } from './review'
-import type { TaskAttachment } from '@/lib/adapter/types'
+import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 
 export async function handleOrchestratorDecision(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   sessionPhase: string,
   attachments?: TaskAttachment[],
@@ -205,7 +205,7 @@ ${agentList || '（无）'}
 export async function handleMentionAllDiscussion(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   workDir: string
 ) {

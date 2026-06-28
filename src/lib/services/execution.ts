@@ -6,6 +6,7 @@ import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './shadow-git'
 import { pickSensitive } from './sensitive-paths'
+import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import type { SendEvent } from './review'
@@ -71,7 +72,7 @@ function appendTrace(existing: string, entry: TraceEntry): string {
 export async function handleExecution(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   orchSessionId?: string,
   globalDeadline?: number

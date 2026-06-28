@@ -5,11 +5,12 @@ import { PM_CONFIRMATION_PROMPT, buildAgentQuestionPrompt } from '@/lib/orchestr
 import { topologicalSort, type ScheduledTask } from '@/lib/orchestrator/scheduler'
 import { handleExecution } from './execution'
 import type { SendEvent } from './review'
+import type { AgentConfig } from '@/lib/adapter/types'
 
 export async function handlePMConfirm(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent
 ) {
   let currentAgents = agents
@@ -90,7 +91,7 @@ export async function handlePMConfirm(
 export async function handleArchitectPlan(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent
 ) {
   await prisma.session.update({ where: { id: sessionId }, data: { phase: 'alignment', phaseStep: 'architect_plan' } })
@@ -186,7 +187,7 @@ export async function handleArchitectPlan(
 export async function handleAgentQA(
   message: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   globalDeadline?: number
 ) {
@@ -259,7 +260,7 @@ export async function handleAgentQA(
 
 export async function transitionToExecution(
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   userMessage?: string,
   orchSessionId?: string,
