@@ -198,6 +198,7 @@
 | 5角度Review修复(3项) | 5个Agent并行审查(架构/安全/测试/前端/性能)产出70项发现。逐项代码验证后确认3个真Critical。**Fix1**:MessageErrorBoundary包裹MessageContent防畸形消息白屏(chat-area.tsx +17行)。**Fix2**:AGENT_COLORS加dark:变体+动态HSL亮度85%→18%适配暗色模式(agent-colors.ts)。**Fix3**:mentionAll/targetAgent/private路径提取到chat-router.ts(handleMentionAllDiscussion+handleDirectAgentChat)，route层-80行只做调度，消除与review.ts重复。879测试全绿 | 2026-06-26 |
 | 安全审查补跑 | Security Engineer Agent审查12项：2个High(shell注入shadow-git.ts execSync字符串拼接+shell:true默认)、3个Medium(无认证已知+config无白名单+SVG上传白名单)、2个Low。5项积极发现(iframe安全/路径遍历/SQL防护/DoS限制/附件控制)。本地单用户场景下High触发概率低，公开部署前需修复 | 2026-06-27 |
 | Playwright E2E测试+3 bug修复 | 无头浏览器测试首页/聊天/会话/Agent/暗色模式/Tasks标签。发现3个bug：**Bug1**(高)Orchestrator返回原始JSON→use-chat.ts done事件解析决策JSON提取message+chat-router.ts system prompt明确要求自然语言。**Bug2**(中)主题切换按钮标签不随主题更新→app-sidebar.tsx简化为亮/暗直接切换，标签显示切换目标。**Bug3**(中)消息重复显示→use-chat.ts done事件清除streaming状态。879测试全绿 | 2026-06-28 |
+| 5维度审查+修复(7项) | 5个Agent并行审查(代码质量7.5/安全5/UX5.5/性能6/测试4)。**审查修正**：测试agent误报"核心服务零测试"(实际8个文件有测试)，测试评分上调至6/10。**真问题12→7个**（14个是已知设计决策）。**Phase1**:session-lock超时日志+streaming 100ms节流+自动滚动优化(底部附近才滚动)。**Phase2**:path-safety 15用例+覆盖率threshold(lines:70)。**Phase3.2**:AgentConfig类型统一(9处重复→1处)。894测试全绿 | 2026-06-28 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
