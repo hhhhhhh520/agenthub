@@ -66,3 +66,16 @@ export interface AgentAdapter {
    */
   getSpawnConfig(): SpawnConfig | null
 }
+
+/** 统一的 Agent 配置类型，供 services 层使用 */
+export interface AgentConfig {
+  id: string
+  name: string
+  systemPrompt: string
+  platform: string
+  expertise: string
+  model: string
+  baseUrl: string
+  apiKey: string
+  tools: string
+}

@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion, callLLMForAnalysis, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt, ORCHESTRATOR_DECISION_PROMPT } from '@/lib/orchestrator/prompts'
-import type { TaskAttachment } from '@/lib/adapter/types'
+import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
 
@@ -113,7 +113,7 @@ export async function delegateToAgent(
   agentName: string,
   taskMessage: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent,
   attachments?: TaskAttachment[],
   orchSessionId?: string
@@ -171,7 +171,7 @@ export async function runMultiAgentDiscussion(
   agentNames: string[],
   topic: string,
   sessionId: string,
-  agents: Array<{ id: string; name: string; systemPrompt: string; platform: string; expertise: string; model: string; baseUrl: string; apiKey: string; tools: string }>,
+  agents: AgentConfig[],
   sendEvent: SendEvent
 ) {
   const discussionAgents = agentNames
