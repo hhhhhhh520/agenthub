@@ -52,6 +52,8 @@ export function useChat(sessionId: string | null) {
   const [thinking, setThinking] = useState<Record<string, string>>({})
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const streamBufferRef = useRef<Record<string, string>>({})
+  const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
@@ -154,6 +156,8 @@ export function useChat(sessionId: string | null) {
               }])
             }
             // Bug fix: clear streaming for this agent to prevent duplicate display
+            // Discard any buffered streaming content for this agent
+            delete streamBufferRef.current[event.agentId]
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
@@ -165,11 +169,13 @@ export function useChat(sessionId: string | null) {
               createdAt: new Date().toISOString(),
             }])
             // 清除 streaming 状态，防止后续 text chunk 拼接到旧内容上
+            delete streamBufferRef.current[event.agentId]
             setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
             setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
           } else if (event.type === 'awaiting_user_input') {
             setAwaitingInput(event.content)
+            streamBufferRef.current = {}
             setStreaming({})
             setLoading(false)
           } else if (event.type === 'phase_transition') {
@@ -218,10 +224,23 @@ export function useChat(sessionId: string | null) {
               return updated
             })
           } else {
-            setStreaming(prev => ({
-              ...prev,
-              [event.agentId]: (prev[event.agentId] || '') + event.content,
-            }))
+            // Throttle: buffer chunks, flush every 100ms to reduce re-renders
+            streamBufferRef.current[event.agentId] =
+              (streamBufferRef.current[event.agentId] || '') + event.content
+            if (!streamTimerRef.current) {
+              streamTimerRef.current = setTimeout(() => {
+                const snapshot = { ...streamBufferRef.current }
+                streamBufferRef.current = {}
+                streamTimerRef.current = null
+                setStreaming(prev => {
+                  const next = { ...prev }
+                  for (const [id, buf] of Object.entries(snapshot)) {
+                    next[id] = (next[id] || '') + buf
+                  }
+                  return next
+                })
+              }, 100)
+            }
           }
         }
       }
