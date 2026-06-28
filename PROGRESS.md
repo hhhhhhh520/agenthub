@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-27
+> 创建时间: 2026-05-22 | 最后更新: 2026-06-28
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -197,6 +197,7 @@
 | 虚假测试修复+catch日志 | #1:提取cleanupUndeclared+normalizePath为export函数，测试改为import源码(原测副本)。#2:review.ts重试失败catch加console.warn。879测试全绿 | 2026-06-26 |
 | 5角度Review修复(3项) | 5个Agent并行审查(架构/安全/测试/前端/性能)产出70项发现。逐项代码验证后确认3个真Critical。**Fix1**:MessageErrorBoundary包裹MessageContent防畸形消息白屏(chat-area.tsx +17行)。**Fix2**:AGENT_COLORS加dark:变体+动态HSL亮度85%→18%适配暗色模式(agent-colors.ts)。**Fix3**:mentionAll/targetAgent/private路径提取到chat-router.ts(handleMentionAllDiscussion+handleDirectAgentChat)，route层-80行只做调度，消除与review.ts重复。879测试全绿 | 2026-06-26 |
 | 安全审查补跑 | Security Engineer Agent审查12项：2个High(shell注入shadow-git.ts execSync字符串拼接+shell:true默认)、3个Medium(无认证已知+config无白名单+SVG上传白名单)、2个Low。5项积极发现(iframe安全/路径遍历/SQL防护/DoS限制/附件控制)。本地单用户场景下High触发概率低，公开部署前需修复 | 2026-06-27 |
+| Playwright E2E测试+3 bug修复 | 无头浏览器测试首页/聊天/会话/Agent/暗色模式/Tasks标签。发现3个bug：**Bug1**(高)Orchestrator返回原始JSON→use-chat.ts done事件解析决策JSON提取message+chat-router.ts system prompt明确要求自然语言。**Bug2**(中)主题切换按钮标签不随主题更新→app-sidebar.tsx简化为亮/暗直接切换，标签显示切换目标。**Bug3**(中)消息重复显示→use-chat.ts done事件清除streaming状态。879测试全绿 | 2026-06-28 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
