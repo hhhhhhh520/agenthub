@@ -22,7 +22,7 @@ export async function acquireSessionLock(sessionId: string, signal?: AbortSignal
   try {
     await prevWithTimeout
   } catch {
-    // Previous request timed out — proceed
+    console.warn(`[session-lock] Previous request for ${sessionId} timed out after ${LOCK_TIMEOUT_MS}ms, proceeding`)
   }
 
   return () => {
