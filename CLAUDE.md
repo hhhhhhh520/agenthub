@@ -161,7 +161,7 @@ prisma/
 
 ### Orchestrator 智能编排模式
 
-Orchestrator 自主决定流程，支持 8 种 action：
+Orchestrator 自主决定流程，支持 9 种 action：
 - `self` — Orchestrator 自己回答（闲聊、简单问题）
 - `delegate` — 委派给指定 Agent（`target` 字段指定）
 - `discuss` — 多 Agent 讨论（`targets` 数组指定参与者）
@@ -169,6 +169,7 @@ Orchestrator 自主决定流程，支持 8 种 action：
 - `align_decompose` — 架构师拆任务 + 持久化 Task 记录，等用户确认方案
 - `align_qa` — Agent 对方案提问澄清，等用户回答
 - `execute` — 对齐完成，开始执行任务
+- `verify` — 验证产出物：有 target 委派验证，无 target Orchestrator 自验证（chat-router 已接线；执行层强制触发仍是待办，见 ISSUE-008）
 - `done` — 任务完成
 
 编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。

@@ -160,6 +160,20 @@ describe('handleOrchestratorDecision', () => {
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
   })
 
+  it('action=verify with target → calls delegateToAgent（验证不静默丢失）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'verify', target: '架构师', message: '请验证产出物', reason: 'r' }, sessionId: 'orch-ses' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'execution')
+    expect(mockDelegateToAgent).toHaveBeenCalledWith('架构师', '请验证产出物', 's1', agents, sendEvent, undefined, 'orch-ses')
+  })
+
+  it('action=verify without target → Orchestrator 自己验证（走 CLI 执行）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'verify', target: null, message: '让我验证一下', reason: 'r' }, sessionId: 'orch-ses' })
+    mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'execution')
+    expect(mockDelegateToAgent).not.toHaveBeenCalled()
+    expect(mockExecuteSingleAgent).toHaveBeenCalled()
+  })
+
   it('action=done → updates session phase and sends done event', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: 'all done', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')

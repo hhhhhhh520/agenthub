@@ -83,11 +83,26 @@ async function updateAgentSessionStatus(sessionId: string | undefined, agentId: 
 }
 
 export interface OrchestratorDecision {
-  action: 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_decompose' | 'align_qa' | 'execute' | 'done'
+  action: 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_decompose' | 'align_qa' | 'execute' | 'verify' | 'done'
   target?: string | null
   targets?: string[] | null
   message: string
   reason: string
+}
+
+/**
+ * 根据任务描述匹配最合适的 Agent
+ * 用于 fallback 逻辑，避免按索引轮询分配
+ */
+export function findBestAgent<T extends { name: string }>(description: string, agents: T[]): T | undefined {
+  // LLM 拆解输出可能给 null/缺失 description，守卫防止 TypeError 导致任务静默丢失
+  const desc = String(description ?? '').toLowerCase()
+  if (/前端|ui|css|组件|页面|按钮|样式/.test(desc)) return agents.find(a => a.name.includes('前端'))
+  if (/后端|api|数据库|脚本|python|接口/.test(desc)) return agents.find(a => a.name.includes('后端'))
+  if (/测试|验证|test/.test(desc)) return agents.find(a => a.name.includes('测试'))
+  if (/架构|设计|方案/.test(desc)) return agents.find(a => a.name.includes('架构'))
+  if (/产品|需求|prd/.test(desc)) return agents.find(a => a.name.includes('产品'))
+  return undefined
 }
 
 const EMPTY_RESPONSE = '[Agent 未返回有效内容]'
@@ -349,7 +364,7 @@ export async function executeTaskBatch(
 
   for (const [, batchTasks] of batches) {
     const settled = await Promise.allSettled(batchTasks.map(async (task, index) => {
-      const agent = agentMap.get(task.assignedAgent) || agents[index % agents.length]
+      const agent = agentMap.get(task.assignedAgent) || findBestAgent(task.description, agents) || agents[index % agents.length]
       if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
       // 依赖任务的文本结果以 <dependency> 块形式注入（见下方 depBlocks 构造）
