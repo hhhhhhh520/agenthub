@@ -33,6 +33,10 @@ interface ProcessEntry {
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
+  // 权限缓存：同会话内已批准/拒绝的操作自动放行/拒绝，避免重复审批
+  // key: "toolName:JSON.stringify(toolInput)", value: true=allow, false=deny
+  // 上限 100 条，超过时删除最早的条目
+  permissionCache?: Map<string, boolean>
 }
 
 interface PendingPermission {
@@ -69,7 +73,9 @@ export type { SpawnConfig }
 const MAX_PROCESSES = 10
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 const MAX_SEND_RETRIES = 3
-const NO_DATA_TIMEOUT_MS = 60 * 1000 // 60 seconds
+// 3 minutes — LLM thinking 阶段无 stdout，外层 15min 兜底。
+// 隐含契约：等待用户审批权限弹窗的时间也计入无数据时长，即用户最多有 3min 考虑时间
+export const NO_DATA_TIMEOUT_MS = 3 * 60 * 1000
 const BASE_RETRY_DELAY_MS = 1000 // 1s base for exponential backoff
 const LOCK_WAIT_TIMEOUT_MS = 5 * 60 * 1000 // 5 minutes — 等锁超时，和"用户能接受等多久"对齐
 const MAX_DIE_WHILE_WAITING = 5       // EntryDiedWhileWaitingError 连续触发上限，防止底层 bug 死循环
@@ -716,6 +722,25 @@ class ProcessRegistry {
               continue
             }
 
+            // 检查权限缓存（同会话内已批准/拒绝的操作自动放行/拒绝）
+            const permKey = `${request.tool_name}:${JSON.stringify(request.input)}`
+            if (entry.permissionCache?.has(permKey)) {
+              const wasApproved = entry.permissionCache.get(permKey)!
+              const cliResponse = {
+                type: 'control_response',
+                response: {
+                  subtype: 'success',
+                  request_id: requestId,
+                  response: wasApproved
+                    ? { behavior: 'allow', updatedInput: request.input }
+                    : { behavior: 'deny', message: 'Previously denied by user.' }
+                }
+              }
+              const buffer = Buffer.from(JSON.stringify(cliResponse) + '\n', 'utf-8')
+              entry.stdin.write(buffer)
+              continue
+            }
+
             chunkQueue.push({
               type: 'permission_request',
               content: `${request.tool_name}: ${JSON.stringify(request.input)}`,
@@ -1067,6 +1092,24 @@ class ProcessRegistry {
 
     const pending = entry.pendingPermissions.get(requestId)
     if (!pending) return false
+
+    // 写入权限缓存（allow 和 deny 都缓存，上限 100 条）
+    // 例外：用户修改 input 后批准（updatedInput 与原始不同）是一次性决策，
+    // 不缓存原始 input，否则下次原始请求会被自动放行，绕过用户的修改（审批反转）
+    const inputModified = result.updatedInput !== undefined &&
+      JSON.stringify(result.updatedInput) !== JSON.stringify(pending.toolInput)
+    if (!inputModified) {
+      if (!entry.permissionCache) {
+        entry.permissionCache = new Map()
+      }
+      if (entry.permissionCache.size >= 100) {
+        // 删除最早的条目
+        const firstKey = entry.permissionCache.keys().next().value
+        if (firstKey) entry.permissionCache.delete(firstKey)
+      }
+      const permKey = `${pending.toolName}:${JSON.stringify(pending.toolInput)}`
+      entry.permissionCache.set(permKey, result.behavior === 'allow')
+    }
 
     const cliResponse = {
       type: 'control_response',

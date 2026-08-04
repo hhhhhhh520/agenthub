@@ -53,7 +53,15 @@ export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，
 5. align_decompose — 继续对齐：让架构师拆解任务、给出技术方案，等用户确认。⚠️ 即使没有架构师 Agent，此 action 也能正常工作（系统会自动用 LLM 拆解任务并写入任务列表）。不要因为缺少架构师而跳过此步。
 6. align_qa — 继续对齐：让各 Agent 对方案提问澄清
 7. execute — 对齐完成，开始执行任务
-8. done — 任务已完成，结束会话
+8. verify — 任务完成后，验证产出物（代码任务必须验证）
+9. done — 任务已完成，结束会话
+
+⚠️ verify 使用规则（必须遵守）：
+- 任何涉及代码生成/修改的任务完成后，必须先 verify 再 done
+- 如果有测试工程师 Agent → 委派给测试工程师验证
+- 如果没有测试工程师 Agent → 用 self action 自己验证（运行语法检查、检查文件是否存在等）
+- 非代码任务（文档、讨论、配置）完成后可以直接 done
+- verify 时应检查：文件是否存在、语法是否正确、基本功能是否可运行
 
 对齐流程的编排原则：
 - 用户提出开发任务 → 先 align_confirm（PM 确认需求）
@@ -63,10 +71,12 @@ export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，
 - 简单任务可以跳步：用户说"做个小改动"→ 直接 delegate 或 execute
 - 复杂任务可以多轮：Agent 还有疑问 → 再次 align_qa，但最多 2 轮
 - 对齐中用户闲聊 → self 回答，自然恢复对齐
+- ⚠️ 代码类任务完成后 → verify（必须！）
+- 非代码类任务完成后 → done（直接结束）
 
 返回 JSON，不要包含其他文字：
 {
-  "action": "self" | "delegate" | "discuss" | "align_confirm" | "align_decompose" | "align_qa" | "execute" | "done",
+  "action": "self" | "delegate" | "discuss" | "align_confirm" | "align_decompose" | "align_qa" | "execute" | "verify" | "done",
   "target": "Agent名称" | null,
   "targets": ["Agent1", "Agent2"] | null,
   "message": "给用户或Agent的消息",
@@ -85,13 +95,22 @@ export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，
 用户: "把按钮颜色改成蓝色"
 → {"action":"delegate","target":"前端工程师","targets":null,"message":"直接修改","reason":"简单CSS修改，直接委派"}
 
+用户: "在当前目录创建 hello.txt"
+→ {"action":"self","target":null,"targets":null,"message":"好的，我来创建","reason":"简单文件操作，Orchestrator自己执行"}
+
 [架构师]: 方案：前后端分离，React + FastAPI，3个任务...
 用户: "方案没问题"
 → {"action":"align_qa","target":null,"targets":null,"message":"方案已确认，让Agent提问","reason":"方案已确认，让Agent提问澄清"}
 
 [前端工程师]: 需要确认：用 React 还是 Vue？
 用户: "用 React"
-→ {"action":"execute","target":null,"targets":null,"message":"开始执行","reason":"疑问已解答，开始执行"}`
+→ {"action":"execute","target":null,"targets":null,"message":"开始执行","reason":"疑问已解答，开始执行"}
+
+[后端工程师]: 贪吃蛇游戏已完成，产出：snake_game.py
+→ {"action":"verify","target":"测试工程师","targets":null,"message":"请验证 snake_game.py 是否可运行，功能是否完整","reason":"代码任务完成后必须验证"}
+
+[Xiaomi MiMo]: 计算器程序已完成，产出：calculator.py
+→ {"action":"self","target":null,"targets":null,"message":"让我验证一下产出物","reason":"代码任务完成，Orchestrator自己验证"}`
 
 export const ROLE_GENERATION_PROMPT = `你是一个团队组建专家。根据任务类型，生成合适的 Agent 角色。
 每个 Agent 需要：name（中文角色名）、expertise（专长描述）、systemPrompt（角色行为规范）、platform（claude-code 或 opencode）。
@@ -131,6 +150,13 @@ export const TASK_DECOMPOSITION_PROMPT = `你是一个架构师。根据确认�
 - 无依赖的任务可并行执行
 - 有重叠文件的任务必须设为串行依赖
 - declared_files 要尽可能完整，下游会按此校验，越界视为失败
+- assignedAgent 必须与任务内容匹配：
+  - 前端/UI/CSS/组件/页面/按钮/样式 → 前端工程师
+  - 后端/API/数据库/脚本/Python/接口 → 后端工程师
+  - 架构/设计/方案 → 架构师
+  - 测试/验证/test → 测试工程师
+  - 产品/需求/PRD → 产品经理
+  - 简单文件操作（创建/删除/重命名） → Orchestrator 自己执行（self action）
 - output_schema 描述下游能从这个任务的交付物里读出哪些字段。下游 Agent 会基于这个字段约定消费上游产出。
   类型用简单字符串即可：string / number / boolean / string[] / object。
   例如：["component_path:string - 组件文件路径", "exports:string[] - 导出的符号名"]

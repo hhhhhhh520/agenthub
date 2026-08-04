@@ -90,6 +90,15 @@ export async function handleOrchestratorDecision(
     case 'execute':
       await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline)
       break
+    case 'verify':
+      // ISSUE-008: 执行层强制 verify 尚未实现；此 case 保证 LLM 返回 verify 时路由不静默丢失。
+      // 有目标 Agent（如测试工程师）→ 委派验证；否则 Orchestrator 自己验证（走 CLI 真实执行）
+      if (decision.target) {
+        await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent, attachments, orchSessionId)
+      } else {
+        await handleOrchestratorChat(decision.message || message, sessionId, sendEvent, agents, orchSessionId)
+      }
+      break
     case 'done':
       await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })

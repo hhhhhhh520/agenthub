@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-06-28
+> 创建时间: 2026-05-22 | 最后更新: 2026-08-05
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -199,6 +199,8 @@
 | 安全审查补跑 | Security Engineer Agent审查12项：2个High(shell注入shadow-git.ts execSync字符串拼接+shell:true默认)、3个Medium(无认证已知+config无白名单+SVG上传白名单)、2个Low。5项积极发现(iframe安全/路径遍历/SQL防护/DoS限制/附件控制)。本地单用户场景下High触发概率低，公开部署前需修复 | 2026-06-27 |
 | Playwright E2E测试+3 bug修复 | 无头浏览器测试首页/聊天/会话/Agent/暗色模式/Tasks标签。发现3个bug：**Bug1**(高)Orchestrator返回原始JSON→use-chat.ts done事件解析决策JSON提取message+chat-router.ts system prompt明确要求自然语言。**Bug2**(中)主题切换按钮标签不随主题更新→app-sidebar.tsx简化为亮/暗直接切换，标签显示切换目标。**Bug3**(中)消息重复显示→use-chat.ts done事件清除streaming状态。879测试全绿 | 2026-06-28 |
 | 5维度审查+修复(7项) | 5个Agent并行审查(代码质量7.5/安全5/UX5.5/性能6/测试4)。**审查修正**：测试agent误报"核心服务零测试"(实际8个文件有测试)，测试评分上调至6/10。**真问题12→7个**（14个是已知设计决策）。**Phase1**:session-lock超时日志+streaming 100ms节流+自动滚动优化(底部附近才滚动)。**Phase2**:path-safety 15用例+覆盖率threshold(lines:70)。**Phase3.2**:AgentConfig类型统一(9处重复→1处)。894测试全绿 | 2026-06-28 |
+| Playwright E2E 修复(3/4项) | 2026-07-19 发现的4项协作问题：**ISSUE-007** NO_DATA_TIMEOUT_MS 60s→3min(LLM thinking无stdout误杀，E2E验证贪吃蛇235行通过)；**ISSUE-009** self示例+TASK_DECOMPOSITION角色匹配规则+findBestAgent fallback(简单任务Orchestrator自执行，E2E验证)；**ISSUE-006** permissionCache权限缓存(allow/deny都缓存+100条上限淘汰+toolName:JSON(input)粒度)。**ISSUE-008** verify action进prompt但LLM不选，需执行层强制(待办)。详见 issues/ISSUE-006-009-playwright-collaboration-bugs.md | 2026-07-27 |
+| 针对性单测补齐+pre-commit审查整改 | ISSUE-006/007/009 补18测试+审查整改5测试,共917全绿。**单测**:permission-cache(8个:写缓存allow/deny+100条淘汰+缓存命中自动批准/拒绝+不同input重新审批+updatedInput修改不缓存)、no-data-timeout(3个:常量回归守卫+内外层超时层级)、find-best-agent(10个:五类角色匹配+优先级+缺角色不误派+null description守卫)、chat-router verify分发(2个)。3组红绿验证通过。**pre-commit-audit三视角审查(攻击者/生命周期/声明vs实现)整改**:①chat-router补verify case(原LLM返回verify会静默卡死,❌)②respondPermission updatedInput修改后批准不写缓存(防审批反转)③findBestAgent加String()守卫(null description致任务丢失)。**不修记录**:deny缓存静默拒绝无UI痕迹(fail-closed体验问题)/DISCUSSION与NO_DATA同3min层级语义/AI审查已知误报模式见memory。踩坑:effectiveKey含configHash时裸key调respondPermission静默失败,e2e须走respondPermissionByRequestId生产路径 | 2026-08-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
@@ -209,10 +211,17 @@
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
+| 🟡中 | ISSUE-008 执行层强制verify | verify action仅prompt引导无效(LLM倾向直接done)，需execution.ts在代码任务完成后强制创建verify任务，建议实现见 issues/ISSUE-006-009 | 🔴未开始 |
 | 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
 | 🟢低 | 第三波安全清扫 | 7 个 ⚠️-S(orchestrator POST 掩码污染 / symlink 跨界 / accept 敏感列表割裂 / attachments 加固 / providerRef 空 apiKey 覆盖 / 拒绝路径无日志) — **本地单机威胁模型已评估不实施**,SaaS/多用户化时重评 | ⏸️ |
 | 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |
+
+**2026-07-07 赛后优化方向**（比赛结束，目标转为"自己用 + 深入研究"，详见 memory project_agenthub_post_competition_direction）：
+- 第一梯队（高价值低成本）：monitoring 改结构化检查 + A/B 对比 / 清理历史残留(backend/ 等) / MCP list_files 校验对齐 read_artifact / cliSessionId 统一入口
+- 第二梯队（高价值中成本）：可信度显式化 + 前端展示 / Orchestrator 显式状态机 / redo 改 SSE
+- 第三梯队（研究向）：全链路 trace 可视化 / 设计复盘文档(❌/⚠️ 修复沉淀) / 受控实验
+- 核心原则：减复杂度优于加功能；可审计性应内生而非补丁（参考镜像项目 homerail，D:\my project\homerail，拆解见 wiki-ascii/raw/sources/projects/homerail/）
 
 **已评估不实施**：
 - ORC-003（持续监督机制）— 纯规则检测误报率高，LLM 监控成本过高
