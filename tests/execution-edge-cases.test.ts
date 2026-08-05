@@ -443,6 +443,37 @@ describe('Execution — git diff boundary detection', () => {
     // Should NOT contain "越界修改"
     const allCalls = sendEvent.mock.calls.map(c => c[0].content)
     expect(allCalls.some(c => c.includes('越界修改'))).toBe(false)
+    // ISSUE-011 F3: 声明∩变更的文件仍应列出(不过度抑制)
+    expect(allCalls.some(c => c.includes('修改了 src/app/page.tsx'))).toBe(true)
+  })
+
+  it('ISSUE-011 F3: completion message does not misattribute sibling batch files', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // PRD/文档类任务:无声明文件(declaredFiles=[])→跳过文件校验,此前 completion
+    // 消息会把 batch 级 changedFiles(含同批其他任务的文件)串报成自己的
+    const task = makeTask({ id: 'task-1', status: 'pending', declaredFiles: '[]', assignedAgentId: 'a1' })
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'PRD done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: false, quality: 'good',
+    }) })
+    // batch 级 changedFiles:含同批其他任务(存储层)的文件——这正是实测"PRD 任务报 src/store.ts"的来源
+    mocks.mockGetChangedFiles.mockReturnValue(['src/store.ts', 'src/types.ts'])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const completionMsgs = sendEvent.mock.calls
+      .map(c => c[0].content)
+      .filter((c: string) => typeof c === 'string' && c.includes('任务 task-1 完成'))
+    expect(completionMsgs.length).toBeGreaterThan(0)
+    // 无声明文件的任务完成消息不得列同批其他任务的文件
+    expect(completionMsgs.join(' ')).not.toContain('src/store.ts')
+    expect(completionMsgs.join(' ')).not.toContain('src/types.ts')
   })
 
   // ─── contract v1 §1.2 b 动作 6: declaredFiles 分级校验 ───
