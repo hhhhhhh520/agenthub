@@ -150,6 +150,10 @@ export const TASK_DECOMPOSITION_PROMPT = `你是一个架构师。根据确认�
 - 无依赖的任务可并行执行
 - 有重叠文件的任务必须设为串行依赖
 - declared_files 要尽可能完整，下游会按此校验，越界视为失败
+- techStack 必须明确技术栈并贯穿始终，确保设计文档与 declared_files 技术栈一致：
+  techStack 声明什么（如 Node.js+TypeScript），declared_files 就用什么后缀（.ts/.tsx），
+  架构设计描述也不得写成其他技术栈（如 Python）。配置文件（package.json/Dockerfile 等）不受后缀约束。
+  设计文档与实现不一致会让后续 Agent 困惑。
 - assignedAgent 必须与任务内容匹配：
   - 前端/UI/CSS/组件/页面/按钮/样式 → 前端工程师
   - 后端/API/数据库/脚本/Python/接口 → 后端工程师
@@ -163,7 +167,7 @@ export const TASK_DECOMPOSITION_PROMPT = `你是一个架构师。根据确认�
 
 返回 JSON，不要包含其他文字：
 {
-  "techStack": "技术方案概述",
+  "techStack": "技术方案概述（必须明确技术栈，且与各任务 declared_files 的文件后缀一致）",
   "tasks": [
     {
       "id": 1,

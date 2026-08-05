@@ -146,6 +146,31 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
     expect(schemas).toContainEqual(['x:string - x 含义'])
     expect(schemas).toContainEqual(['y:number - y 含义'])
   })
+
+  it('ISSUE-011 F4: 主路径(有架构师 Agent)的 archPrompt 注入技术栈一致性约束', async () => {
+    // 漂移发生在有架构师 Agent 的主路径(alignment.ts:106-128)——TASK_DECOMPOSITION_PROMPT
+    // 只在兜底/无架构师路径生效,主路径必须靠 archPrompt 注入约束才能约束到架构师 LLM
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: 'mock-arch-output' })
+    mocks.mockParseJSON.mockReturnValue({
+      tasks: [
+        {
+          id: 1,
+          description: '写登录组件',
+          assignedAgent: '前端',
+          dependencies: [],
+          declared_files: ['src/login.tsx'],
+        },
+      ],
+    })
+
+    await handleArchitectPlan('建一个登录页', 's1', [archAgent], mocks.mockSendEvent as any)
+
+    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
+    const archPrompt = mocks.mockExecuteSingleAgent.mock.calls[0][1] as string
+    expect(archPrompt).toContain('技术栈一致性约束')
+    expect(archPrompt).toContain('declared_files 的文件后缀一致')
+    expect(archPrompt).toContain('不得写成其他技术栈（如 Python）')
+  })
 })
 
 // ───────── 3. decomposeTasks fallback ─────────

@@ -109,7 +109,10 @@ export async function handleArchitectPlan(
       ? session.projectDir.trim()
       : process.cwd()
     const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
-    const archPrompt = `任务描述：${originalRequest}\n可用角色：${agentList}`
+    // ISSUE-011 F4: 主路径(有架构师 Agent)也注入技术栈一致性约束——
+    // TASK_DECOMPOSITION_PROMPT 只在兜底/无架构师路径生效,主路径用架构师自己的
+    // systemPrompt,读不到该约束。此处显式注入确保拆解产出与 declared_files 技术栈一致。
+    const archPrompt = `任务描述：${originalRequest}\n可用角色：${agentList}\n\n技术栈一致性约束：技术方案(techStack)必须与各任务 declared_files 的文件后缀一致——声明 Node.js+TypeScript 则用 .ts/.tsx，不得写成其他技术栈（如 Python）。设计文档与实现不一致会让后续 Agent 困惑。`
 
     // 从 SessionMember 读取 cliSessionId 用于会话恢复
     const member = await prisma.sessionMember.findUnique({
