@@ -86,7 +86,7 @@ npm run dev
 ## 测试
 
 ```bash
-# 运行全部单元测试（917 个，含覆盖率报告）
+# 运行全部单元测试（920 个，含覆盖率报告）
 npm test
 
 # 运行 E2E 测试(默认 skip,需 MIMO_TEST_API_KEY 环境变量)
@@ -105,7 +105,7 @@ src/lib/orchestrator/ — 编排器（9 action 智能编排 + 调度 + 执行）
 src/lib/services/    — 业务服务(chat-router / alignment / execution / review / shadow-git / schema-validator / sensitive-paths)
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（917 个测试 + 1 个 E2E gate）
+tests/               — Vitest 单元测试（920 个测试 + 1 个 E2E gate）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录

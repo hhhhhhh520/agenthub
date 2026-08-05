@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db'
 import { executeSingleAgent } from '@/lib/orchestrator'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
-import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat } from '@/lib/services/chat-router'
+import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -154,7 +154,7 @@ export async function POST(
             sendEvent({ agentId: existingAgents[0].name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
           }
         } else {
-          const isCreateIntent = /创建|新建|添加|帮我建|create.*agent|建一?个/i.test(message) && /agent|智能体|助手/i.test(message)
+          const isCreateIntent = isCreateAgentIntent(message)
 
           if (isCreateIntent) {
             await handleCreateAgent(message, sessionId, sendEvent)

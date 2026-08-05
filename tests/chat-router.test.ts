@@ -58,7 +58,7 @@ vi.mock('@/lib/services/alignment', () => ({
   transitionToExecution: mockTransitionToExecution,
 }))
 
-import { handleOrchestratorDecision, validateDecision, handleOrchestratorChat } from '@/lib/services/chat-router'
+import { handleOrchestratorDecision, validateDecision, handleOrchestratorChat, isCreateAgentIntent } from '@/lib/services/chat-router'
 
 const sendEvent = vi.fn()
 const agents = [
@@ -186,6 +186,29 @@ describe('handleOrchestratorDecision', () => {
     mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, 'chat')
     expect(mockExecuteSingleAgent).toHaveBeenCalled()
+  })
+})
+
+describe('isCreateAgentIntent', () => {
+  it('显式创建 Agent 意图 → true', () => {
+    expect(isCreateAgentIntent('帮我创建一个 Agent，负责代码审查')).toBe(true)
+    expect(isCreateAgentIntent('新建一个智能体')).toBe(true)
+    expect(isCreateAgentIntent('添加一个助手，专门处理数据清洗')).toBe(true)
+    expect(isCreateAgentIntent('请创建一个 code-review agent')).toBe(true)
+    expect(isCreateAgentIntent('create an agent for testing')).toBe(true) // 纯英文旧行为保留
+  })
+
+  it('普通文件操作 + AgentHub 产品名 → false（本次修复的误判回归守卫）', () => {
+    // "Hello AgentHub" 的 Agent 是产品名的一部分，不是独立 agent 关键词
+    expect(isCreateAgentIntent('在当前目录创建一个 hello.txt，内容写入 Hello AgentHub')).toBe(false)
+    expect(isCreateAgentIntent('创建 helloAgent.txt 文件')).toBe(false)
+  })
+
+  it('缺创建动词或缺 agent 关键词 → false', () => {
+    expect(isCreateAgentIntent('分析一下这个项目')).toBe(false)
+    expect(isCreateAgentIntent('agent 是什么？')).toBe(false) // 有关键词无创建动词
+    expect(isCreateAgentIntent('创建目录')).toBe(false) // 有创建动词无关键词
+    expect(isCreateAgentIntent('')).toBe(false)
   })
 })
 
