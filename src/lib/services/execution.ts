@@ -183,6 +183,7 @@ export async function handleExecution(
 
     let results: Map<string, { result: string; sessionId?: string }>
     let batchFailedIds: string[] = []
+    let batchFailedReasons: Record<string, string> = {}
     try {
       const batchOutcome = await executeTaskBatch(
         readyTasks.map(t => {
@@ -225,6 +226,7 @@ export async function handleExecution(
       )
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
+      batchFailedReasons = batchOutcome.failedTaskReasons ?? {}
     } catch (err) {
       for (const task of readyTasks) {
         const failTrace = appendTrace(task.trace || '[]', {
@@ -245,12 +247,20 @@ export async function handleExecution(
     for (const taskId of batchFailedIds) {
       const task = tasks.find(t => t.id === taskId)
       if (task && task.status !== 'failed') {
+        // ISSUE-011 F1: 透传真实失败原因,不再写死通用串(?? 保留空串真实原因,不被 || 吞掉)
+        const failReason = batchFailedReasons[taskId] ?? 'Task failed in batch execution'
         const failTrace = appendTrace(task.trace || '[]', {
-          ts: new Date().toISOString(), event: 'error', message: 'Task failed in batch execution',
+          ts: new Date().toISOString(), event: 'error', message: failReason,
         })
         await prisma.task.update({ where: { id: taskId }, data: { status: 'failed', trace: failTrace } })
         task.status = 'failed'
+        task.trace = failTrace  // 内存同步,与 DB 一致(失败任务 trace 供后续读取时不留缺 error 事件的旧值)
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
+        // ISSUE-011 F1: SSE + 聊天历史都落真实原因(此前 trace/SSE 全丢,只能看服务日志;
+        // 只发 SSE 会被结尾 done 事件刷掉 streaming buffer,故同步 message.create 持久化)
+        const failMsg = `任务 ${taskId} 失败: ${failReason}`
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: failMsg, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: failMsg })
       }
     }
 

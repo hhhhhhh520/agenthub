@@ -257,6 +257,50 @@ describe('Execution — blocked task cascading', () => {
     // task-3 should have been executed (not blocked)
     expect(mocks.mockExecuteTaskBatch).toHaveBeenCalledTimes(2)
   })
+
+  it('ISSUE-011 F1: propagates real batch failure reason to trace and SSE', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+
+    // 批内失败(非整体 throw):failedTaskIds + 平行原因映射
+    const realReason = 'CLI exited with code=1, stderr='
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map(),
+      failedTaskIds: ['task-1'],
+      failedTaskReasons: { 'task-1': realReason },
+    })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 1. trace 里 error 事件带真实原因,而不是通用串
+    const failCall = mocks.mockTaskUpdate.mock.calls.find((c: any[]) => c[0].where.id === 'task-1' && c[0].data.status === 'failed')
+    expect(failCall, 'should have a failed update for task-1').toBeDefined()
+    const failTrace = JSON.parse(failCall![0].data.trace)
+    const errorEvent = failTrace.find((e: any) => e.event === 'error')
+    expect(errorEvent.message).toBe(realReason)
+    expect(errorEvent.message).not.toBe('Task failed in batch execution')
+
+    // 2. SSE 也收到真实原因
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'text',
+        content: expect.stringContaining(realReason),
+      })
+    )
+
+    // 3. 失败原因持久化进聊天历史(不被结尾 done 事件刷掉)
+    expect(mocks.mockMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: 'orchestrator',
+          rawContent: expect.stringContaining(realReason),
+        }),
+      })
+    )
+  })
 })
 
 describe('Execution — safety limits', () => {
