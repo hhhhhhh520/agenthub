@@ -379,7 +379,13 @@ export async function handleExecution(
         await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
         sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
       } else if (changedFiles.length > 0) {
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成,修改了 ${changedFiles.join(', ')}` })
+        // ISSUE-011 F3: 完成消息只列"本任务声明且实际变更"的文件。
+        // changedFiles 是 batch 级快照差异,含同批其他任务的文件——此前
+        // 无声明文件的任务(PRD/文档)会把同批存储层文件串报成自己的。
+        // declaredFiles 为空的任务无声明范围,只发"完成"不列文件。
+        const attributed = changedFiles.filter(f => normalizedDeclared.includes(normalizePath(f)))
+        const fileNote = attributed.length > 0 ? `,修改了 ${attributed.join(', ')}` : ''
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成${fileNote}` })
       } else {
         sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成` })
       }
