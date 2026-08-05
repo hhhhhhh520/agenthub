@@ -57,6 +57,15 @@ describe('Prompt constants — structure validation', () => {
     expect(TASK_DECOMPOSITION_PROMPT).toContain('"dependencies"')
     expect(TASK_DECOMPOSITION_PROMPT).toContain('"declared_files"')
   })
+
+  it('ISSUE-011 F4: TASK_DECOMPOSITION_PROMPT constrains techStack consistency with declared_files', () => {
+    // 架构师设计漂移防护:techStack 与 declared_files 后缀必须一致(实测架构师把
+    // TS 任务写成 Python 设计文档,architecture.md 与实现冲突)
+    expect(TASK_DECOMPOSITION_PROMPT).toContain('techStack 必须明确技术栈')
+    expect(TASK_DECOMPOSITION_PROMPT).toContain('declared_files 就用什么后缀')
+    expect(TASK_DECOMPOSITION_PROMPT).toContain('技术栈一致')
+    expect(TASK_DECOMPOSITION_PROMPT).toContain('必须明确技术栈，且与各任务 declared_files 的文件后缀一致')
+  })
 })
 
 describe('buildAgentQuestionPrompt', () => {

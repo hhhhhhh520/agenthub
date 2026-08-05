@@ -205,6 +205,7 @@
 | ISSUE-011 F1 批失败吞错误修复 | **pre-commit三视角审查(攻击者/生命周期/声明vs实现)整改后合入**:executeTaskBatch返回新增`failedTaskReasons`透传Promise.allSettled rejection reason(经reasonToString安全序列化,防null-prototype对象String()抛TypeError击穿整批);execution.ts批失败循环用真实原因写task trace(`??`兜底保留空串)+SSE text+message.create聊天历史持久化(不被结尾done事件刷掉)+内存task.trace同步。3 subagent审查4项整改:F4 reason序列化包try/catch+F8失败事件落库+内存trace同步+`||`→`??`。新增2测试(edge-case: trace/SSE/message.create三层透传断言;orchestrator-extended: Error reason + null-prototype不崩)。922测试全绿,src/零tsc错误。ISSUE-011 Finding 1 标已解决 | 2026-08-05 |
 | ISSUE-011 F3 完成消息归属修复 | **pre-commit三视角审查整改后合入**:完成消息从batch级`changedFiles`改为`declared∩changed`(attributed),根因=gitBefore batch快照差异+declaredFiles=[]任务强制跳过文件校验导致PRD任务串报同批存储层文件。空声明任务只发"完成"不列文件,声明任务零信息丢失。3 subagent审查无❌,确认纯显示层修复不碰状态路径+顺带修掉"完成消息列出已被清理的越界文件"。记录2条已知残留(enforceFileOverlap归一化弱+batch diff本质限制)+死代码发现(execution.ts:377越界软警告永不执行)。新增2测试(declaredFiles=[]不串报=真回归守卫+声明∩变更仍列出=防过度抑制)。923测试全绿。ISSUE-011 Finding 3 标已解决(2/4) | 2026-08-05 |
 | ISSUE-011 F2 会话遗留态收尾修复 | **pre-commit三视角审查整改后合入**:非 allDone 时发收尾消息`执行未完全完成:N个任务失败,M个被阻塞,K个未完成。失败/阻塞任务可点击 redo 重试,未完成任务将在下次执行时继续`(message.create落库+SSE text)+done 事件不谎报"所有任务已完成"。攻击者审查❌整改:原文案"失败/未完成可 redo"对 pending/in_progress 不准确(redo 只接受 failed/blocked)+中断后报"执行中"误导→pending+in_progress 合并为"未完成"计数,redo 提示只针对失败/阻塞。3 subagent审查(2个覆盖初版,❌均被整改覆盖)。记录已知权衡:phase 有意保留 execution(便于下次消息继续执行遗留任务,UI"执行中"脉冲为副作用)、done 清 buffer(聚合统计仅刷新可见)、收尾消息非幂等。新增测试(部分失败:收尾消息+done不谎报+不报执行中,真回归守卫)。924测试全绿。ISSUE-011 Finding 2 标已解决(3/4) | 2026-08-05 |
+| ISSUE-011 F4 架构师漂移 prompt 约束 | 三处约束覆盖全部拆解路径:TASK_DECOMPOSITION_PROMPT 规则区+techStack 字段描述(兜底路径)、alignment.ts archPrompt 主路径注入(覆盖 DB 既有 Agent,主路径用架构师自己 systemPrompt 读不到 TASK_DECOMPOSITION_PROMPT)、seed.ts 架构师 systemPrompt(新 seed)。pre-commit三视角审查:攻击者/生命周期/声明vs实现一致发现"主路径约束不到"是核心缺口→archPrompt+seed 补上;同时移除 prompt 内(ISSUE-011 F4)内部代号噪音、软化配置文件后缀约束。新增2测试(TASK_DECOMPOSITION 约束存在+主路径 archPrompt 含约束)。926测试全绿。ISSUE-011 Finding 4 标已解决(4/4)→**ISSUE-011 全部解决** | 2026-08-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
@@ -218,7 +219,7 @@
 | 🟢已解决 | ISSUE-011 批失败吞错误 | executeTaskBatch 返回 failedTaskReasons 透传 rejection reason；execution.ts 批失败循环写真实原因到 task trace + SSE text + message.create 聊天历史；reasonToString 安全序列化防 null-prototype 崩溃 | 🟢已解决(2026-08-05) |
 | 🟢已解决 | ISSUE-011 会话遗留execution态 | 非 allDone 时发收尾消息(失败/阻塞/未完成统计+精确 redo 提示)+done 事件不谎报"所有任务已完成"。pending+in_progress 合并为未完成(中断后报"执行中"误导+无 redo 入口)。phase 有意保留 execution 以便继续执行,UI"执行中"脉冲为已知权衡 | 🟢已解决(2026-08-05) |
 | 🟢已解决 | ISSUE-011 完成消息文件归属错误 | 根因=gitBefore batch 快照差异 + declaredFiles=[] 任务强制跳过文件校验。完成消息改为 declared∩changed(attributed)，空声明任务只发"完成"不串报；声明任务零信息丢失 | 🟢已解决(2026-08-05) |
-| 🟡中 | ISSUE-011 架构师设计漂移 | 实测 architecture.md 写成 Python 技术栈，与任务契约 TS 交付物冲突(后端工程师正确以任务边界为准)。拆解 prompt 与设计约束一致性需强化 | 🟡观察 |
+| 🟢已解决 | ISSUE-011 架构师设计漂移 | TASK_DECOMPOSITION_PROMPT 强约束 techStack 与 declared_files 技术栈一致(声明TS则 .ts/.tsx,不得写Python)+techStack字段描述更新。仅 prompt 约束(自由文本到后缀映射硬校验易误伤混合栈);执行侧已由 contract v1 兜住 | 🟢已解决(2026-08-05) |
 | 🟡中 | ISSUE-008 执行层强制verify | verify action仅prompt引导无效(LLM倾向直接done)，需execution.ts在代码任务完成后强制创建verify任务，建议实现见 issues/ISSUE-006-009 | 🔴未开始 |
 | 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |

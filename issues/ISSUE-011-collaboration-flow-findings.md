@@ -1,8 +1,8 @@
 # 协作流程 E2E 4 项发现（批失败吞错 / 会话遗留 / 消息归属 / 设计漂移）
 
-> 创建时间: 2026-08-05 | 状态: 🟡排查中（3/4 已解决，1/4 有观察结论）
+> 创建时间: 2026-08-05 | 状态: 🟢 已解决（4/4）
 > 发现方式: qwen3.8-max-preview 对齐流程 E2E（align_confirm→align_decompose→execute，6 任务分解执行）
-> 更新: 2026-08-05 Finding 1/2/3 已修复（commit 见 PROGRESS.md）
+> 更新: 2026-08-05 Finding 1/2/3/4 全部修复（commit 见 PROGRESS.md）
 
 ## 背景
 
@@ -62,13 +62,26 @@
 - batch 级 diff 本质限制：声明不碰 + 兄弟任务未声明写同一文件时，声明方会"冒领"修改
 - 根除需 per-task 文件 diff（shadow-git 当前仅支持 batch 级），已列入后续范围
 
-## Finding 4：架构师设计漂移（🟡 观察）
+## Finding 4：架构师设计漂移（🟡 观察）→ 🟢 已修复
 
 **现象**：architecture.md（436 行）写成 Python 技术栈（cli.py / Python 3.10 / pyproject.toml），与任务契约声明的 TS 交付物（src/types.ts / src/store.ts）冲突，也和架构师此前自己说的"Node.js + TypeScript"矛盾。
 
 **表现**：后端工程师正确识别冲突并以任务边界（authoritative_input）为准产出 TS 文件——contract v1 的权威输入机制兜住了这次漂移。但设计文档与实现从此不一致，后续 Agent 读设计文档会困惑。
 
 **建议**：架构师 prompt 强约束"设计必须与任务拆解的 declared_files 技术栈一致"，或拆解阶段就锁定技术栈字段。
+
+**✅ 已修复（2026-08-05）**：
+- 三处约束落点覆盖全部拆解路径：
+  1. `TASK_DECOMPOSITION_PROMPT`（prompts.ts）规则区新增 techStack↔declared_files 技术栈一致性约束（兜底/无架构师路径，声明 TS 则 .ts/.tsx 不得写 Python）
+  2. `alignment.ts` handleArchitectPlan 主路径 archPrompt 注入同约束——主路径用架构师自己 systemPrompt 读不到 TASK_DECOMPOSITION_PROMPT，必须显式注入（覆盖 DB 既有 Agent）
+  3. `prisma/seed.ts` 架构师默认 systemPrompt 加技术栈一致性要求（覆盖新 seed 的拆解 + 执行阶段写设计文档）
+- techStack JSON 字段描述更新为"必须明确技术栈，且与各任务 declared_files 的文件后缀一致"
+- 新增测试：prompts.test.ts 断言约束文本存在（真回归守卫）+ architect-output-schema.test.ts 断言主路径 archPrompt 含约束
+- 注：仅 prompt 约束（ISSUE-011 建议的"强约束"路径），未做拆解后确定性校验（techStack 自由文本到文件后缀映射属启发式，硬校验易误伤混合技术栈项目）；执行侧漂移已由 contract v1 authoritative_input 兜住
+
+**⚠️ 已知残留**：
+- `ROLE_GENERATION_PROMPT` 动态生成的架构师 systemPrompt 未加同约束（LLM 生成 prompt，指令文本约束模糊，收益低）
+- techStack 拆解后即被丢弃（decomposeTasks 只解析 tasks），无"锁定字段"的下游持久化——若需确定性防护，需在 task.create 时存储 techStack 并传播进设计文档任务上下文
 
 ## 相关文件
 
