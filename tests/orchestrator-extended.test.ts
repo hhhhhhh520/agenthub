@@ -259,8 +259,26 @@ describe('executeTaskBatch', () => {
       { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
     ]
     const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
-    const { failedTaskIds } = await executeTaskBatch(tasks, agents, vi.fn())
+    const { failedTaskIds, failedTaskReasons } = await executeTaskBatch(tasks, agents, vi.fn())
     expect(failedTaskIds).toContain('t1')
+    // ISSUE-011 F1: rejection reason 透传,不丢弃
+    expect(failedTaskReasons['t1']).toBe('crash')
+  })
+
+  it('ISSUE-011 F1: no crash on null-prototype rejection reason', async () => {
+    // null-prototype 对象没有 toString/valueOf,旧代码 String(reason) 会抛
+    // TypeError → 冒泡到 execution.ts catch → 整批误标失败且真实原因丢失
+    mockAdapterSend.mockImplementation(async function* () {
+      throw Object.create(null)
+    })
+    const tasks = [
+      { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
+    ]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    const { failedTaskIds, failedTaskReasons } = await executeTaskBatch(tasks, agents, vi.fn())
+    expect(failedTaskIds).toContain('t1')
+    // 不抛异常:JSON.stringify(null-prototype 空对象) 安全序列化为 '{}'
+    expect(failedTaskReasons['t1']).toBe('{}')
   })
 
   it('respects batch ordering (batch 1 waits for batch 0)', async () => {

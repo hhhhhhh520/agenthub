@@ -1,13 +1,14 @@
 # 协作流程 E2E 4 项发现（批失败吞错 / 会话遗留 / 消息归属 / 设计漂移）
 
-> 创建时间: 2026-08-05 | 状态: 🟡排查中（1/4 有观察结论）
+> 创建时间: 2026-08-05 | 状态: 🟡排查中（1/4 已解决，1/4 有观察结论）
 > 发现方式: qwen3.8-max-preview 对齐流程 E2E（align_confirm→align_decompose→execute，6 任务分解执行）
+> 更新: 2026-08-05 Finding 1 已修复（commit 见 PROGRESS.md）
 
 ## 背景
 
 2026-08-05 模型切换到 qwen3.8-max-preview 后跑完整协作流程：CLI 待办工具 6 任务分解（PRD/设计/存储层/CLI/测试/README）。任务 1/2 完成，**任务 3（存储层）失败**，任务 4/5 正确 blocked，任务 6 遗留 pending。测试暴露 4 个问题。
 
-## Finding 1：批失败吞掉底层错误（🔴 可观测性缺口）
+## Finding 1：批失败吞掉底层错误（🔴 可观测性缺口）→ 🟢 已修复
 
 **现象**：任务 3 失败后 task.trace 只有 `start → error: Task failed in batch execution`，SSE 无 error 事件，真实原因不可见。
 
@@ -16,6 +17,12 @@
 **后果**：失败任务无法自助定位，用户只能看服务日志猜。
 
 **建议修法**：`executeTaskBatch` 的 settled rejection 里把 `s.message` 写入 task trace（或发 error 事件），`execution.ts:249` 使用真实 err.message 而非通用串。
+
+**✅ 已修复（2026-08-05）**：
+- `executeTaskBatch` 返回新增 `failedTaskReasons: Record<string,string>`，rejection reason 经 `reasonToString()` 安全序列化（防 null-prototype 对象 `String()` 抛 TypeError 击穿整批）
+- `execution.ts` 批失败循环用真实原因写 task trace（`??` 兜底保留空串原因）+ SSE text 事件 + `message.create` 聊天历史持久化（不被结尾 done 事件刷掉）
+- 新增测试：execution-edge-cases（trace+SSE+message.create 透传）、orchestrator-extended（Error reason + null-prototype 不崩）
+- 遗留：catch 整体 throw 路径（executeTaskBatch 整体 reject）仍只写 trace 不发 SSE text，属既有行为、罕见路径，未一并处理
 
 ## Finding 2：会话遗留 execution 态（🟡）
 

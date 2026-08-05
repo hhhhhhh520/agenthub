@@ -319,6 +319,21 @@ export interface PriorTaskMeta {
   outputSchema?: string
 }
 
+/**
+ * 把 Promise rejection reason 序列化为安全字符串,绝不抛异常。
+ * ISSUE-011 F1: 直接 String(reason) 对 null-prototype 对象/toString 抛异常的对象会抛 TypeError,
+ * 一次怪异 rejection 会击穿整批处理。对象走 JSON.stringify 避免退化成 "[object Object]"。
+ */
+function reasonToString(reason: unknown): string {
+  if (reason instanceof Error) return reason.message || String(reason)
+  try {
+    if (reason !== null && typeof reason === 'object') return JSON.stringify(reason)
+    return String(reason)
+  } catch {
+    return '[unserializable reason]'
+  }
+}
+
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
   agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
@@ -329,10 +344,13 @@ export async function executeTaskBatch(
   priorResults?: Map<string, string>,
   // contract v1 §1.1: 前批 task 的描述 + outputSchema，用于结构化注入 <dependency> 标签
   priorTaskMeta?: Map<string, PriorTaskMeta>
-): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[] }> {
+): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[], failedTaskReasons: Record<string, string> }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
   const failedTaskIds: string[] = []
+  // ISSUE-011 F1: 失败原因透传。allSettled rejection reason 此前被丢弃,
+  // 下游 execution.ts 只能写通用 "Task failed in batch execution"。
+  const failedTaskReasons: Record<string, string> = {}
 
   // contract v1 §1.1: 合并 DB 中已完成 task 的 result（跨批权威），
   // 使 task.dependencies 查找时能命中前批 task 的交付物
@@ -498,11 +516,15 @@ export async function executeTaskBatch(
         results.set(s.value.taskId, { result: s.value.result, sessionId: s.value.sessionId })
       } else {
         failedTaskIds.push(taskId)
+        // ISSUE-011 F1: 把 rejection reason 记下来,不再静默丢弃
+        failedTaskReasons[taskId] = s.status === 'rejected'
+          ? reasonToString(s.reason)
+          : '任务未产生结果'
       }
     }
   }
 
-  return { results, failedTaskIds }
+  return { results, failedTaskIds, failedTaskReasons }
 }
 
 export async function executeSingleAgent(

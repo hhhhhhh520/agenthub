@@ -202,6 +202,7 @@
 | Playwright E2E 修复(3/4项) | 2026-07-19 发现的4项协作问题：**ISSUE-007** NO_DATA_TIMEOUT_MS 60s→3min(LLM thinking无stdout误杀，E2E验证贪吃蛇235行通过)；**ISSUE-009** self示例+TASK_DECOMPOSITION角色匹配规则+findBestAgent fallback(简单任务Orchestrator自执行，E2E验证)；**ISSUE-006** permissionCache权限缓存(allow/deny都缓存+100条上限淘汰+toolName:JSON(input)粒度)。**ISSUE-008** verify action进prompt但LLM不选，需执行层强制(待办)。详见 issues/ISSUE-006-009-playwright-collaboration-bugs.md | 2026-07-27 |
 | 针对性单测补齐+pre-commit审查整改 | ISSUE-006/007/009 补18测试+审查整改5测试,共917全绿。**单测**:permission-cache(8个:写缓存allow/deny+100条淘汰+缓存命中自动批准/拒绝+不同input重新审批+updatedInput修改不缓存)、no-data-timeout(3个:常量回归守卫+内外层超时层级)、find-best-agent(10个:五类角色匹配+优先级+缺角色不误派+null description守卫)、chat-router verify分发(2个)。3组红绿验证通过。**pre-commit-audit三视角审查(攻击者/生命周期/声明vs实现)整改**:①chat-router补verify case(原LLM返回verify会静默卡死,❌)②respondPermission updatedInput修改后批准不写缓存(防审批反转)③findBestAgent加String()守卫(null description致任务丢失)。**不修记录**:deny缓存静默拒绝无UI痕迹(fail-closed体验问题)/DISCUSSION与NO_DATA同3min层级语义/AI审查已知误报模式见memory。踩坑:effectiveKey含configHash时裸key调respondPermission静默失败,e2e须走respondPermissionByRequestId生产路径 | 2026-08-05 |
 | 模型切换+E2E冒烟+协作流程测试 | **模型切换**:全部8 Agent从MiMo(mimo-v2.5-pro[1m])切到 qwen3.8-max-preview[1M]+阿里云MaaS端点+当前会话token(DB操作,密钥尾缀静默比对一致)。**E2E冒烟**:SSE全链路通,curl直接-d中文会被Windows GBK代码页转码成乱码,须用 --data-binary @UTF-8文件(测试工具编码问题非项目bug,同2026-06-08结论)。**ISSUE-010**:创建Agent意图启发式误判("创建一个hello.txt,内容写Hello AgentHub"被/agent/i命中AgentHub误路由到建Agent,文件不创建)→提取isCreateAgentIntent()加\b词边界,3测试,920全绿。**协作流程全链路**:简单任务self✅(修复后)、复杂任务delegate后端✅(自主排查python3占位符+边界测试+结构化汇报)、对齐流程align_confirm→align_decompose→execute✅(6任务拆解:正确角色+DAG+declaredFiles/outputSchema contract v1全字段,任务1/2完成,任务3失败,4/5 blocked级联正确)。**新发现4项见 issues/ISSUE-011**,PROGRESS待办同步 | 2026-08-05 |
+| ISSUE-011 F1 批失败吞错误修复 | **pre-commit三视角审查(攻击者/生命周期/声明vs实现)整改后合入**:executeTaskBatch返回新增`failedTaskReasons`透传Promise.allSettled rejection reason(经reasonToString安全序列化,防null-prototype对象String()抛TypeError击穿整批);execution.ts批失败循环用真实原因写task trace(`??`兜底保留空串)+SSE text+message.create聊天历史持久化(不被结尾done事件刷掉)+内存task.trace同步。3 subagent审查4项整改:F4 reason序列化包try/catch+F8失败事件落库+内存trace同步+`||`→`??`。新增2测试(edge-case: trace/SSE/message.create三层透传断言;orchestrator-extended: Error reason + null-prototype不崩)。922测试全绿,src/零tsc错误。ISSUE-011 Finding 1 标已解决 | 2026-08-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
@@ -212,7 +213,7 @@
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
-| 🔴高 | ISSUE-011 批失败吞错误 | execution.ts:249 批失败只记通用"Task failed in batch execution"，底层 rejection 原因丢失(task trace 仅 start→error)；实测 CLI exit=1(stderr空)真实原因只在服务日志。需 catch 时保留 err.message 写 trace | 🔴未开始 |
+| 🟢已解决 | ISSUE-011 批失败吞错误 | executeTaskBatch 返回 failedTaskReasons 透传 rejection reason；execution.ts 批失败循环写真实原因到 task trace + SSE text + message.create 聊天历史；reasonToString 安全序列化防 null-prototype 崩溃 | 🟢已解决(2026-08-05) |
 | 🟡中 | ISSUE-011 会话遗留execution态 | 批次失败后未完成任务遗留 pending(实测 task6 README)，会话 phase 停 execution 不转 done。需失败后自动收尾或提示 redo | 🔴未开始 |
 | 🟡中 | ISSUE-011 完成消息文件归属错误 | execution.ts:372 用 changedFiles 报"任务X完成,修改了..."，实测出现PRD任务报 src/store.ts 的错乱。疑批级共享变量 | 🔴未开始 |
 | 🟡中 | ISSUE-011 架构师设计漂移 | 实测 architecture.md 写成 Python 技术栈，与任务契约 TS 交付物冲突(后端工程师正确以任务边界为准)。拆解 prompt 与设计约束一致性需强化 | 🟡观察 |
