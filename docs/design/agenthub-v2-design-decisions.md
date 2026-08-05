@@ -353,7 +353,7 @@ OpenCode 集成难度与 Claude Code 基本一致，cc-connect 和 multica 都�
 | 群聊模式 | ✅ 已实现 | Orchestrator + Agent 同一群聊 |
 | 多会话并行 | ✅ 已实现 | 多个会话 |
 | @ 指令 | ✅ 已实现 | @Agent名、@所有人 |
-| Orchestrator 任务拆解 | ✅ 已实现 | 8 action 智能编排 |
+| Orchestrator 任务拆解 | ✅ 已实现 | 9 action 智能编排（含 verify 强制验证，见 ISSUE-008） |
 | 统一适配器层 | ✅ 已实现 | LLM + Claude Code CLI + OpenCode CLI |
 | 至少 2 个平台 | ✅ 已实现 | Claude Code CLI + OpenCode CLI + LLM API |
 | 产物内联（Diff/Preview） | ✅ 已实现 | 代码块 + Web预览 + Diff视图 + 文件卡片 |
