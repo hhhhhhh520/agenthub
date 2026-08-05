@@ -7,6 +7,23 @@ import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 
+/**
+ * 判断消息是否是"创建 Agent"意图（chat route 的路由启发式）。
+ *
+ * 两个条件必须同时满足：
+ * 1. 创建/新建类动词
+ * 2. agent 类关键词——"agent"必须是独立词（\b 词边界），否则 "AgentHub"、
+ *    "helloAgent" 等文件名/产品名会误命中；中文"智能体/助手"直接字面匹配
+ *    （JS \b 是 ASCII 词边界，对中文无效，不能包在 \b 里）
+ */
+export function isCreateAgentIntent(message: string): boolean {
+  if (!message) return false
+  // 保留 create.*agent 兼容纯英文"create an agent"（旧行为）；\b 词边界兜住 "create AgentHub" 误判
+  const hasCreateVerb = /创建|新建|添加|帮我建|create.*agent|建一?个/i.test(message)
+  const hasAgentKeyword = /\bagent\b/i.test(message) || /智能体|助手/.test(message)
+  return hasCreateVerb && hasAgentKeyword
+}
+
 export async function handleOrchestratorDecision(
   message: string,
   sessionId: string,

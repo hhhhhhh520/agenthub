@@ -90,6 +90,7 @@ prisma/
 - 使用 `--bare` 跳过 hooks/plugins
 - **禁止使用 `--dangerously-skip-permissions`** — 会导致 CLI 卡住
 - **中文编码**：stdin.write 必须使用 `Buffer.from(text, 'utf-8')`，否则 Windows 下中文变乱码
+- **heredoc 含大量双引号内容会解析失败**：shell:true 包装层下 `cat > file <<EOF` 写含大量 `"` 的内容（如技术文档/代码）触发解析错误，Agent 会误判为环境问题反复调试。产物类内容优先引导 Agent 用 Edit 工具写入，不要用 heredoc
 - **进程清理**：使用 `taskkill /pid <PID> /T /F` 杀掉整个进程树，避免残留
 
 ### 安全红线
