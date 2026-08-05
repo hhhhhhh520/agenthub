@@ -63,7 +63,7 @@ const NO_DATA_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes — LLM thinking 阶段无
 
 ---
 
-## ISSUE-008：任务完成后无自动测试触发 [需要执行层修改]
+## ISSUE-008：任务完成后无自动测试触发 [已解决 ✅ 2026-08-06]
 
 **现象**：复杂任务（贪吃蛇游戏）完成后，系统没有自动触发测试工程师验证产出物。用户看到"完成"但没有验证。
 
@@ -83,6 +83,26 @@ const NO_DATA_TIMEOUT_MS = 3 * 60 * 1000 // 3 minutes — LLM thinking 阶段无
 **根本原因**：仅靠 prompt 引导不足以改变 LLM 决策。需要在执行引擎层面强制触发 verify。
 
 **2026-08-05 补充修复（路由缺口）**：pre-commit-audit 发现即使 LLM 返回 verify，chat-router.ts 的 switch 也无 case 处理 → 静默 no-op，无 done 事件，会话卡死。已在 switch 补 `case 'verify'`：有 target 委派验证，无 target Orchestrator 自验证（tests/chat-router.test.ts 2 项针对性测试）。执行层强制触发仍是待办。
+
+**✅ 已实现（2026-08-06，执行层强制 verify + pre-commit 三视角审查整改）**：
+- **落点**：`handleArchitectPlan`（alignment.ts）任务创建循环后——`prisma.task.create` 全仓唯一入口，所有基于任务的工作流都经此建任务。拆解出代码任务时自动追加 verify 任务，经既有依赖就绪门控在代码完成后自动执行（verify 创建本身执行引擎零改动）。
+- **识别代码任务**：`isCodeTask()` — declaredFiles 含代码后缀（审查整改后含 ts/tsx/js/jsx/py/java/go/rs/c/cpp/h/cs/php/sh/html/css/scss/less/vue/svelte/sql/kt/swift/lua/pl/dart/scala 等 30+ 种），或任务描述以代码后缀结尾（如"产出 snake_game.py"）。纯文档/讨论任务不触发。
+- **verify 任务形态**：id `verify-<uuid>`（前缀用于识别，避免多轮对齐重复创建）；dependencies = 全部代码任务 id（任一失败 → verify blocked，不验证半成品）；declaredFiles = `[]`（不产生文件，跳过越界校验，F3 无串报）；assignedAgentId = 测试工程师（session 内）?? null。代码任务结果经 `<dependency>` 块注入 verify 上下文。
+- **覆盖入口**：正常对齐流（align_decompose→handleArchitectPlan）、跳过对齐流（transitionToExecution 空任务兜底→handleArchitectPlan）、redo 流（不新建 verify；链式依赖下 blocked verify 由 execution.ts 新增的"blocked 依赖补齐自动复活"机制在 redo 后重新执行）。
+- **测试**：tests/alignment.test.ts 新增 9 项（代码任务→创建 verify / 无代码任务→不创建 / 已存在→不重复 / 无测试工程师→null / isCodeTask 4 项含新后缀 / buildVerifyDescription），tests/execution-edge-cases.test.ts 新增 2 项（blocked 复活 + 不过度复活），tests/architect-output-schema.test.ts 适配（过滤 verify- 前缀 create 断言）。**926→937 测试全绿，src/ tsc 零错误，真回归守卫实测旧代码下红 7 项**。
+
+**🔍 pre-commit 三视角审查整改（2026-08-06）**：
+3 个并行 subagent（攻击者/生命周期/声明vs实现）审查，共确认：
+- **❌ 修复：redo 链式依赖级联失效**（生命周期+声明vs实现独立发现）。代码任务 A→C 有依赖，verify deps=[A,B,C]：A 失败 → C/verify blocked；redo A 时 redo route 用**一次性快照**解锁下游，快照里 C 仍 blocked → verify otherDepsOk 不满足被漏解锁，永久滞留 blocked 而 phase 照常进 done（**复现"完成但未验证"**）。**修复**：execution.ts while 循环顶部加"blocked 任务依赖全部 completed → 复活 pending"，通用修复所有同类滞留（不复活依赖仍 failed 的任务）。2 项针对性测试，真回归守卫旧代码下红。
+- **❌ 修复：isCodeTask 覆盖不足**。declaredFiles 缺 .html/.vue/.sql 等后缀 → 静态页/建表任务静默不验证；description 分支因 `$` 锚仅命中"以代码后缀结尾"的描述（真实描述极少如此，是设计取舍——避免"说明 .ts 文件格式"类误判）。**修复**：后缀清单扩到 30+ 种。
+- **✅ 通过**：verify 主生命周期（pending→in_progress→completed + failed-dep→blocked 不可抢跑）、提前 return 位置安全（无漏建/误建）、依赖注入无注入面（id 均为 UUID）、verify- 前缀不可预植、零硬编码密钥。
+
+**⚠️ 已知限制 + 残留（v1 接受）**：
+- **多轮对齐**（同一 session 再次 align_decompose 追加任务）：`existingVerify` guard 只做去重、不把新代码任务并入既有 verify.deps → 第二轮新增代码任务不被验证。健壮修复需区分"新代码任务 vs 重拆的重复任务"（UUID 每次重建，无稳定对应关系），留待后续。
+- **monitoring 语义错配**：monitoring 按"生产任务"判定 verify 的只读报告——若 verify 如实报告"产出有问题"，monitoring 可能误判为"verify 没做好"触发纠偏重跑 verify（空转，不修底层问题）。既有的 correctionCount 上限(2次)保证不会无限重试，但上限依赖"成功路径不清内存 correctionCount"的巧合，是埋着的回归地雷。
+- **findBestAgent 对 null-agent verify 可能误派**：无测试工程师时 assignedAgentId=null → findBestAgent 先匹配前端/后端关键词（verify description 内嵌代码任务描述，含"页面/接口"等词会先命中），再轮询兜底。verify 仍会执行（description 显式"只检查不修改"），但可能派给职责是写代码的 agent，验证质量不可控。
+- **buildMonitoringPrompt 插值不过 escapeContractTags**（既有注入 sink，非本次引入，本次 verify 聚合 description 放大了注入面）；**escapeContractTags 挡不住带属性的闭合标签**（如 `</authoritative_input x>`，正则只允许标签名后空白+`>`）。均属既有安全防御弱点，公开部署前需修。
+- verify 任务未进 `formatArchitectPlan` 方案展示，用户仅靠一条 sendEvent 文本得知其存在（透明度取舍）。
 
 **建议的执行层修改**：
 ```typescript
@@ -106,7 +126,8 @@ if (codeTasks.length > 0 && !session.verified) {
 ```
 
 **相关代码**：
-- `src/lib/services/execution.ts:479-493` — 执行循环结束逻辑
+- `src/lib/services/alignment.ts` — handleArchitectPlan 自动追加 verify 任务 + isCodeTask/buildVerifyDescription（实现点）
+- `src/lib/services/execution.ts:479-493` — 执行循环结束逻辑（verify 作为普通任务流经，无需改动）
 - `src/lib/orchestrator/prompts.ts:42-94` — Orchestrator 决策 prompt（已增加 verify）
 
 ---

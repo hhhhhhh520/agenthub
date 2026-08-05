@@ -7,6 +7,23 @@ import { handleExecution } from './execution'
 import type { SendEvent } from './review'
 import type { AgentConfig } from '@/lib/adapter/types'
 
+/** ISSUE-008: 代码文件后缀,用于识别代码任务(自动触发验证) */
+const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|rb|c|cc|cpp|h|hpp|cs|php|sh|html|css|scss|less|vue|svelte|sql|kt|swift|lua|pl|dart|scala)$/i
+
+/** 判断任务是否为代码任务:声明文件含代码后缀,或任务描述提到代码文件 */
+export function isCodeTask(task: { description: string; declaredFiles: string[] }): boolean {
+  if (task.declaredFiles.some(f => CODE_EXT_RE.test(f))) return true
+  return CODE_EXT_RE.test(task.description)
+}
+
+/** 构造验证任务描述:列出待验证代码任务及产出文件(依赖结果经 <dependency> 块注入) */
+export function buildVerifyDescription(codeTasks: Array<{ description: string; declaredFiles: string[] }>): string {
+  const lines = codeTasks.map(t =>
+    `- ${t.description}${t.declaredFiles.length > 0 ? `（产出文件：${t.declaredFiles.join('、')}）` : ''}`
+  )
+  return `[系统验证任务] 验证以下代码任务的产出物是否真实可用。请逐项实际检查产出文件（是否存在、语法是否正确、能否运行），不要修改任何文件，只检查并报告：\n${lines.join('\n')}\n逐项给出结论；全部通过回复"验证通过"，有问题的项列明具体问题。`
+}
+
 export async function handlePMConfirm(
   message: string,
   sessionId: string,
@@ -179,6 +196,33 @@ export async function handleArchitectPlan(
         outputSchema: task.outputSchema ?? null,
       },
     })
+  }
+
+  // ISSUE-008: 执行层强制 verify —— LLM 倾向直接 done 而非 verify,仅靠 prompt 无法改变决策。
+  // 拆解出代码任务时自动追加验证任务:依赖全部代码任务,经既有依赖就绪门控在代码完成后自动执行
+  // (handleExecution readyTasks 要求 deps 全 completed,verify 自然排在代码任务之后)。
+  // verify- 前缀 id 用于识别,多轮对齐时避免重复创建;redo 路径不新建——若 verify 因依赖
+  // 失败被 blocked,execution.ts 的"blocked 依赖补齐自动复活"机制会在 redo 后重新执行它。
+  const codeTasks = scheduledTasks.filter(t => isCodeTask(t) && !t.id.startsWith('verify-'))
+  if (codeTasks.length > 0) {
+    const existingVerify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } } })
+    if (!existingVerify) {
+      const verifyAgent = agents.find(a => a.name.includes('测试'))
+      await prisma.task.create({
+        data: {
+          id: `verify-${crypto.randomUUID()}`,
+          description: buildVerifyDescription(codeTasks),
+          status: 'pending',
+          // 优先测试工程师;无则 null,executeTaskBatch 的 findBestAgent 会按"验证/测试"关键词匹配,最终兜底到其他 agent
+          assignedAgentId: verifyAgent?.id ?? null,
+          sessionId,
+          dependencies: JSON.stringify(codeTasks.map(t => t.id)),
+          // 验证任务不产生文件,跳过文件校验(不误报越界);代码任务结果经 <dependency> 块注入
+          declaredFiles: '[]',
+        },
+      })
+      sendEvent({ agentId: 'orchestrator', type: 'text', content: `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物` })
+    }
   }
 
   const planSummary = formatArchitectPlan(scheduledTasks, agents)

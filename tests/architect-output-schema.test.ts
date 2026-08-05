@@ -29,6 +29,7 @@ describe('contract v1 §1.2 a: 架构师 prompt 包含 output_schema 指令', ()
 const mocks = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskCreate: vi.fn(),
+  mockTaskFindFirst: vi.fn(),
   mockSessionUpdate: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
@@ -43,7 +44,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate },
+    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst },
     session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findUnique: mocks.mockSessionMemberFindUnique },
@@ -77,7 +78,14 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
     mocks.mockSessionUpdate.mockResolvedValue({})
     mocks.mockMessageCreate.mockResolvedValue({})
     mocks.mockTaskCreate.mockResolvedValue({})
+    mocks.mockTaskFindFirst.mockResolvedValue(null)
   })
+
+  // ISSUE-008: 代码任务会触发系统自动追加 verify 任务(verify- 前缀),与架构师拆解的任务无关。
+  // 本组测试只关心架构师任务的 outputSchema,过滤掉 verify 任务的 create 调用。
+  function archCreateCalls() {
+    return mocks.mockTaskCreate.mock.calls.filter(([arg]) => !String(arg.data.id).startsWith('verify-'))
+  }
 
   it('架构师输出的 output_schema 被持久化到 Task.outputSchema（JSON 字符串）', async () => {
     mocks.mockExecuteSingleAgent.mockResolvedValue({ result: 'mock-arch-output' })
@@ -96,8 +104,8 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
 
     await handleArchitectPlan('msg', 's1', [archAgent], mocks.mockSendEvent as any)
 
-    expect(mocks.mockTaskCreate).toHaveBeenCalledTimes(1)
-    const createCall = mocks.mockTaskCreate.mock.calls[0][0]
+    expect(archCreateCalls()).toHaveLength(1)
+    const createCall = archCreateCalls()[0][0]
     expect(createCall.data.outputSchema).toBeDefined()
     expect(createCall.data.outputSchema).not.toBeNull()
     // 应该是 JSON 字符串
@@ -125,8 +133,8 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
 
     await handleArchitectPlan('msg', 's1', [archAgent], mocks.mockSendEvent as any)
 
-    expect(mocks.mockTaskCreate).toHaveBeenCalledTimes(1)
-    const createCall = mocks.mockTaskCreate.mock.calls[0][0]
+    expect(archCreateCalls()).toHaveLength(1)
+    const createCall = archCreateCalls()[0][0]
     expect(createCall.data.outputSchema).toBeNull()
   })
 
@@ -141,8 +149,8 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
 
     await handleArchitectPlan('msg', 's1', [archAgent], mocks.mockSendEvent as any)
 
-    expect(mocks.mockTaskCreate).toHaveBeenCalledTimes(2)
-    const schemas = mocks.mockTaskCreate.mock.calls.map((c: any) => JSON.parse(c[0].data.outputSchema))
+    expect(archCreateCalls()).toHaveLength(2)
+    const schemas = archCreateCalls().map((c: any) => JSON.parse(c[0].data.outputSchema))
     expect(schemas).toContainEqual(['x:string - x 含义'])
     expect(schemas).toContainEqual(['y:number - y 含义'])
   })
