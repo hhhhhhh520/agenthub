@@ -1,8 +1,8 @@
 # 协作流程 E2E 4 项发现（批失败吞错 / 会话遗留 / 消息归属 / 设计漂移）
 
-> 创建时间: 2026-08-05 | 状态: 🟡排查中（2/4 已解决，1/4 有观察结论）
+> 创建时间: 2026-08-05 | 状态: 🟡排查中（3/4 已解决，1/4 有观察结论）
 > 发现方式: qwen3.8-max-preview 对齐流程 E2E（align_confirm→align_decompose→execute，6 任务分解执行）
-> 更新: 2026-08-05 Finding 1/3 已修复（commit 见 PROGRESS.md）
+> 更新: 2026-08-05 Finding 1/2/3 已修复（commit 见 PROGRESS.md）
 
 ## 背景
 
@@ -24,13 +24,24 @@
 - 新增测试：execution-edge-cases（trace+SSE+message.create 透传）、orchestrator-extended（Error reason + null-prototype 不崩）
 - 遗留：catch 整体 throw 路径（executeTaskBatch 整体 reject）仍只写 trace 不发 SSE text，属既有行为、罕见路径，未一并处理
 
-## Finding 2：会话遗留 execution 态（🟡）
+## Finding 2：会话遗留 execution 态（🟡）→ 🟢 已修复
 
 **现象**：任务 3 失败、4/5 blocked、6 pending 后，会话 phase 停在 `execution`，不转 done，也无 redo 提示。
 
 **根因**：执行循环结束条件不处理"部分任务失败+下游 blocked"的组合，批次循环结束后直接返回。
 
 **建议**：批次失败后若存在 blocked/pending 且无继续执行的 ready 任务，应发提示消息（"N 个任务失败，可 redo"）而非静默停在 execution。
+
+**✅ 已修复（2026-08-05）**：
+- 非 allDone 时发收尾消息 `执行未完全完成：N 个任务失败，M 个任务被阻塞，K 个任务未完成。失败/阻塞任务可点击 redo 重试，未完成任务将在下次执行时继续`（message.create 落库 + SSE text）
+- done 事件不再谎报"所有任务已完成"——无成功结果时发 `执行结束：N 个失败...`
+- pending + in_progress 合并为"未完成"计数：中断后报"执行中"与事实不符，且 in_progress/pending 无 redo 入口（redo 只接受 failed/blocked），故 redo 提示只针对失败/阻塞
+- 新增测试：部分失败场景断言收尾消息 + done 不谎报 + 不报"执行中"（真回归守卫，旧代码下红）
+
+**⚠️ 已知设计权衡（记录）**：
+- phase 在部分失败后仍停 `execution`（有意保留：下次用户消息可触发 execute 继续跑遗留任务）。副作用：前端 chat-area 用 `phase==='execution'` 渲染脉动"执行中"，部分失败后 UI 会持续显示"执行中"直到用户再发消息/刷新。未引入新 phase 值（如 failed/paused），如需收敛 UI 需扩展 session phase 枚举
+- 收尾 text 事件被紧跟的 done 事件清掉 streaming buffer：部分成功场景实时 UI 看不到聚合统计（但 message.create 已落库，刷新可见；逐失败消息由 F1 修复实时可见）
+- 收尾消息非幂等：redo/重触发 execute 会追加多条结论消息（每次都是真实执行结果，未做去重）
 
 ## Finding 3：完成消息文件归属错误（🟡 日志 bug）→ 🟢 已修复
 
