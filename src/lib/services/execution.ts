@@ -497,13 +497,39 @@ export async function handleExecution(
     await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
   }
 
+  // ISSUE-011 F2: 部分失败/遗留时诚实收尾,不静默停在 execution。
+  // 此前批次失败后 phase 停 execution、pending 永久遗留无任何提示(实测 task6 README)。
+  const failedCount = tasks.filter(t => t.status === 'failed').length
+  const blockedCount = tasks.filter(t => t.status === 'blocked').length
+  // pending + in_progress 合并为"未完成":中断后报"执行中"与事实不符(循环已终止),
+  // 且 in_progress/pending 无 redo 入口(redo 只接受 failed/blocked),不能提示"可 redo"
+  const unfinishedCount = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress').length
+  if (!allDone) {
+    const parts = []
+    if (failedCount > 0) parts.push(`${failedCount} 个任务失败`)
+    if (blockedCount > 0) parts.push(`${blockedCount} 个任务被阻塞`)
+    if (unfinishedCount > 0) parts.push(`${unfinishedCount} 个任务未完成`)
+    if (parts.length > 0) {
+      const concludeMsg = `执行未完全完成：${parts.join('，')}。失败/阻塞任务可点击 redo 重试，未完成任务将在下次执行时继续`
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: concludeMsg, sessionId } })
+      sendEvent({ agentId: 'orchestrator', type: 'text', content: concludeMsg })
+    }
+  }
+
   const summary = Array.from(allResults.entries())
     .map(([, result]) => `任务完成：${result.slice(0, 100)}...`)
     .join('\n')
   if (summary) {
     await prisma.message.create({ data: { role: 'orchestrator', rawContent: summary, sessionId } })
     sendEvent({ agentId: 'orchestrator', type: 'done', content: summary })
-  } else {
+  } else if (allDone) {
     sendEvent({ agentId: 'orchestrator', type: 'done', content: '所有任务已完成' })
+  } else {
+    // ISSUE-011 F2: 部分失败且无成功结果时,不谎报"所有任务已完成"
+    const parts = []
+    if (failedCount > 0) parts.push(`${failedCount} 个失败`)
+    if (blockedCount > 0) parts.push(`${blockedCount} 个被阻塞`)
+    if (unfinishedCount > 0) parts.push(`${unfinishedCount} 个未完成`)
+    sendEvent({ agentId: 'orchestrator', type: 'done', content: `执行结束：${parts.join('，') || '任务未全部完成'}` })
   }
 }

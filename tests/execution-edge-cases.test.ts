@@ -301,6 +301,37 @@ describe('Execution — blocked task cascading', () => {
       })
     )
   })
+
+  it('ISSUE-011 F2: partial failure sends redo hint and truthful done event', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // task-1 fails, task-2 blocked (dep task-1), task-3 stays pending (dep task-2)
+    const tasks = [
+      makeTask({ id: 'task-1', status: 'pending', dependencies: '[]', assignedAgentId: 'a1' }),
+      makeTask({ id: 'task-2', status: 'pending', dependencies: '["task-1"]', assignedAgentId: 'a2' }),
+      makeTask({ id: 'task-3', status: 'pending', dependencies: '["task-2"]', assignedAgentId: 'a1' }),
+    ]
+    mocks.mockTaskFindMany.mockResolvedValue(tasks)
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map(),
+      failedTaskIds: ['task-1'],
+      failedTaskReasons: { 'task-1': 'CLI crash' },
+    })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    const textContents = sendEvent.mock.calls.map(c => c[0].content).filter((c: string) => typeof c === 'string')
+    // 1. 收尾消息含失败统计 + redo 提示(此前静默停在 execution 无提示)
+    expect(textContents.some(c => c.includes('1 个任务失败') && c.includes('可点击 redo 重试'))).toBe(true)
+    // 2. pending 遗留合并为"未完成",不报误导性的"执行中"(中断后无东西在执行)
+    expect(textContents.some(c => c.includes('1 个任务未完成'))).toBe(true)
+    expect(textContents.some(c => c.includes('执行中'))).toBe(false)
+    // 3. done 事件不谎报"所有任务已完成"
+    expect(textContents.some(c => c === '所有任务已完成')).toBe(false)
+    const doneEvent = sendEvent.mock.calls.map(c => c[0]).find(e => e.type === 'done')
+    expect(doneEvent?.content).toContain('1 个失败')
+  })
 })
 
 describe('Execution — safety limits', () => {
