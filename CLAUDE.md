@@ -170,7 +170,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - `align_decompose` — 架构师拆任务 + 持久化 Task 记录，等用户确认方案
 - `align_qa` — Agent 对方案提问澄清，等用户回答
 - `execute` — 对齐完成，开始执行任务
-- `verify` — 验证产出物：有 target 委派验证，无 target Orchestrator 自验证（chat-router 已接线；执行层强制触发仍是待办，见 ISSUE-008）
+- `verify` — 验证产出物：有 target 委派验证，无 target Orchestrator 自验证（chat-router 已接线）。**执行层强制**：代码任务拆解时 handleArchitectPlan 自动追加 verify 任务（依赖全部代码任务，代码完成后自动执行，分配给测试工程师或兜底），见 ISSUE-008（已解决 2026-08-06）
 - `done` — 任务完成
 
 编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。

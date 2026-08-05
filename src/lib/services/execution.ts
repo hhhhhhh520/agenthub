@@ -147,6 +147,21 @@ export async function handleExecution(
     iteration++
     hasProgress = false
 
+    // ISSUE-008 审查整改: blocked 任务在其依赖全部 completed 后自动复活为 pending。
+    // 场景: 链式依赖 A→C, verify deps=[A,B,C]。A 失败 → C/verify 被置 blocked;
+    // redo A 时 redo route 用一次性快照解锁下游,快照里 C 仍 blocked → verify 的
+    // otherDepsOk 不满足被漏解锁。若此处不复活,verify 永久滞留 blocked 而 phase
+    // 照常进 done(复现"完成但未验证")。每轮重查依赖,补齐即复活,通用修复所有同类滞留。
+    for (const task of tasks) {
+      if (task.status !== 'blocked') continue
+      const reviveDeps: string[] = JSON.parse(task.dependencies || '[]')
+      if (reviveDeps.length > 0 && reviveDeps.every(depId => tasks.find(t2 => t2.id === depId)?.status === 'completed')) {
+        task.status = 'pending'
+        await prisma.task.update({ where: { id: task.id }, data: { status: 'pending' } })
+        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'pending' }) })
+      }
+    }
+
     const readyTasks = tasks.filter(t => {
       if (t.status !== 'pending') return false
       const deps: string[] = JSON.parse(t.dependencies || '[]')

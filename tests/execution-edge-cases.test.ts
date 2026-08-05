@@ -984,3 +984,59 @@ describe('Execution — git diff boundary detection', () => {
     }
   })
 })
+
+describe('ISSUE-008 审查整改 — blocked 任务依赖补齐自动复活', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockMessageCreate.mockResolvedValue({})
+  })
+
+  it('链式依赖 redo 后: blocked 下游任务依赖全 completed 时复活并执行(修 verify 滞留)', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // 模拟 redo task-1 之后的 DB 状态: task-1 被 redo 重置为 pending,
+    // task-2(依赖 task-1)仍是上一轮失败遗留的 blocked。
+    // 修复前: task-1 完成后 task-2 永久滞留 blocked(readyTasks 只认 pending,blocked 循环单向)。
+    // 修复后: 复活机制每轮重查,task-1 completed 即把 task-2 blocked→pending 并执行。
+    const task1 = makeTask({ id: 'task-1', description: 'code a', declaredFiles: '[]', dependencies: '[]', assignedAgentId: 'a1', status: 'pending' })
+    const task2 = makeTask({ id: 'task-2', description: 'code b', declaredFiles: '[]', dependencies: '["task-1"]', assignedAgentId: 'a2', status: 'blocked' })
+    mocks.mockTaskFindMany.mockResolvedValue([task1, task2])
+
+    mocks.mockExecuteTaskBatch.mockImplementation(async (batchTasks: Array<{ id: string }>) => {
+      const results = new Map<string, { result: string; sessionId?: string }>()
+      for (const t of batchTasks) results.set(t.id, { result: `done-${t.id}` })
+      return { results, failedTaskIds: [], failedTaskReasons: {} }
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('[redo]', 'sess-1', AGENTS, sendEvent)
+
+    const statusEvents = sendEvent.mock.calls.map(c => c[0]).filter((e: any) => e.type === 'task_status')
+    const task2Completed = statusEvents.some((e: any) => e.content.includes('"taskId":"task-2"') && e.content.includes('"completed"'))
+    expect(task2Completed).toBe(true)
+  })
+
+  it('依赖仍 failed 的 blocked 任务不被复活(不过度复活)', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // task-1 pending 会失败, task-2 blocked 依赖 task-1 → task-1 失败后 task-2 不应被复活
+    const task1 = makeTask({ id: 'task-1', description: 'code a', declaredFiles: '[]', dependencies: '[]', assignedAgentId: 'a1', status: 'pending' })
+    const task2 = makeTask({ id: 'task-2', description: 'code b', declaredFiles: '[]', dependencies: '["task-1"]', assignedAgentId: 'a2', status: 'blocked' })
+    mocks.mockTaskFindMany.mockResolvedValue([task1, task2])
+
+    // task-1 失败
+    mocks.mockExecuteTaskBatch.mockResolvedValue({ results: new Map(), failedTaskIds: ['task-1'], failedTaskReasons: { 'task-1': 'boom' } })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // task-2 保持 blocked(依赖失败),不应出现 task-2 completed/pending 复活事件
+    const statusEvents = sendEvent.mock.calls.map(c => c[0]).filter((e: any) => e.type === 'task_status')
+    const task2Revived = statusEvents.some((e: any) => e.content.includes('"taskId":"task-2"') && (e.content.includes('"completed"') || e.content.includes('"pending"')))
+    expect(task2Revived).toBe(false)
+  })
+})
