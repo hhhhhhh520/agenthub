@@ -322,6 +322,28 @@ describe('runDiscussion', () => {
     const opinions = await runDiscussion('topic', agents, 1, vi.fn())
     expect(opinions[0]).toContain('讨论出错')
   })
+
+  it('ISSUE-003: discussion agents get per-agent isolated processes, no MCP', async () => {
+    // 真回归守卫:旧代码有 sessionId 时会 buildMCPConfig 注入 mcpConfig(本测试红)。
+    // 同时钉住进程隔离维度——同会话不同 Agent 必须走不同 registry key(防串话)
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'opinion' }
+    })
+    await runDiscussion('topic', [
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
+      { name: '架构师', systemPrompt: 'sp2', platform: 'claude-code' },
+    ], 1, vi.fn(), 'sess-1')
+    const connects = mockAdapterConnect.mock.calls.map(c => c[0])
+    expect(connects).toHaveLength(2)
+    // 每个 Agent 独立 agentId → registry key 不同 → 独立 CLI 进程(防同凭证 Agent 串话)
+    expect(connects[0].agentId).toBe('PM')
+    expect(connects[1].agentId).toBe('架构师')
+    expect(connects[0].chatSessionId).toBe('sess-1')
+    // 讨论阶段绝不注入 MCP(物理隔离工具)
+    for (const cfg of connects) {
+      expect(cfg.mcpConfig).toBeUndefined()
+    }
+  })
 })
 
 describe('formatArchitectPlan', () => {

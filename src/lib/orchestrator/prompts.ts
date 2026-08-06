@@ -235,5 +235,6 @@ export function buildDiscussionPrompt(round: number, maxRounds: number, previous
   return `你是讨论参与者 ${agentName}。
 当前是第 ${round}/${maxRounds} 轮讨论。
 ${previousOpinions ? `以下是其他参与者的发言：\n${previousOpinions}` : '你是第一个发言的。'}
-请给出你的看法，可以同意、反对或补充。控制在 200 字以内。`
+请给出你的看法，可以同意、反对或补充。控制在 200 字以内。
+注意：讨论阶段只做观点交流，禁止使用任何工具（不要读取文件、执行命令、查询数据），直接输出你的发言内容。`
 }

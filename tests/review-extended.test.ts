@@ -111,6 +111,7 @@ describe('runMultiAgentDiscussion', () => {
 
   it('calls runDiscussion with matching agents', async () => {
     await runMultiAgentDiscussion(['PM', '架构师'], 'topic', 's1', agents, sendEvent)
+    // ISSUE-003 后:不传 workDir(讨论无 MCP),但传 sessionId 作进程隔离维度
     expect(mockRunDiscussion).toHaveBeenCalledWith(
       'topic',
       expect.arrayContaining([
@@ -119,8 +120,7 @@ describe('runMultiAgentDiscussion', () => {
       ]),
       3,
       expect.any(Function),
-      's1',
-      '/dir'
+      's1'
     )
   })
 
@@ -142,10 +142,24 @@ describe('runMultiAgentDiscussion', () => {
     expect(discussionAgents[0].name).toBe('PM')
   })
 
-  it('uses process.cwd() when projectDir is empty', async () => {
-    mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '' })
+  it('ISSUE-003: adapter status chunks are not forwarded to SSE', async () => {
+    // 真回归守卫:旧代码透传所有 chunk,status 噪音(completed/retrying...)
+    // 会进前端 streaming 文本。注意只断言 agent 维度——orchestrator 自己的
+    // "讨论中..." status 是有意的 UX 状态,不在过滤范围
+    mockRunDiscussion.mockImplementation(async (_t, _a, _r, onChunk) => {
+      onChunk('PM', { type: 'status', content: 'completed' })
+      onChunk('PM', { type: 'status', content: 'retrying in 1000ms...' })
+      onChunk('PM', { type: 'text', content: 'my opinion' })
+      return ['PM（第1轮）：my opinion']
+    })
     await runMultiAgentDiscussion(['PM'], 'topic', 's1', agents, sendEvent)
-    const workDir = mockRunDiscussion.mock.calls[0][5]
-    expect(workDir).toBe(process.cwd())
+    const pmStatusEvents = sendEvent.mock.calls.filter(
+      c => c[0].agentId === 'PM' && c[0].type === 'status'
+    )
+    expect(pmStatusEvents).toHaveLength(0)
+    // text chunk 仍正常转发(防过度抑制)
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'PM', type: 'text', content: 'my opinion',
+    }))
   })
 })
