@@ -93,7 +93,7 @@ npm test
 E2E=1 npm run test:e2e
 ```
 
-测试覆盖率：Statements 85% / Branches 75% / Functions 81% / Lines 86%
+测试覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
 
 ## 项目结构
 
