@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-08-05
+> 创建时间: 2026-05-22 | 最后更新: 2026-08-07
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
