@@ -180,4 +180,11 @@ describe('buildDiscussionPrompt', () => {
     const prompt = buildDiscussionPrompt(5, 5, '前面的讨论...', 'PM')
     expect(prompt).toContain('第 5/5 轮')
   })
+
+  it('ISSUE-003: should forbid tool usage in discussion', () => {
+    // 真回归守卫:讨论阶段禁止工具(防 Agent 读文件/查数据库产生
+    // tool_use/status chunk 泄漏进讨论输出)
+    const prompt = buildDiscussionPrompt(1, 3, '', '后端工程师')
+    expect(prompt).toContain('禁止使用任何工具')
+  })
 })

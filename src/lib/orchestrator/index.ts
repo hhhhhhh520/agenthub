@@ -628,8 +628,7 @@ export async function runDiscussion(
   agents: Array<{ name: string; systemPrompt: string; platform?: string; model?: string; baseUrl?: string; apiKey?: string }>,
   maxRounds: number = 3,
   onChunk: (agentName: string, chunk: StreamChunk) => void,
-  chatSessionId?: string,
-  projectDir?: string
+  chatSessionId?: string
 ): Promise<string[]> {
   const opinions: string[] = []
 
@@ -641,8 +640,18 @@ export async function runDiscussion(
       try {
         const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
         const adapter = createAdapter({ platform })
-        const mcpCfg = chatSessionId ? buildMCPConfig(chatSessionId, agent.name, projectDir || '') : undefined
-        await adapter.connect({ platform, model: agent.model || undefined, baseUrl: agent.baseUrl, apiKey: agent.apiKey, mcpConfig: mcpCfg })
+        // ISSUE-003 根本修复:讨论阶段不注入 MCP,物理隔离工具(Agent 只交换观点,不应读文件/查数据库)。
+        // 进程级隔离必须显式保留:按 (chatSessionId, agent.name) 独立 registry key → 独立 CLI 进程。
+        // 旧代码靠 mcpConfig 里的 AGENTHUB_AGENT_NAME 隐式区分进程,移除 MCP 后不显式传
+        // agentId/chatSessionId 会让同凭证 Agent 全部撞进同一会话串话(pre-commit 审查 ❌ 修复)
+        await adapter.connect({
+          platform,
+          model: agent.model || undefined,
+          baseUrl: agent.baseUrl,
+          apiKey: agent.apiKey,
+          chatSessionId,
+          agentId: agent.name,
+        })
 
         let result = ''
         try {

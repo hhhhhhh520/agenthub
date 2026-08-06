@@ -181,6 +181,7 @@
 | post-contract-v1 review 二轮 F1+F3+F4+F10 | 第二波 5 个 commit 跑 pre-commit-audit 时 3 个 subagent 找出 13 项问题,基于真实使用场景(本地单机工具)筛选 4 项必修(F1 regex 防空白绕过 + F4 meta.description 转义 + F3 redo 真用事务 + F10 success 路径包事务)。9 项归入"已评估不实施"(F2 projectDir 路径任意写/F5 redo 跑所有 pending/F6 标签清单硬编码/F7 .gitignore 覆盖/F8 cliSessionId 空字符串/F9 DELETE 无 lock/F11 redo catch 不修 task 状态/F12 transaction mock/F13 文案),理由记入 audit 报告。net 867 全绿 | 2026-06-24 |
 | dev 端到端验证 + UI 冒烟 | Playwright 无头浏览器跑 dev server(PORT=3001):首页加载 → 创建群聊(LLM 推荐 8 Agent)→ 进入聊天 → 发消息触发主链路。**dev log 直接证据**:effectiveKey 含 configHash(`0999951c299dc1de`)、model strip `[1m]` → `mimo-v2.5-pro`、Process spawned + entry 注册成功、配置变更触发新 hash(`8d6a4a74f163a2b1`)、API 响应不含 apiKey 明文。完整 task 执行因 MIMO mimo-v2.5-pro[1m] 响应慢(单次 6 分钟)未跑到 LLM 真实产出,但其余 contract v1 路径已被 867 单元/集成测试覆盖 | 2026-06-25 |
 | 6维度代码审查 + 验证 | 6个Agent并行审查(安全/架构/性能/代码质量/测试/Contract v1),原始发现94项。逐项验证后20项真实问题(误报率79%→21%)。误报原因:审查Agent不了解威胁模型(本地单机)、已有审计记录、设计决策。高优先级5项(缺索引+4个测试盲区),中优先级8项,低优先级7项。详见 `docs/reports/2026-06-25-verified-findings.md` | 2026-06-25 |
+| ISSUE-003 讨论 JSON 泄漏修复 | **pre-commit 三视角审查整改后合入**。三层修复:①`review.ts` runMultiAgentDiscussion onChunk 过滤适配器 status 噪音(completed/retrying...,与既有3处过滤模式一致);②`runDiscussion` 移除 mcpConfig 注入(物理隔离 MCP 工具)+ 删除孤立 workDir 参数;③`buildDiscussionPrompt` 加"禁止使用任何工具"。**攻击者+生命周期审查抓 ❌**:移除 mcpConfig 破坏进程隔离(旧代码靠 AGENTHUB_AGENT_NAME 隐式区分,现在同凭证 Agent 全撞 default:default:<cwd> 串话+污染控制面 JSON 流程)→ 显式传 chatSessionId+agentId:agent.name 恢复每(会话,Agent)独立 registry key,已核实 agentId 仅用于 key 不注入 CLI。前端忽略 status 方案被拒(status 双重语义:'思考中...'等14+处有意 UX 状态靠 catch-all 渲染)。**测试**:939全绿净+2(status过滤/禁工具/5参形状/进程隔离 全真回归守卫),src零tsc。ISSUE-003 标已解决(唯一红灯清零) | 2026-08-07 |
 | 审查问题修复(9/20) | P3 数据库索引(Task+Message+Attachment 3 个 @@index) + C6 declaredFiles 路径归一化(normalizePath 统一斜杠) + S13 附件上传 UUID 校验(防路径遍历) + A5 空 catch 块加 warn 日志(3 处) + P4 stderrBuffer 截断(限 4KB) + T2 send 最大重试测试 + T6 gracefulKillEntry 两阶段测试 + T9 deadline 超时测试。871 测试全绿 | 2026-06-25 |
 
 **8项核心Bug修复详情**（2026-06-10）：
@@ -222,7 +223,7 @@
 | 🟢已解决 | ISSUE-011 完成消息文件归属错误 | 根因=gitBefore batch 快照差异 + declaredFiles=[] 任务强制跳过文件校验。完成消息改为 declared∩changed(attributed)，空声明任务只发"完成"不串报；声明任务零信息丢失 | 🟢已解决(2026-08-05) |
 | 🟢已解决 | ISSUE-011 架构师设计漂移 | TASK_DECOMPOSITION_PROMPT 强约束 techStack 与 declared_files 技术栈一致(声明TS则 .ts/.tsx,不得写Python)+techStack字段描述更新。仅 prompt 约束(自由文本到后缀映射硬校验易误伤混合栈);执行侧已由 contract v1 兜住 | 🟢已解决(2026-08-05) |
 | 🟢已解决 | ISSUE-008 执行层强制verify | verify action仅prompt引导无效(LLM倾向直接done)。已在 handleArchitectPlan 拆解代码任务时自动追加 verify 任务(依赖全部代码任务,经既有依赖机制代码完成后自动执行;分配给测试工程师,无则 findBestAgent 兜底)。覆盖正常/跳过对齐/redo 全入口,执行引擎零改动 | 🟢已解决(2026-08-06) |
-| 🟡中 | ISSUE-003 讨论JSON泄漏 | route.ts/review.ts onChunk未过滤status/tool_use/tool_result，不影响功能 | 🟡低优先级 |
+| 🟢已解决 | ISSUE-003 讨论JSON泄漏 | 三层修复:onChunk 过滤 status 噪音 + runDiscussion 移除 MCP 物理隔离工具 + prompt 禁工具。审查抓出并修复进程隔离回归(显式 chatSessionId+agentId 恢复独立进程)。前端忽略 status 被拒(双重语义) | 🟢已解决(2026-08-07) |
 | 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
 | 🟢低 | 第三波安全清扫 | 7 个 ⚠️-S(orchestrator POST 掩码污染 / symlink 跨界 / accept 敏感列表割裂 / attachments 加固 / providerRef 空 apiKey 覆盖 / 拒绝路径无日志) — **本地单机威胁模型已评估不实施**,SaaS/多用户化时重评 | ⏸️ |
 | 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |

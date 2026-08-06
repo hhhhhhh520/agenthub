@@ -192,18 +192,17 @@ export async function runMultiAgentDiscussion(
 
   sendEvent({ agentId: 'orchestrator', type: 'status', content: `${agentNames.join('、')} 讨论中...` })
 
-  const session = await prisma.session.findUnique({ where: { id: sessionId } })
-  const workDir = session?.projectDir && session.projectDir.trim()
-    ? session.projectDir.trim()
-    : process.cwd()
-
   const opinions = await runDiscussion(
     topic,
     discussionAgents,
     3,
-    (agentName, chunk) => sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data }),
-    sessionId,
-    workDir
+    (agentName, chunk) => {
+      // ISSUE-003:过滤 CLI 适配器的 status 噪音(completed/retrying...),
+      // 防止泄漏进前端 streaming 文本(与 review.ts 其他路径的过滤一致)
+      if (chunk.type === 'status') return
+      sendEvent({ agentId: agentName, type: chunk.type, content: chunk.content, data: chunk.data })
+    },
+    sessionId
   )
 
   const summary = opinions.join('\n\n')
