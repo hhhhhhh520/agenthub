@@ -4,6 +4,15 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 
 ![工作区首页](docs/screenshots/01-dashboard.png)
 
+## 设计亮点
+
+- **Orchestrator 9-action 状态机** — self/delegate/discuss/align_*/execute/verify/done 编排闭环；对齐流程学习人类团队"先对齐再干活"（PM 确认需求 → 架构师拆解任务 → Agent 提问澄清）
+- **执行层强制验证** — 代码任务拆解后自动追加 verify 任务（纯 prompt 引导被证明无效，改执行层强制），代码完成自动触发验证
+- **Contract v1 契约化协作** — `<authoritative_input>` 权威注入 + declaredFiles 分级越界校验 + outputSchema 结构校验，三契约管住 LLM 的不可靠性
+- **进程池 + 配置指纹** — 每(会话,Agent,配置)独立 CLI 进程，配置 hash 隔离，10 分钟空闲回收，优雅关闭
+- **双 CLI 适配层** — Claude Code + OpenCode 统一抽象，spawn 子进程 + NDJSON 流式解析，工具白名单硬限制
+- **测试质量方法论** — 939 单元测试 + 每次修复配"真回归守卫"（回退修复测试必红）+ pre-commit 三视角审查（攻击者/生命周期/声明vs实现）
+
 ## 功能
 
 - **三栏 IM 布局** — 会话列表 | 聊天区 | Agent 面板
@@ -47,12 +56,17 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
   ↓
 Next.js App (SSE 流式推送)
   ├── Orchestrator（编排器）
-  │     ├── 选择 Agent → 拆分任务 → 监督执行 → 纠偏重试
-  │     └── 9 种 action: self / delegate / discuss / align_* / execute / verify / done
+  │     ├── 对齐流程: PM确认 → 架构师拆解 → Agent提问
+  │     ├── 9 种 action: self / delegate / discuss / align_* / execute / verify / done
+  │     └── 执行循环: DAG分批 → 越界检测 → 自动验证(verify) → 监督纠偏
+  ├── Contract v1（Agent 间数据契约）
+  │     ├── authoritative_input 权威注入（数据流）
+  │     ├── declaredFiles 分级校验 + outputSchema 软校验（可信度）
+  │     └── cliSessionId 连续性护栏
   ├── Adapter 层
   │     ├── Claude Code Adapter（spawn CLI，读 NDJSON）
   │     └── OpenCode Adapter（spawn CLI，读 NDJSON）
-  └── MCP Server（Agent 间共享工具）
+  └── MCP Server（Agent 间共享工具，执行阶段注入）
 ```
 
 ## 快速开始
