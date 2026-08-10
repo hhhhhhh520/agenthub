@@ -269,6 +269,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **讨论阶段(`runDiscussion`)不注入 MCP,但必须显式传 `chatSessionId` + `agentId: agent.name`** — ISSUE-003(2026-08-07):讨论只交换观点,不读文件/查库,connect 不传 `mcpConfig`;但**进程隔离靠显式 agentId**——移除 MCP 后这是唯一隔离维度,不传会撞 `default:default:<cwd>` 同进程串话(攻击者+生命周期审查 ❌ 修复)
 - **`handleExecution` 不重跑已完成任务** — P0(2026-08-10):`executeTaskBatch` 返回 `preloadedIds`(priorResults 中本批未执行的历史任务),success 循环开头 `if (preloadedIds.has(taskId)) continue`。删此守卫会让 redo/续跑/多批执行重跑旧任务 monitoring+重复写库,`correctionCount` 每批重置致 max-2 失效→无界重执行
+- **phase/phaseStep 写入必须经 `transitionPhase`(`src/lib/orchestrator/state-machine.ts`),禁止散点 `prisma.session.update({ phase })`** — P1(2026-08-11):6 处散点写入已收归中央转移表校验(applyTransition 查 TRANSITIONS,非法 fail-closed 不写)。裸写 phase 绕过转移表,可把 phase 写到转移表之外的值。新增 phase 写入点必须走 transitionPhase;LLM 提议 action 校验在 chat-router 决策点(纠正→守卫→applyTransition→非法 escalate 不静默)
 
 ### Chat API Session Lock
 

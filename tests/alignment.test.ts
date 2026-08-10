@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { validateDecision } from '@/lib/services/chat-router'
+import { canonicalCorrect, applyTransition, stateFromSession } from '@/lib/orchestrator/state-machine'
 
 // ── Mock for transitionToExecution tests ──
 const mocks = vi.hoisted(() => ({
@@ -43,141 +43,92 @@ vi.mock('@/lib/services/execution', () => ({
 
 import { transitionToExecution, handleArchitectPlan, isCodeTask, buildVerifyDescription } from '@/lib/services/alignment'
 
-function dec(action: string, overrides?: Partial<{ target: string | null; targets: string[] | null; message: string; reason: string }>) {
-  return { action, message: '', reason: '', ...overrides }
-}
-
-describe('validateDecision — phase guards', () => {
-  it('blocks done during alignment phase', () => {
-    const result = validateDecision(dec('done'), 'alignment', [])
-    expect(result.action).toBe('align_confirm')
-    expect(result.reason).toContain('对齐')
+describe('state-machine: phase guards（原 validateDecision，P1 迁移）', () => {
+  it('对齐中提议 done 被纠正（align_pm->align_decompose / arch|qa->execute）', () => {
+    expect(canonicalCorrect('align_pm', 'done')).toEqual({ redirect: 'align_decompose' })
+    expect(canonicalCorrect('align_arch', 'done')).toEqual({ redirect: 'execute' })
+    expect(canonicalCorrect('align_qa', 'done')).toEqual({ redirect: 'execute' })
   })
 
-  it('allows done during execution phase', () => {
-    const result = validateDecision(dec('done'), 'execution', [])
-    expect(result.action).toBe('done')
+  it('执行中允许 done（全完成收尾）', () => {
+    expect(applyTransition('exec', 'done')).toEqual({ ok: true, nextState: 'done' })
   })
 
-  it('blocks align_confirm during execution phase', () => {
-    const result = validateDecision(dec('align_confirm'), 'execution', [])
-    expect(result.action).toBe('execute')
+  it('执行中提议 align_* 被纠正为 execute', () => {
+    expect(canonicalCorrect('exec', 'align_confirm')).toEqual({ redirect: 'execute' })
+    expect(canonicalCorrect('exec', 'align_decompose')).toEqual({ redirect: 'execute' })
+    expect(canonicalCorrect('exec', 'align_qa')).toEqual({ redirect: 'execute' })
   })
 
-  it('blocks align_decompose during execution phase', () => {
-    const result = validateDecision(dec('align_decompose'), 'execution', [])
-    expect(result.action).toBe('execute')
+  it('对齐中 align_* 均合法（各自子态）', () => {
+    expect(applyTransition('align_pm', 'align_confirm')).toEqual({ ok: true, nextState: 'align_pm' })
+    expect(applyTransition('align_arch', 'align_decompose')).toEqual({ ok: true, nextState: 'align_arch' })
+    expect(applyTransition('align_arch', 'align_qa')).toEqual({ ok: true, nextState: 'align_qa' })
   })
 
-  it('blocks align_qa during execution phase', () => {
-    const result = validateDecision(dec('align_qa'), 'execution', [])
-    expect(result.action).toBe('execute')
+  it('idle 阶段合法转移不受影响', () => {
+    expect(applyTransition('idle', 'align_confirm')).toEqual({ ok: true, nextState: 'align_pm' })
+    expect(applyTransition('idle', 'done')).toEqual({ ok: true, nextState: 'done' })
   })
 
-  it('allows align_* during alignment phase', () => {
-    expect(validateDecision(dec('align_confirm'), 'alignment', []).action).toBe('align_confirm')
-    expect(validateDecision(dec('align_decompose'), 'alignment', []).action).toBe('align_decompose')
-    expect(validateDecision(dec('align_qa'), 'alignment', []).action).toBe('align_qa')
-  })
-
-  it('does not interfere during idle phase', () => {
-    const result = validateDecision(dec('align_confirm'), 'idle', [])
-    expect(result.action).toBe('align_confirm')
-  })
-
-  it('does not interfere during other phases', () => {
-    const result = validateDecision(dec('done'), 'planning', [])
-    expect(result.action).toBe('done')
+  it('未知 phase 兜底为 idle', () => {
+    expect(stateFromSession('chat', '')).toBe('idle')
+    expect(stateFromSession('planning', '')).toBe('idle')
   })
 })
 
-describe('validateDecision — Q&A loop detection', () => {
-  it('forces execute when agent asked and user answered', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '产品经理', rawContent: '确认需求...' },
-      { role: 'agent', agentId: '前端工程师', rawContent: '用 React 还是 Vue？' },
-      { role: 'user', agentId: null, rawContent: '用 React' },
-    ]
-    const result = validateDecision(dec('align_qa'), 'alignment', history)
-    expect(result.action).toBe('execute')
-    expect(result.reason).toContain('Q&A已完成')
+describe('state-machine: Q&A loop detection（原 validateDecision，P1 迁移）', () => {
+  const h = (...msgs: Array<{ role: string; agentId?: string | null }>) =>
+    msgs.map(m => ({ ...m, rawContent: 'x' }))
+
+  it('Agent 提问且用户已回答 -> 纠正为 execute', () => {
+    const history = h({ role: 'agent', agentId: '前端工程师' }, { role: 'user' })
+    expect(canonicalCorrect('align_qa', 'align_qa', history)).toEqual({ redirect: 'execute' })
   })
 
-  it('allows align_qa when no agent questions yet', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '架构师', rawContent: '方案...' },
-    ]
-    const result = validateDecision(dec('align_qa'), 'alignment', history)
-    expect(result.action).toBe('align_qa')
+  it('无 Agent 提问 -> 不纠正', () => {
+    const history = h({ role: 'user' }, { role: 'agent', agentId: '架构师' })
+    expect(canonicalCorrect('align_qa', 'align_qa', history)).toBeNull()
   })
 
-  it('allows align_qa when agent asked but user has not answered', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '前端工程师', rawContent: '用 React 还是 Vue？' },
-    ]
-    const result = validateDecision(dec('align_qa'), 'alignment', history)
-    expect(result.action).toBe('align_qa')
+  it('Agent 提问但用户未答 -> 不纠正', () => {
+    const history = h({ role: 'user' }, { role: 'agent', agentId: '前端工程师' })
+    expect(canonicalCorrect('align_qa', 'align_qa', history)).toBeNull()
   })
 
-  it('allows align_qa when only PM/architect messages exist', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '产品经理', rawContent: '需求确认...' },
-      { role: 'agent', agentId: '架构师', rawContent: '技术方案...' },
-    ]
-    const result = validateDecision(dec('align_qa'), 'alignment', history)
-    expect(result.action).toBe('align_qa')
+  it('仅 PM/架构师消息 -> 不纠正（排除 PM/架构师）', () => {
+    const history = h({ role: 'user' }, { role: 'agent', agentId: '产品经理' }, { role: 'agent', agentId: '架构师' })
+    expect(canonicalCorrect('align_qa', 'align_qa', history)).toBeNull()
   })
 
-  it('forces execute when multiple agent Q&A rounds completed', () => {
-    const history = [
-      { role: 'user', agentId: null, rawContent: '搭建博客' },
-      { role: 'agent', agentId: '前端工程师', rawContent: '用什么框架？' },
-      { role: 'user', agentId: null, rawContent: 'React' },
-      { role: 'agent', agentId: '后端工程师', rawContent: '用什么数据库？' },
-      { role: 'user', agentId: null, rawContent: 'PostgreSQL' },
-    ]
-    const result = validateDecision(dec('align_qa'), 'alignment', history)
-    expect(result.action).toBe('execute')
+  it('多轮 Q&A 均完成 -> 纠正为 execute', () => {
+    const history = h(
+      { role: 'agent', agentId: '前端工程师' },
+      { role: 'user' },
+      { role: 'agent', agentId: '后端工程师' },
+      { role: 'user' },
+    )
+    expect(canonicalCorrect('align_qa', 'align_qa', history)).toEqual({ redirect: 'execute' })
   })
 })
 
-describe('validateDecision — passthrough', () => {
-  it('preserves self action', () => {
-    const result = validateDecision(dec('self', { message: '好的' }), 'alignment', [])
-    expect(result.action).toBe('self')
+describe('state-machine: passthrough（原 validateDecision，P1 迁移）', () => {
+  it('旁路 action(self/delegate/discuss) 合法于任何状态，不转 phase', () => {
+    for (const s of ['idle', 'align_pm', 'align_arch', 'align_qa', 'exec', 'done'] as const) {
+      const r = applyTransition(s, 'self')
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.nextState).toBe(s)
+    }
+    expect(applyTransition('align_pm', 'delegate')).toEqual({ ok: true, nextState: 'align_pm' })
+    expect(applyTransition('align_pm', 'discuss')).toEqual({ ok: true, nextState: 'align_pm' })
   })
 
-  it('preserves delegate action', () => {
-    const result = validateDecision(dec('delegate'), 'alignment', [])
-    expect(result.action).toBe('delegate')
+  it('执行中 execute 是自环（no-op）', () => {
+    expect(applyTransition('exec', 'execute')).toEqual({ ok: true, nextState: 'exec' })
   })
 
-  it('preserves discuss action', () => {
-    const result = validateDecision(dec('discuss'), 'alignment', [])
-    expect(result.action).toBe('discuss')
-  })
-
-  it('preserves execute action during execution', () => {
-    const result = validateDecision(dec('execute'), 'execution', [])
-    expect(result.action).toBe('execute')
-  })
-
-  it('preserves message and reason fields', () => {
-    const d = dec('self', { message: 'hello', reason: 'chat' })
-    const result = validateDecision(d, 'idle', [])
-    expect(result.message).toBe('hello')
-    expect(result.reason).toBe('chat')
-  })
-
-  it('preserves target and targets fields', () => {
-    const d = dec('delegate', { target: 'frontend', targets: ['frontend', 'backend'] })
-    const result = validateDecision(d, 'execution', [])
-    expect(result.target).toBe('frontend')
-    expect(result.targets).toEqual(['frontend', 'backend'])
+  it('对齐中 align_pm + execute 非法（未拆解不可执行）', () => {
+    expect(applyTransition('align_pm', 'execute').ok).toBe(false)
   })
 })
 
