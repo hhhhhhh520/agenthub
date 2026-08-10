@@ -199,6 +199,11 @@ export async function handleExecution(
     let results: Map<string, { result: string; sessionId?: string }>
     let batchFailedIds: string[] = []
     let batchFailedReasons: Record<string, string> = {}
+    // P0 重放 bug 修复: executeTaskBatch 预装的历史任务 id(非本批新执行)。
+    // success 处理循环必须跳过它们,否则 redo/续跑/多批执行会重跑旧任务的
+    // monitoring LLM + 重复写 DB message + 覆盖 trace/correctionCount,
+    // 甚至被审查 LLM 置回 pending 触发无界重执行(见 A方向规划 3.3 主修法)
+    let preloadedIds = new Set<string>()
     try {
       const batchOutcome = await executeTaskBatch(
         readyTasks.map(t => {
@@ -242,6 +247,7 @@ export async function handleExecution(
       results = batchOutcome.results
       batchFailedIds = batchOutcome.failedTaskIds
       batchFailedReasons = batchOutcome.failedTaskReasons ?? {}
+      preloadedIds = new Set(batchOutcome.preloadedIds ?? [])
     } catch (err) {
       for (const task of readyTasks) {
         const failTrace = appendTrace(task.trace || '[]', {
@@ -280,6 +286,9 @@ export async function handleExecution(
     }
 
     for (const [taskId, { result, sessionId: cliSessionId }] of results) {
+      // P0 重放 bug 修复: 跳过 executeTaskBatch 预装的历史任务(非本批新执行)。
+      // 旧代码无此守卫,对已完成任务也重走完整 success 处理(见上方 preloadedIds 注释)
+      if (preloadedIds.has(taskId)) continue
       allResults.set(taskId, result)
       const taskForTrace = tasks.find(t => t.id === taskId)
 

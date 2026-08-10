@@ -344,19 +344,28 @@ export async function executeTaskBatch(
   priorResults?: Map<string, string>,
   // contract v1 §1.1: 前批 task 的描述 + outputSchema，用于结构化注入 <dependency> 标签
   priorTaskMeta?: Map<string, PriorTaskMeta>
-): Promise<{ results: Map<string, { result: string; sessionId?: string }>, failedTaskIds: string[], failedTaskReasons: Record<string, string> }> {
+): Promise<{ results: Map<string, { result: string; sessionId?: string }>, preloadedIds: string[], failedTaskIds: string[], failedTaskReasons: Record<string, string> }> {
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
   const failedTaskIds: string[] = []
   // ISSUE-011 F1: 失败原因透传。allSettled rejection reason 此前被丢弃,
   // 下游 execution.ts 只能写通用 "Task failed in batch execution"。
   const failedTaskReasons: Record<string, string> = {}
+  // P0 重放 bug 修复: 记录从 priorResults 预装进 results 的历史任务 id。
+  // 这些是"已完成任务的跨批权威 result"(非本批新执行),下游 success 处理必须跳过,
+  // 否则 redo/续跑/多批执行会重跑旧任务的审查 LLM + 重复写库,甚至被置回 pending 无界重执行。
+  // ⚠️ 只标记"本批未执行"的历史任务: 纠偏重试/redo 时同一任务会同时出现在 priorResults
+  // (上一轮 result) 和本批 readyTasks(要重跑),它不算预装历史——本批真实执行的新结果必须
+  // 被 handleExecution 正常处理,否则被误跳过会丢弃新结果、任务滞留 pending(生命周期审查 ❌)
+  const preloadedIds: string[] = []
+  const batchTaskIds = new Set(tasks.map(t => t.id))
 
   // contract v1 §1.1: 合并 DB 中已完成 task 的 result（跨批权威），
   // 使 task.dependencies 查找时能命中前批 task 的交付物
   if (priorResults) {
     for (const [taskId, result] of priorResults) {
       results.set(taskId, { result })
+      if (!batchTaskIds.has(taskId)) preloadedIds.push(taskId)
     }
   }
 
@@ -524,7 +533,7 @@ export async function executeTaskBatch(
     }
   }
 
-  return { results, failedTaskIds, failedTaskReasons }
+  return { results, preloadedIds, failedTaskIds, failedTaskReasons }
 }
 
 export async function executeSingleAgent(
