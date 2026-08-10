@@ -265,6 +265,11 @@ Orchestrator 自主决定流程，支持 9 种 action：
   - **汇报模板**：任务完成时必须包含（完成内容、产出位置、验证方式、遗留问题、影响范围）
 - **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界自动清理(保留其他批次文件) → LLM 监督审查(越界已清空不触发纠偏) → 任务 completed
 
+### 审查修复关键不变量(勿破坏)
+
+- **讨论阶段(`runDiscussion`)不注入 MCP,但必须显式传 `chatSessionId` + `agentId: agent.name`** — ISSUE-003(2026-08-07):讨论只交换观点,不读文件/查库,connect 不传 `mcpConfig`;但**进程隔离靠显式 agentId**——移除 MCP 后这是唯一隔离维度,不传会撞 `default:default:<cwd>` 同进程串话(攻击者+生命周期审查 ❌ 修复)
+- **`handleExecution` 不重跑已完成任务** — P0(2026-08-10):`executeTaskBatch` 返回 `preloadedIds`(priorResults 中本批未执行的历史任务),success 循环开头 `if (preloadedIds.has(taskId)) continue`。删此守卫会让 redo/续跑/多批执行重跑旧任务 monitoring+重复写库,`correctionCount` 每批重置致 max-2 失效→无界重执行
+
 ### Chat API Session Lock
 
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
