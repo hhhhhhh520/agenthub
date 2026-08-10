@@ -9,6 +9,7 @@ import { pickSensitive } from './sensitive-paths'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
+import { transitionPhase } from '@/lib/orchestrator/state-machine'
 import type { SendEvent } from './review'
 
 /** 路径归一化：统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写) */
@@ -518,7 +519,7 @@ export async function handleExecution(
 
   const allDone = tasks.every(t => t.status === 'completed' || t.status === 'blocked')
   if (allDone) {
-    await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
+    await transitionPhase(sessionId, 'done')
   }
 
   // ISSUE-011 F2: 部分失败/遗留时诚实收尾,不静默停在 execution。

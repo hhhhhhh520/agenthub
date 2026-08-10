@@ -6,6 +6,7 @@ import { topologicalSort, type ScheduledTask } from '@/lib/orchestrator/schedule
 import { handleExecution } from './execution'
 import type { SendEvent } from './review'
 import type { AgentConfig } from '@/lib/adapter/types'
+import { transitionPhase } from '@/lib/orchestrator/state-machine'
 
 /** ISSUE-008: 代码文件后缀,用于识别代码任务(自动触发验证) */
 const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|rb|c|cc|cpp|h|hpp|cs|php|sh|html|css|scss|less|vue|svelte|sql|kt|swift|lua|pl|dart|scala)$/i
@@ -57,7 +58,7 @@ export async function handlePMConfirm(
     }
   }
 
-  await prisma.session.update({ where: { id: sessionId }, data: { phase: 'alignment', phaseStep: 'pm_confirm' } })
+  await transitionPhase(sessionId, 'align_confirm')
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const pmPrompt = PM_CONFIRMATION_PROMPT.replace('{userMessage}', message)
@@ -111,7 +112,7 @@ export async function handleArchitectPlan(
   agents: AgentConfig[],
   sendEvent: SendEvent
 ) {
-  await prisma.session.update({ where: { id: sessionId }, data: { phase: 'alignment', phaseStep: 'architect_plan' } })
+  await transitionPhase(sessionId, 'align_decompose')
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
@@ -238,7 +239,7 @@ export async function handleAgentQA(
   sendEvent: SendEvent,
   globalDeadline?: number
 ) {
-  await prisma.session.update({ where: { id: sessionId }, data: { phase: 'alignment', phaseStep: 'agent_qa' } })
+  await transitionPhase(sessionId, 'align_qa')
 
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
   const originalRequest = history.find(m => m.role === 'user')?.rawContent || ''
@@ -313,15 +314,17 @@ export async function transitionToExecution(
   orchSessionId?: string,
   globalDeadline?: number
 ) {
-  await prisma.session.update({ where: { id: sessionId }, data: { phase: 'execution', phaseStep: '' } })
-  sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
-
-  // 兜底：Task 为空时自动补拆（Orchestrator 可能跳过了 align_decompose）
+  // 兜底：Task 为空时先自动补拆，再进入 execution。
+  // 顺序关键：不能先写 exec 再补拆（会写回 align_arch，执行期间 phase 停在对齐态、
+  // allDone 时 align_arch+done 在转移表非法、fail-closed 拒绝写 done）。先补拆到 align_arch，再 execute -> exec 是合法转移。
   const existingTasks = await prisma.task.findMany({ where: { sessionId } })
   if (existingTasks.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'status', content: '任务列表为空，正在自动拆解...' })
     await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
   }
+
+  await transitionPhase(sessionId, 'execute')
+  sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
 
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
   await handleExecution(userMessage || '', sessionId, agents, sendEvent, orchSessionId, globalDeadline)

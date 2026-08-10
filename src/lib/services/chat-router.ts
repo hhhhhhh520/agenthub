@@ -6,6 +6,7 @@ import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecut
 import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
+import { stateFromSession, applyTransition, canonicalCorrect, transitionPhase } from '@/lib/orchestrator/state-machine'
 
 /**
  * 判断消息是否是"创建 Agent"意图（chat route 的路由启发式）。
@@ -29,7 +30,7 @@ export async function handleOrchestratorDecision(
   sessionId: string,
   agents: AgentConfig[],
   sendEvent: SendEvent,
-  sessionPhase: string,
+  sessionPhase: { phase: string; phaseStep: string },
   attachments?: TaskAttachment[],
   workDir?: string,
   permissionMode?: string,
@@ -62,14 +63,28 @@ export async function handleOrchestratorDecision(
     return
   }
 
-  sendEvent({ agentId: 'orchestrator', type: 'text', content: `[决策] ${decision.reason}` })
+  const state = stateFromSession(sessionPhase.phase, sessionPhase.phaseStep)
 
-  decision = validateDecision(decision, sessionPhase, history)
+  // Hybrid 规范化纠正（3 条）：命中 -> redirect 到合法 action（不静默，附 reason）
+  const correction = canonicalCorrect(state, decision.action, history)
+  if (correction) {
+    decision = { ...decision, action: correction.redirect, reason: `${decision.reason}（规范化纠正 -> ${correction.redirect}）` }
+  }
 
+  // 既有业务守卫：execute 无任务 -> align_decompose（非转移规则，保留）
   if (decision.action === 'execute') {
     const taskCount = await prisma.task.count({ where: { sessionId } })
     if (taskCount === 0) {
       decision = { ...decision, action: 'align_decompose', reason: '尚无任务，需架构师先拆解' }
+    }
+  }
+
+  // done 业务守卫（§5.1: exec→done 需 allDone，allDone = 全部 completed|blocked）：
+  // exec 态还有未完成任务（含 failed）-> 不关闭会话，redirect execute 继续执行/提示收尾
+  if (decision.action === 'done' && state === 'exec') {
+    const unfinished = await prisma.task.count({ where: { sessionId, status: { notIn: ['completed', 'blocked'] } } })
+    if (unfinished > 0) {
+      decision = { ...decision, action: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` }
     }
   }
 
@@ -80,6 +95,18 @@ export async function handleOrchestratorDecision(
       decision = { ...decision, reason: `${decision.reason}（另有${pendingTasks}个待执行任务）` }
     }
   }
+
+  // 转移合法性校验（纠正 + 业务守卫之后）：真非法 -> escalate（不静默，学 CrewAI 反面）
+  const transition = applyTransition(state, decision.action)
+  if (!transition.ok) {
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: `[需人工介入] 当前状态「${state}」下不允许「${decision.action}」。${transition.reason}。请调整指令或手动引导下一步。` })
+    sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
+    // JSON.stringify 转义 \n，防 LLM 注入的 action/reason 伪造日志行（CRLF 日志注入）
+    console.warn('[state-machine] escalate:', JSON.stringify(transition.reason), '| LLM 提议', JSON.stringify(decision.action))
+    return
+  }
+
+  sendEvent({ agentId: 'orchestrator', type: 'text', content: `[决策] ${decision.reason}` })
 
   switch (decision.action) {
     case 'self':
@@ -108,7 +135,8 @@ export async function handleOrchestratorDecision(
       await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline)
       break
     case 'verify':
-      // ISSUE-008: 执行层强制 verify 尚未实现；此 case 保证 LLM 返回 verify 时路由不静默丢失。
+      // ISSUE-008 已实现：执行层强制 verify 靠 alignment.ts 拆解代码任务时自动追加 verify 任务。
+      // 此 case 仅兜底 LLM 主动提议 verify 时路由不静默丢失。
       // 有目标 Agent（如测试工程师）→ 委派验证；否则 Orchestrator 自己验证（走 CLI 真实执行）
       if (decision.target) {
         await delegateToAgent(decision.target, decision.message || message, sessionId, agents, sendEvent, attachments, orchSessionId)
@@ -117,42 +145,11 @@ export async function handleOrchestratorDecision(
       }
       break
     case 'done':
-      await prisma.session.update({ where: { id: sessionId }, data: { phase: 'done', phaseStep: '' } })
+      await transitionPhase(sessionId, 'done')
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
       sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })
       break
   }
-}
-
-export function validateDecision(
-  decision: { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string },
-  currentPhase: string,
-  history: Array<{ role: string; agentId?: string | null; rawContent: string }>
-): { action: string; target?: string | null; targets?: string[] | null; message: string; reason: string } {
-  if (currentPhase === 'alignment' && decision.action === 'done') {
-    return { ...decision, action: 'align_confirm', reason: '对齐尚未完成，继续确认需求' }
-  }
-
-  if (currentPhase === 'execution' && decision.action.startsWith('align_')) {
-    return { ...decision, action: 'execute', reason: '已在执行阶段' }
-  }
-
-  if (decision.action === 'align_qa') {
-    const agentQuestions = history.filter(
-      m => m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师'
-    )
-    if (agentQuestions.length > 0) {
-      const lastAgentQuestionIdx = history.reduce((last, m, i) =>
-        (m.role === 'agent' && m.agentId && m.agentId !== '产品经理' && m.agentId !== '架构师') ? i : last, -1
-      )
-      const userAnswersAfter = history.slice(lastAgentQuestionIdx + 1).filter(m => m.role === 'user')
-      if (userAnswersAfter.length > 0) {
-        return { ...decision, action: 'execute', reason: 'Q&A已完成，开始执行' }
-      }
-    }
-  }
-
-  return decision
 }
 
 export async function handleOrchestratorChat(
