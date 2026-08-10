@@ -281,6 +281,50 @@ describe('executeTaskBatch', () => {
     expect(failedTaskReasons['t1']).toBe('{}')
   })
 
+  it('P0: preloadedIds marks priorResults history, not batch tasks', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'batch result' }
+    })
+    const tasks = [
+      { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
+    ]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    const priorResults = new Map<string, string>([['historical-1', 'old result']])
+    const { results, preloadedIds, failedTaskIds } = await executeTaskBatch(
+      tasks, agents, vi.fn(), undefined, undefined, priorResults
+    )
+    // 预装的历史任务被标记为 preloaded(供 handleExecution 跳过)
+    expect(preloadedIds).toContain('historical-1')
+    // 本批新执行任务不被标记为预装
+    expect(preloadedIds).not.toContain('t1')
+    // 预装结果仍在 results 里(executeTaskBatch 内部依赖查找需要)
+    expect(results.get('historical-1')?.result).toBe('old result')
+    expect(failedTaskIds).toEqual([])
+  })
+
+  it('P0: 纠偏重试任务(本批执行且出现在 priorResults)不被标记 preloaded,新结果不被丢弃', async () => {
+    // 生命周期审查抓到的 overlap ❌: 纠偏后任务置回 pending,下一迭代它同时在
+    // priorResults(旧 result) 和本批 readyTasks(重跑)。若被标记 preloaded,
+    // handleExecution 会误跳过本批真实执行的新结果 → 任务滞留 pending 永久不完成
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'retry result v2' }
+    })
+    const tasks = [
+      { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
+    ]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    // t1 上一轮执行过(旧 result 在 allResults),本批又要重跑(纠偏/redo)
+    const priorResults = new Map<string, string>([['t1', 'old result v1']])
+    const { results, preloadedIds, failedTaskIds } = await executeTaskBatch(
+      tasks, agents, vi.fn(), undefined, undefined, priorResults
+    )
+    // 本批执行的任务即使出现在 priorResults 也不标记 preloaded
+    expect(preloadedIds).not.toContain('t1')
+    // 本批真实执行的新结果覆盖旧结果,handleExecution 会正常处理它
+    expect(results.get('t1')?.result).toBe('retry result v2')
+    expect(failedTaskIds).toEqual([])
+  })
+
   it('respects batch ordering (batch 1 waits for batch 0)', async () => {
     const callOrder: string[] = []
     mockAdapterSend.mockImplementation(async function* () {

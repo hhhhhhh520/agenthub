@@ -1040,3 +1040,45 @@ describe('ISSUE-008 审查整改 — blocked 任务依赖补齐自动复活', ()
     expect(task2Revived).toBe(false)
   })
 })
+
+describe('Execution — P0 重放 bug(已完成任务不重跑 success 处理)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockMessageCreate.mockResolvedValue({})
+  })
+
+  it('P0: 预装的历史任务被跳过,不重跑 monitoring LLM 不重复发完成事件', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    // 场景: redo/续跑/多批执行——task-a 已完成(预装历史),task-b 待执行。
+    // allResults 预装 task-a 的 result → executeTaskBatch 把它标记为 preloaded
+    const taskA = makeTask({ id: 'task-a', status: 'completed', result: 'A 已完成', declaredFiles: '[]' })
+    const taskB = makeTask({ id: 'task-b', status: 'pending', declaredFiles: '[]' })
+    mocks.mockTaskFindMany.mockResolvedValue([taskA, taskB])
+
+    // executeTaskBatch 返回: 预装 task-a(历史) + 本批新执行 task-b,preloadedIds 标记历史
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([
+        ['task-a', { result: 'A 已完成' }],
+        ['task-b', { result: 'B 新结果' }],
+      ]),
+      preloadedIds: ['task-a'],
+      failedTaskIds: [],
+      failedTaskReasons: {},
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false, quality: 'good' }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 真回归守卫: 旧代码无 preloadedIds 跳过,会对 task-a 也跑 monitoring LLM → 2 次;
+    // 新代码只审本批新执行 task-b → 1 次
+    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
+    // 旧代码会重复发 "任务 task-a 完成";新代码跳过预装历史 → 不发
+    expect(sendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ content: '任务 task-a 完成' })
+    )
+  })
+})
