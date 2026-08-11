@@ -1,14 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mocks ---
-const { mockSessionFindUnique, mockSessionUpdate } = vi.hoisted(() => ({
+// P4 T1: transitionPhase 补记代码驱动转移 -> appendDecisionTrace 用 session.updateMany,加 mock
+const { mockSessionFindUnique, mockSessionUpdate, mockSessionUpdateMany } = vi.hoisted(() => ({
   mockSessionFindUnique: vi.fn(),
   mockSessionUpdate: vi.fn().mockResolvedValue(undefined),
+  mockSessionUpdateMany: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate },
+    session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate, updateMany: mockSessionUpdateMany },
   },
 }))
 
@@ -173,6 +175,8 @@ describe('state-machine: canonicalCorrect (Hybrid 3 条纠正)', () => {
 describe('state-machine: transitionPhase', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // P4 T1: 默认让补记的 appendDecisionTrace 一次成功(合法写库后走 updateMany 条件写),旧测试不受 retry 噪音影响
+    mockSessionUpdateMany.mockResolvedValue({ count: 1 })
   })
 
   it('旁路 action 不读不写库，直接 ok', async () => {
@@ -239,6 +243,50 @@ describe('state-machine: transitionPhase', () => {
     const r = await transitionPhase('s1', 'align_confirm')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('align_pm')
+  })
+
+  // === P4 T1: transitionPhase 补记代码驱动转移（redo/补拆/QA直发exec/自动done 不经决策点） ===
+
+  it('代码驱动转移（无 opts）→ 写库后补记 trace：decisionPoint=transitionPhase, from→to 正确', async () => {
+    mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const r = await transitionPhase('s1', 'align_confirm')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.nextState).toBe('align_pm')
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.align_pm })
+    // 补记：乐观锁条件写 where 带当前 decisionTrace，data 含新条目
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
+    const [arg] = mockSessionUpdateMany.mock.calls[0]
+    expect(arg.where).toEqual({ id: 's1', decisionTrace: '[]' })
+    const arr = JSON.parse(arg.data.decisionTrace)
+    expect(arr).toHaveLength(1)
+    expect(arr[0]).toMatchObject({
+      decisionPoint: 'transitionPhase',
+      inputState: { phase: 'idle', phaseStep: '', state: 'idle' },
+      llmProposal: { action: 'align_confirm', reason: '代码驱动转移（不经决策点）' },
+      corrections: [],
+      validation: { passed: true, validator: 'transitionPhase' },
+      actualTransition: { from: 'idle', to: 'align_pm', action: 'align_confirm', applied: true, escalated: false },
+    })
+  })
+
+  it('recordTrace:false（LLM 决策路径抑制）→ 只写 phase 不补记（updateMany 未被调）', async () => {
+    mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '', decisionTrace: '[]' })
+    const r = await transitionPhase('s1', 'done', { recordTrace: false })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.nextState).toBe('done')
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.done })
+    expect(mockSessionUpdateMany).not.toHaveBeenCalled()
+  })
+
+  it('补记失败（updateMany 抛错）→ transitionPhase 照常 ok:true（trace 是 best-effort,不击穿主路径）', async () => {
+    mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    mockSessionUpdateMany.mockRejectedValue(new Error('db down'))
+    const r = await transitionPhase('s1', 'align_confirm')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.nextState).toBe('align_pm')
+    expect(mockSessionUpdate).toHaveBeenCalledTimes(1) // phase 写成功,补记失败不击穿
+    // 声明vs实现 Finding 2: 必须断言 append 确实被尝试(updateMany 被调)——否则实现若"根本不补记"此测试也绿
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
   })
 })
 

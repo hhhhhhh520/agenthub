@@ -152,7 +152,10 @@ export async function handleOrchestratorDecision(
       ? { from: state, to: transition.nextState, action: decision.action, applied: true, escalated: false }
       : { from: state, to: state, action: decision.action, applied: false, escalated: true },
   }
-  await appendDecisionTrace(sessionId, sessionPhase.decisionTrace, traceEntry)
+  // 审查整改(攻击者⚠️3.2): 决策点 append 失败(null: DB 异常/乐观锁重试超限)时,后续 handler 的
+  // transitionPhase 不得抑制——否则该次实际 phase 写入无任何 trace,击穿"每个 phase 写入都入 trace"不变量。
+  // decisionRecorded=false -> 抑制点全部转成补记(recordTrace:true)。
+  const decisionRecorded = (await appendDecisionTrace(sessionId, sessionPhase.decisionTrace, traceEntry)) !== null
 
   if (!transition.ok) {
     sendEvent({ agentId: 'orchestrator', type: 'text', content: `[需人工介入] 当前状态「${state}」下不允许「${decision.action}」。${transition.reason}。请调整指令或手动引导下一步。` })
@@ -179,17 +182,21 @@ export async function handleOrchestratorDecision(
       }
       break
     case 'align_confirm':
-      await handlePMConfirm(message, sessionId, agents, sendEvent)
+      // P4 T1: recordTrace 传 !decisionRecorded——决策点已记则抑制,append 失败则不抑制兜底
+      await handlePMConfirm(message, sessionId, agents, sendEvent, { recordTrace: !decisionRecorded })
       break
     case 'align_decompose':
       // P2 待办④: 0 任务/超时 handleArchitectPlan 返回 false(已发 error+replan),显式中止,与 transitionToExecution 契约一致
-      if (!(await handleArchitectPlan(message, sessionId, agents, sendEvent))) return
+      // P4 T1: recordTrace:false——决策点已记 align_decompose,防 handleArchitectPlan 内部 transitionPhase 双记
+      if (!(await handleArchitectPlan(message, sessionId, agents, sendEvent, { recordTrace: !decisionRecorded }))) return
       break
     case 'align_qa':
-      await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline)
+      // P4 T1: recordTrace 传 !decisionRecorded;内部 QA直发exec 恒 recordExecuteTrace:true(代码驱动)
+      await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline, { recordTrace: !decisionRecorded })
       break
     case 'execute':
-      await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline)
+      // P4 T1: recordExecuteTrace 传 !decisionRecorded——决策点已记 execute 则抑制,append 失败则不抑制兜底
+      await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline, { recordExecuteTrace: !decisionRecorded })
       break
     case 'verify':
       // ISSUE-008 已实现：执行层强制 verify 靠 alignment.ts 拆解代码任务时自动追加 verify 任务。
@@ -202,7 +209,8 @@ export async function handleOrchestratorDecision(
       }
       break
     case 'done':
-      await transitionPhase(sessionId, 'done')
+      // P4 T1: recordTrace 传 !decisionRecorded——决策点已记 done 则只写库不双记,append 失败则兜底补记
+      await transitionPhase(sessionId, 'done', { recordTrace: !decisionRecorded })
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
       sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })
       break

@@ -87,10 +87,16 @@ export async function appendDecisionTrace(
       console.warn(`[decision-trace] append 失败: ${err instanceof Error ? err.message : String(err)}`)
       return null
     }
-    // count===0 → 并发冲突：用最新值重读重试
-    const fresh = await prisma.session.findUnique({ where: { id: sessionId }, select: { decisionTrace: true } })
-    if (!fresh) return null
-    base = fresh.decisionTrace ?? '[]'
+    // count===0 → 并发冲突：用最新值重读重试（审查整改: 重读在 try/catch 内,兑现"不抛出"契约——
+    // P4 T1 后此函数被 transitionPhase 调用,重试读抛错会传导让"phase 已写"误报失败）
+    try {
+      const fresh = await prisma.session.findUnique({ where: { id: sessionId }, select: { decisionTrace: true } })
+      if (!fresh) return null
+      base = fresh.decisionTrace ?? '[]'
+    } catch (err) {
+      console.warn(`[decision-trace] 重试重读失败: ${err instanceof Error ? err.message : String(err)}`)
+      return null
+    }
   }
   console.warn(`[decision-trace] 乐观锁重试超限，放弃追加 sessionId=${sessionId}`)
   return null

@@ -25,11 +25,17 @@ export function buildVerifyDescription(codeTasks: Array<{ description: string; d
   return `[系统验证任务] 验证以下代码任务的产出物是否真实可用。请逐项实际检查产出文件（是否存在、语法是否正确、能否运行），不要修改任何文件，只检查并报告：\n${lines.join('\n')}\n逐项给出结论；全部通过回复"验证通过"，有问题的项列明具体问题。`
 }
 
+/**
+ * PM 需求确认。仅被 LLM 决策路径（chat-router align_confirm）调用。
+ * P4 T1: opts.recordTrace 透传给内部 transitionPhase——决策点已记 align_confirm,默认抑制(false);
+ * 决策点 append 失败时 chat-router 传 true 兜底补记,防丢审计。
+ */
 export async function handlePMConfirm(
   message: string,
   sessionId: string,
   agents: AgentConfig[],
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  opts?: { recordTrace?: boolean }
 ) {
   let currentAgents = agents
 
@@ -58,7 +64,9 @@ export async function handlePMConfirm(
     }
   }
 
-  await transitionPhase(sessionId, 'align_confirm')
+  // P4 T1: recordTrace 默认 false(handlePMConfirm 仅 LLM 决策路径调用,决策点已记 align_confirm);
+  // 决策点 append 失败时 chat-router 传 true 兜底补记
+  await transitionPhase(sessionId, 'align_confirm', { recordTrace: opts?.recordTrace ?? false })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const pmPrompt = PM_CONFIRMATION_PROMPT.replace('{userMessage}', message)
@@ -110,12 +118,15 @@ export async function handlePMConfirm(
  * 架构师拆解任务。返回 true=成功(任务全建 + phase 推进), false=0 任务或拆解超时(未写 phase,调用方应中止)。
  * P2 待办④: 0 任务时不把 phase 空转 align_arch(旧代码顶部先 transitionPhase,0 任务也停在对齐态)——
  * phase 转移到拆解成功且任务全建之后,0 任务持久化 [REPLAN] 标记 + 等用户重述;拆解超时同样中止。
+ * P4 T1: opts.recordTrace 透传给内部 transitionPhase——LLM 决策路径(chat-router)传 false(决策点已记)；
+ * 代码驱动路径(transitionToExecution 0-task 补拆)省略即 true(默认补记)。
  */
 export async function handleArchitectPlan(
   message: string,
   sessionId: string,
   agents: AgentConfig[],
-  sendEvent: SendEvent
+  sendEvent: SendEvent,
+  opts?: { recordTrace?: boolean }
 ): Promise<boolean> {
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
   // P2 待办④: 上一轮拆解 0 任务([REPLAN] 标记)时用最新 user 重述,否则用首条需求——
@@ -241,7 +252,8 @@ export async function handleArchitectPlan(
 
   // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
   // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
-  await transitionPhase(sessionId, 'align_decompose')
+  // P4 T1: recordTrace 默认 true(代码驱动补拆补记),LLM 决策路径由 chat-router 传 false
+  await transitionPhase(sessionId, 'align_decompose', { recordTrace: opts?.recordTrace ?? true })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const planSummary = formatArchitectPlan(scheduledTasks, agents)
@@ -251,14 +263,22 @@ export async function handleArchitectPlan(
   return true
 }
 
+/**
+ * 对齐 Q&A（多 Agent 整理问题）。align_qa 入口仅被 LLM 决策路径（chat-router align_qa）调用。
+ * P4 T1: opts.recordTrace 透传给内部 transitionPhase——决策点已记 align_qa,默认抑制(false);
+ * 决策点 append 失败时 chat-router 传 true 兜底补记。内部"无疑问直发 exec"恒为代码驱动(recordExecuteTrace:true)。
+ */
 export async function handleAgentQA(
   message: string,
   sessionId: string,
   agents: AgentConfig[],
   sendEvent: SendEvent,
-  globalDeadline?: number
+  globalDeadline?: number,
+  opts?: { recordTrace?: boolean }
 ) {
-  await transitionPhase(sessionId, 'align_qa')
+  // P4 T1: recordTrace 默认 false(handleAgentQA 入口仅 LLM 决策路径,决策点已记 align_qa);
+  // 决策点 append 失败时 chat-router 传 true 兜底补记
+  await transitionPhase(sessionId, 'align_qa', { recordTrace: opts?.recordTrace ?? false })
 
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
   const originalRequest = history.find(m => m.role === 'user')?.rawContent || ''
@@ -321,7 +341,8 @@ export async function handleAgentQA(
     sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'agent_qa' })
   } else {
     sendEvent({ agentId: 'orchestrator', type: 'text', content: '所有 Agent 无疑问，开始执行...' })
-    await transitionToExecution(sessionId, agents, sendEvent, undefined, undefined, globalDeadline)
+    // P4 T1: 无疑问直发 exec = 代码驱动转移(QA 直发 exec),recordExecuteTrace:true 补记
+    await transitionToExecution(sessionId, agents, sendEvent, undefined, undefined, globalDeadline, { recordExecuteTrace: true })
   }
 }
 
@@ -331,7 +352,8 @@ export async function transitionToExecution(
   sendEvent: SendEvent,
   userMessage?: string,
   orchSessionId?: string,
-  globalDeadline?: number
+  globalDeadline?: number,
+  opts?: { recordExecuteTrace?: boolean }
 ) {
   // 兜底：Task 为空时先自动补拆，再进入 execution。
   // 顺序关键：不能先写 exec 再补拆（会写回 align_arch，执行期间 phase 停在对齐态、
@@ -340,11 +362,16 @@ export async function transitionToExecution(
   if (existingTasks.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'status', content: '任务列表为空，正在自动拆解...' })
     // P2 待办④: 补拆 0 任务(handleArchitectPlan 返回 false)则中止,不进 execute 空跑 handleExecution
+    // P4 T1: 0-task 补拆 = 代码驱动,handleArchitectPlan 省略 opts -> recordTrace 默认 true 补记。
+    // 审查锁定(声明vs实现 Finding 4): 此分支只从代码驱动路径触发——chat-router execute case 有 0-task
+    // 守卫(idle 闸门/非 idle 都要求 tasks>0),LLM execute 路径不可能进这里;若未来取消守卫,会出现
+    // "决策点已记 execute + 补拆补记 align_decompose"的转移分歧 + 缺 align_arch→exec 边,禁止打破此前提。
     const ok = await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
     if (!ok) return
   }
 
-  await transitionPhase(sessionId, 'execute')
+  // P4 T1: recordTrace 默认 true(代码驱动补记);LLM 决策路径(chat-router 'execute')显式传 false 防双记
+  await transitionPhase(sessionId, 'execute', { recordTrace: opts?.recordExecuteTrace ?? true })
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
 
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
