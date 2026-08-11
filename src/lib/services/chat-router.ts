@@ -2,11 +2,25 @@ import { prisma } from '@/lib/db'
 import { getOrchestratorDecision, executeSingleAgent, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildContextFromHistory } from './context-builder'
 import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review'
-import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution } from './alignment'
+import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution, isCodeTask } from './alignment'
 import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
-import { stateFromSession, applyTransition, canonicalCorrect, transitionPhase } from '@/lib/orchestrator/state-machine'
+import { stateFromSession, applyTransition, canonicalCorrect, transitionPhase, idleExecuteGate } from '@/lib/orchestrator/state-machine'
+
+/**
+ * safe-parse declaredFiles：架构师 LLM 拆解可能输出畸形 declared_files（字符串/数字等），
+ * 裸 JSON.parse 得到非数组会在 isCodeTask 的 .some() 处抛 TypeError 击穿整个决策点。
+ * 畸形 → 降级为 []（非代码），fail-safe 不击穿（审查抓出）。
+ */
+export function parseDeclaredFiles(raw: string | null): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 /**
  * 判断消息是否是"创建 Agent"意图（chat route 的路由启发式）。
@@ -71,11 +85,13 @@ export async function handleOrchestratorDecision(
     decision = { ...decision, action: correction.redirect, reason: `${decision.reason}（规范化纠正 -> ${correction.redirect}）` }
   }
 
-  // 既有业务守卫：execute 无任务 -> align_decompose（非转移规则，保留）
+  // P2 idle→execute 确定性闸门（决定 3）：idle 态跳步执行需过 idleExecuteGate（有任务且全非代码），
+  // 否则回对齐拆解——跳步不是"LLM 说简单就简单"。非 idle 态保留 0-task 守卫（补拆，T5）。
   if (decision.action === 'execute') {
-    const taskCount = await prisma.task.count({ where: { sessionId } })
-    if (taskCount === 0) {
-      decision = { ...decision, action: 'align_decompose', reason: '尚无任务，需架构师先拆解' }
+    const tasks = await prisma.task.findMany({ where: { sessionId }, select: { description: true, declaredFiles: true } })
+    const hasCodeTask = tasks.some(t => isCodeTask({ description: t.description, declaredFiles: parseDeclaredFiles(t.declaredFiles) }))
+    if (state === 'idle' ? !idleExecuteGate(tasks.length, hasCodeTask) : tasks.length === 0) {
+      decision = { ...decision, action: 'align_decompose', reason: state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解' }
     }
   }
 
@@ -85,6 +101,14 @@ export async function handleOrchestratorDecision(
     const unfinished = await prisma.task.count({ where: { sessionId, status: { notIn: ['completed', 'blocked'] } } })
     if (unfinished > 0) {
       decision = { ...decision, action: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` }
+    } else {
+      // §5.3: 有 verify 任务但未 completed（blocked 计入 allDone，会漏）-> 不关闭会话。
+      // verify 由 alignment.ts 拆解代码任务时自动追加，blocked 意味着验证被依赖失败波及，
+      // 放行 done 会造成"完成但未验证"。
+      const verify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } }, select: { status: true } })
+      if (verify && verify.status !== 'completed') {
+        decision = { ...decision, action: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` }
+      }
     }
   }
 
