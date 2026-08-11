@@ -9,7 +9,7 @@ import { pickSensitive } from './sensitive-paths'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
-import { transitionPhase } from '@/lib/orchestrator/state-machine'
+import { transitionPhase, MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
 import type { SendEvent } from './review'
 
 /** 路径归一化：统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写) */
@@ -134,7 +134,10 @@ export async function handleExecution(
     }
   }
   let hasProgress = true
-  const MAX_ITERATIONS = tasks.length * 3
+  // P2: 外层循环上限随 correction 上限联动——单任务最坏 = 初跑 + MAX_CORRECTION_RETRIES 次纠偏
+  // + 1 次熔断判定。旧 max 2 用 *3，放宽到 max 3 后 *3 会在第 3 轮截断第 4 轮熔断判定，
+  // 导致熔断消息死代码、任务滞留 pending 下次再烧一次执行（审查抓出）。
+  const MAX_ITERATIONS = tasks.length * (MAX_CORRECTION_RETRIES + 1)
   let iteration = 0
 
   const deadline = globalDeadline ?? Date.now() + 50 * 60 * 1000
@@ -460,7 +463,8 @@ export async function handleExecution(
             sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg })
 
             const retryCount = task?.correctionCount ?? 0
-            if (retryCount < 2) {
+            // P2: max 2 → MAX_CORRECTION_RETRIES(3)，与 review.ts 委派路径合一（§5.4）
+            if (retryCount < MAX_CORRECTION_RETRIES) {
               const correctionTrace = appendTrace(task?.trace || '[]', {
                 ts: new Date().toISOString(), event: 'correction', message: review.correctionNote, attempt: retryCount + 1,
               })
@@ -485,7 +489,7 @@ export async function handleExecution(
               sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
               hasProgress = true
             } else {
-              sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 "${task?.description}" 纠偏重试已达上限(2次)，保持完成状态` })
+              sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 "${task?.description}" 纠偏重试已达上限(${MAX_CORRECTION_RETRIES}次)，保持完成状态` })
             }
           }
         }

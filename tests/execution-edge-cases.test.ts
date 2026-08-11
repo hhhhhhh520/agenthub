@@ -133,10 +133,10 @@ describe('Execution — correction retry', () => {
     )
   })
 
-  it('stops retrying after 2 corrections (熔断器)', async () => {
+  it('stops retrying after 3 corrections (熔断器, P2 合一 max 3)', async () => {
     const { handleExecution } = await import('@/lib/services/execution')
 
-    const task = makeTask({ correctionCount: 2 }) // Already at limit
+    const task = makeTask({ correctionCount: 3 }) // Already at limit (max 3)
     mocks.mockTaskFindMany.mockResolvedValue([task])
     mocks.mockExecuteTaskBatch.mockResolvedValue({
       results: new Map([['task-1', { result: 'output', sessionId: 'cli-s1' }]]),
@@ -152,9 +152,66 @@ describe('Execution — correction retry', () => {
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
 
-    // Should NOT retry (correctionCount already 2)
+    // Should NOT retry (correctionCount already 3)
     expect(sendEvent).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('纠偏重试已达上限') })
+    )
+  })
+
+  it('P2 回归守卫: correctionCount=2 时第 3 次仍会重试（上限从 2 合一为 3）', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ correctionCount: 2 }) // 已用 2 次，max 3 下应继续第 3 次
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'output', sessionId: 'cli-s1' }]]),
+      failedTaskIds: [],
+    })
+    // Monitoring 判 needsCorrection → 应置 pending 重试(attempt 3)，不是已达上限
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: true,
+      correctionNote: '还是有问题',
+      quality: 'poor',
+    }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 应发出 pending 重试事件且 retryCount=3
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'task_status', content: expect.stringContaining('"status":"pending"') })
+    )
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'task_status', content: expect.stringContaining('"retryCount":3') })
+    )
+  })
+
+  it('P2 回归守卫: 单任务连续 needsCorrection 4 轮后熔断为 completed（MAX_ITERATIONS 随 max 3 联动）', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask({ correctionCount: 0 }) // 从 0 自然增长：初跑 + 3 次纠偏 = 4 轮
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'output', sessionId: 'cli-s1' }]]),
+      failedTaskIds: [],
+    })
+    // Monitoring 每次都 needsCorrection，走完 count 0→1→2→3，第 4 轮熔断
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: true,
+      correctionNote: '还是要重写',
+      quality: 'poor',
+    }) })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 第 4 轮应收到熔断消息（旧 MAX_ITERATIONS=*3 会在第 3 轮截断，收不到）
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining('纠偏重试已达上限') })
+    )
+    // 任务最终 completed，不滞留 pending 等下次调用再烧一次执行
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'task_status', content: expect.stringContaining('"status":"completed"') })
     )
   })
 
