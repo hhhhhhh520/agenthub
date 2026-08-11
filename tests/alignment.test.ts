@@ -191,6 +191,56 @@ describe('transitionToExecution — task-empty fallback', () => {
       expect.objectContaining({ type: 'phase_transition', content: 'execution' })
     )
   })
+
+  it('P2 回归守卫 T5: 补拆 0 任务 → 中止,不进 execute/handleExecution', async () => {
+    mocks.mockTaskFindMany.mockResolvedValue([]) // 无任务 → 触发兜底补拆
+    mocks.mockDecomposeTasks.mockResolvedValue([]) // 补拆也 0 任务
+    mocks.mockTaskCreate.mockResolvedValue({})
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '做个复杂需求')
+
+    // 不进 execute(phase 不写 execution),不调 handleExecution
+    // 旧代码: 补拆 0 任务后仍 transitionPhase('execute') + handleExecution → 红
+    expect(mocks.mockSessionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { phase: 'execution', phaseStep: '' } })
+    )
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 回归守卫 T5: handleArchitectPlan 拆解 0 任务 → 返回 false,phase 不空转,等用户重述', async () => {
+    mocks.mockMessageFindMany.mockResolvedValue([])
+    mocks.mockDecomposeTasks.mockResolvedValue([])
+
+    const result = await handleArchitectPlan('做个复杂需求', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    // phase 不空转 align_arch(旧代码顶部先 transitionPhase('align_decompose') → 红)
+    expect(mocks.mockSessionUpdate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { phase: 'alignment', phaseStep: 'architect_plan' } })
+    )
+    // 等用户重述
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input' })
+    )
+  })
+
+  it('P2 待办④: [REPLAN] 标记后重述流进拆解(用最新 user 消息,不冻结首条)', async () => {
+    mocks.mockMessageFindMany.mockResolvedValue([
+      { role: 'user', rawContent: '做个网站' },
+      { role: 'orchestrator', rawContent: '[REPLAN]未能生成有效任务方案，请重新描述需求或手动指定任务' },
+      { role: 'user', rawContent: '做个带登录的网站' },
+    ])
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'uuid-1', description: 'task1', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+    ])
+    mocks.mockTaskCreate.mockResolvedValue({})
+
+    await handleArchitectPlan('做个带登录的网站', 'sess1', agents, mocks.mockSendEvent)
+
+    // decomposeTasks 收到的应是最新重述而非冻结首条(旧代码: 首条 '做个网站' 不含 '带登录' → 红)
+    const [req] = mocks.mockDecomposeTasks.mock.calls[0]
+    expect(String(req)).toContain('带登录')
+  })
 })
 
 // ── ISSUE-008: 执行层强制 verify(自动创建验证任务) ──

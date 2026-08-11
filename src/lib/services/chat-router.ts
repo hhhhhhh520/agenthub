@@ -150,7 +150,8 @@ export async function handleOrchestratorDecision(
       await handlePMConfirm(message, sessionId, agents, sendEvent)
       break
     case 'align_decompose':
-      await handleArchitectPlan(message, sessionId, agents, sendEvent)
+      // P2 待办④: 0 任务/超时 handleArchitectPlan 返回 false(已发 error+replan),显式中止,与 transitionToExecution 契约一致
+      if (!(await handleArchitectPlan(message, sessionId, agents, sendEvent))) return
       break
     case 'align_qa':
       await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline)
