@@ -8,6 +8,7 @@ import {
   Home,
   FolderKanban,
   Bot,
+  BarChart3,
   Sun,
   Moon,
   ChevronsLeft,
@@ -31,7 +32,7 @@ const navItems = [
   { title: "工作区", href: "/", icon: Home },
   { title: "项目", href: "/projects", icon: FolderKanban },
   { title: "智能体", href: "/agents", icon: Bot },
-
+  { title: "流程分析", href: "/analytics", icon: BarChart3 },
 ]
 
 export function AppSidebar() {
