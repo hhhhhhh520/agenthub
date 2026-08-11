@@ -272,6 +272,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **phase/phaseStep 写入必须经 `transitionPhase`(`src/lib/orchestrator/state-machine.ts`),禁止散点 `prisma.session.update({ phase })`** — P1(2026-08-11):6 处散点写入已收归中央转移表校验(applyTransition 查 TRANSITIONS,非法 fail-closed 不写)。裸写 phase 绕过转移表,可把 phase 写到转移表之外的值。新增 phase 写入点必须走 transitionPhase;LLM 提议 action 校验在 chat-router 决策点(纠正→守卫→applyTransition→非法 escalate 不静默)
 - **idle→execute 跳步必须过 `idleExecuteGate` 确定性闸门,exec→done 必须有 verify 任务 completed(若有代码任务)** — P2(2026-08-11):idle 态 LLM 提议 execute 时查"有任务且全非代码"(isCodeTask)才放行,否则 redirect align_decompose——跳步不是"LLM 说简单就简单"(ISSUE-008 同构);done 守卫在 unfinished 检查后补 verify-completed(blocked 计入 allDone 会漏,§5.3)。改闸门/守卫必须同步 chat-router 决策点与 tests
 - **redo 路由必须经状态机闸门(`applyTransition(state,'execute')`),align_pm/未知态 fail-closed 拒绝** — P2(2026-08-11,待办③):redo/route.ts 调 handleExecution 前校验 phase,非法(align_pm 需求确认中)400、未知/脏 phase 400(HTTP 变更接口不做 idle 兜底放行),`transitionPhase('execute')` 前置且判返回值(失败 500)。绕过闸门=phase 不对时硬跑 handleExecution,allDone→done 转移可能 fail-closed 拒写
+- **每轮 LLM 决策必须写 `Session.decisionTrace`(先落库再派发 handler)** — P3(2026-08-11):handleOrchestratorDecision 记决策输入 6 字段(llmProposal/corrections/validation/actualTransition/inputState/decisionPoint),escalate 也记(escalated=true)。删 trace 钩子 → 审计数据断供 + P4 可视化/B 流程挖掘无数据。append 走 `appendDecisionTrace`(safe-parse + 乐观锁 updateMany where decisionTrace + 3 次重读重试),别裸 prisma.session.update 追加
 
 ### Chat API Session Lock
 
