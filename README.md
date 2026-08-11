@@ -11,7 +11,7 @@ IM 风格的多 Agent 协作平台。用户通过聊天与多个 AI Agent 协作
 - **Contract v1 契约化协作** — `<authoritative_input>` 权威注入 + declaredFiles 分级越界校验 + outputSchema 结构校验，三契约管住 LLM 的不可靠性
 - **进程池 + 配置指纹** — 每(会话,Agent,配置)独立 CLI 进程，配置 hash 隔离，10 分钟空闲回收，优雅关闭
 - **双 CLI 适配层** — Claude Code + OpenCode 统一抽象，spawn 子进程 + NDJSON 流式解析，工具白名单硬限制
-- **测试质量方法论** — 1000 单元测试 + 每次修复配"真回归守卫"（回退修复测试必红）+ pre-commit 三视角审查（攻击者/生命周期/声明vs实现）
+- **测试质量方法论** — 1040 单元测试 + 每次修复配"真回归守卫"（回退修复测试必红）+ pre-commit 三视角审查（攻击者/生命周期/声明vs实现）
 
 ## 功能
 
@@ -100,7 +100,7 @@ npm run dev
 ## 测试
 
 ```bash
-# 运行全部单元测试（1000 个，含覆盖率报告）
+# 运行全部单元测试（1040 个，含覆盖率报告）
 npm test
 
 # 运行 E2E 测试(默认 skip,需 MIMO_TEST_API_KEY 环境变量)
@@ -119,7 +119,7 @@ src/lib/orchestrator/ — 编排器（9 action 智能编排 + 调度 + 执行）
 src/lib/services/    — 业务服务(chat-router / alignment / execution / review / shadow-git / schema-validator / sensitive-paths)
 src/mcp-server/      — MCP 协作服务器（Agent 间共享工具）
 src/lib/hooks/       — React hooks
-tests/               — Vitest 单元测试（1000 个测试 + 1 个 E2E gate）
+tests/               — Vitest 单元测试（1040 个测试 + 1 个 E2E gate）
 prisma/schema.prisma — 数据模型
 docs/                — 设计文档和参考资料
 issues/              — 开发问题记录
