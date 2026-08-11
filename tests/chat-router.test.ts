@@ -114,26 +114,38 @@ describe('handleOrchestratorDecision', () => {
   it('action=align_confirm → calls handlePMConfirm', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_confirm', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignPm)
-    expect(mockHandlePMConfirm).toHaveBeenCalled()
+    // P4 T1 (声明vs实现 Finding 5): 决策点已记(append 成功) → 抑制,传 recordTrace:false 防双记
+    expect(mockHandlePMConfirm).toHaveBeenCalledWith('hello', 's1', agents, sendEvent, { recordTrace: false })
   })
 
   it('action=align_decompose → calls handleArchitectPlan', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_decompose', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignArch)
-    expect(mockHandleArchitectPlan).toHaveBeenCalled()
+    // P4 T1: 决策点已记 → 抑制,传 recordTrace:false 防 handleArchitectPlan 内部 transitionPhase 双记
+    expect(mockHandleArchitectPlan).toHaveBeenCalledWith('hello', 's1', agents, sendEvent, { recordTrace: false })
   })
 
   it('action=align_qa → calls handleAgentQA', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_qa', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignArch)
-    expect(mockHandleAgentQA).toHaveBeenCalled()
+    // P4 T1: 决策点已记 → 抑制 align_qa 入口写
+    expect(mockHandleAgentQA).toHaveBeenCalledWith('hello', 's1', agents, sendEvent, undefined, { recordTrace: false })
   })
 
   it('action=execute → calls transitionToExecution', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     mockTaskFindMany.mockResolvedValueOnce([{ description: '有任务', declaredFiles: '[]' }]) // 非 idle,有任务即可执行
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
-    expect(mockTransitionToExecution).toHaveBeenCalled()
+    // P4 T1: 决策点已记 execute → 抑制内部 transitionPhase,传 recordExecuteTrace:false
+    expect(mockTransitionToExecution).toHaveBeenCalledWith('s1', agents, sendEvent, 'hello', 'orch-ses', undefined, { recordExecuteTrace: false })
+  })
+
+  it('P4 T1 审查整改(攻击者⚠️3.2): 决策点 append 失败 → handler 不抑制(recordTrace:true 兜底补记)', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_confirm', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockSessionUpdateMany.mockRejectedValue(new Error('db down')) // 决策点 append 写库异常 → appendDecisionTrace 返回 null
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignPm)
+    // decisionRecorded=false → 抑制转兜底补记: 否则该次 phase 写入无任何 trace
+    expect(mockHandlePMConfirm).toHaveBeenCalledWith('hello', 's1', agents, sendEvent, { recordTrace: true })
   })
 
   it('action=execute with 0 tasks → redirect to align_decompose', async () => {
@@ -182,9 +194,12 @@ describe('handleOrchestratorDecision', () => {
     mockSessionFindUnique.mockResolvedValueOnce({ phase: 'idle', phaseStep: '' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
     // 回归守卫:必须经 transitionPhase(先读 state 再写),回退为裸 prisma.session.update 必红
-    expect(mockSessionFindUnique).toHaveBeenCalledWith({ where: { id: 's1' }, select: { phase: true, phaseStep: true } })
+    // P4 T1: transitionPhase 读 select 含 decisionTrace(补记代码驱动转移需读当前值)
+    expect(mockSessionFindUnique).toHaveBeenCalledWith({ where: { id: 's1' }, select: { phase: true, phaseStep: true, decisionTrace: true } })
     expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+    // P4 T1: 决策点记 done(1 次 updateMany) + transitionPhase recordTrace:false 抑制 → 不双记,总恰 1 次
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
   })
 
   it('getOrchestratorDecision throws → falls back to handleOrchestratorChat', async () => {
