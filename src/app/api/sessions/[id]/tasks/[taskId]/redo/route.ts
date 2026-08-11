@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { handleExecution } from '@/lib/services/execution'
 import { acquireSessionLock } from '@/lib/session-lock'
+import { stateFromSession, applyTransition, transitionPhase } from '@/lib/orchestrator/state-machine'
 
 export async function POST(
   request: Request,
@@ -34,6 +35,32 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
   }
   if (task.status !== 'failed' && task.status !== 'blocked') {
     return NextResponse.json({ error: `Cannot redo task with status: ${task.status}` }, { status: 400 })
+  }
+
+  // P2 待办③: redo 路由经编排闸门——调 handleExecution 前先过状态机(此前直接硬跑,绕过决策点)。
+  // idle/align_arch/align_qa/exec/done 态 execute 均合法;仅 align_pm 拒绝(400,不静默,清改任务前最后一道闸)。
+  // 攻击者审查 Q1: 未知/脏 phase(含 alignment+未知 step、phase=null、session 缺失)不得用 idle 兜底放行——
+  // HTTP 变更接口 fail-closed,宁可是误报不可把 align_pm 漂移漏放。
+  const session = await prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true } })
+  const rawPhase = session?.phase ?? null
+  const rawStep = session?.phaseStep ?? ''
+  const isKnownState = rawPhase === 'idle' || rawPhase === 'execution' || rawPhase === 'done'
+    || (rawPhase === 'alignment' && ['pm_confirm', 'architect_plan', 'agent_qa'].includes(rawStep))
+  if (!isKnownState) {
+    return NextResponse.json({ error: '会话状态异常，无法执行重做' }, { status: 400 })
+  }
+  const state = stateFromSession(rawPhase, rawStep)
+  const gate = applyTransition(state, 'execute')
+  if (!gate.ok) {
+    return NextResponse.json({ error: '会话处于需求确认阶段，无法直接重做，请先完成对齐' }, { status: 400 })
+  }
+
+  // P2 待办③: 闸门放行后先推进 phase 进 exec（在 reset 之前，fail-closed——transitionPhase 失败则
+  // 500 拒绝，不留"reset 了但 phase 没进 exec"的中间态；no-agent 早退路径因此 phase 也一致）。
+  // handleExecution 结束的 allDone→done 转移必须从 exec 出发（此前 phase 可能停在对齐态，allDone 时 fail-closed 拒写 done）
+  const phaseRes = await transitionPhase(sessionId, 'execute')
+  if (!phaseRes.ok) {
+    return NextResponse.json({ error: '会话状态校验失败，无法执行重做' }, { status: 500 })
   }
 
   // 2. ❌-2 修复:重置 task 状态 + 清 cliSessionId(让 agent 起新 session,

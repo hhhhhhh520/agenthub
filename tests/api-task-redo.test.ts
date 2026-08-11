@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const {
   mockTaskFindUnique, mockTaskUpdate, mockTaskFindMany,
-  mockSessionFindUnique, mockMessageFindMany, mockAgentFindMany,
+  mockSessionFindUnique, mockSessionUpdate, mockMessageFindMany, mockAgentFindMany,
   mockSessionMemberUpdateMany, mockHandleExecution,
 } = vi.hoisted(() => ({
   mockTaskFindUnique: vi.fn(),
   mockTaskUpdate: vi.fn(),
   mockTaskFindMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
+  mockSessionUpdate: vi.fn(),
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockAgentFindMany: vi.fn().mockResolvedValue([]),
   mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -18,7 +19,7 @@ const {
 vi.mock('@/lib/db', () => ({
   prisma: {
     task: { findUnique: mockTaskFindUnique, update: mockTaskUpdate, findMany: mockTaskFindMany },
-    session: { findUnique: mockSessionFindUnique },
+    session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate },
     message: { findMany: mockMessageFindMany },
     agent: { findMany: mockAgentFindMany },
     sessionMember: { updateMany: mockSessionMemberUpdateMany },
@@ -55,6 +56,9 @@ const FAKE_AGENT = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 默认会话存在且 exec 态(镜像生产):闸门放行、transitionPhase 成功;对齐/异常态用例用 once 覆盖
+  mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '' })
+  mockSessionUpdate.mockResolvedValue({})
   mockMessageFindMany.mockResolvedValue([])
   mockAgentFindMany.mockResolvedValue([{
     id: 'a1', name: '前端', systemPrompt: 'sp', platform: 'claude-code',
@@ -198,5 +202,101 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
       c => c[0].where.id === 't2' && c[0].data.status === 'pending'
     )
     expect(unblock).toBeDefined()
+  })
+
+  it('P2 回归守卫 T4: redo 在 align_pm(需求确认)阶段 → 400 拒绝,不调 handleExecution', async () => {
+    mockTaskFindUnique.mockResolvedValueOnce({
+      id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+      assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'alignment', phaseStep: 'pm_confirm' })
+    mockTaskFindMany.mockResolvedValue([])
+    mockTaskUpdate.mockResolvedValue({})
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toContain('需求确认')
+    // 旧代码: 不查 phase,直接跑 handleExecution;新代码: 闸门拒绝
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 T4: redo 在合法 phase(exec) → 先 transitionPhase 进 exec,再调 handleExecution', async () => {
+    mockTaskFindUnique
+      .mockResolvedValueOnce({
+        id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+        assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+      })
+      .mockResolvedValueOnce({ id: 't1', status: 'completed' })
+    // 持久 mock: gate 与 transitionPhase 各读一次 session
+    mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '' })
+    mockSessionUpdate.mockResolvedValue({})
+    mockTaskFindMany.mockResolvedValue([])
+    mockTaskUpdate.mockResolvedValue({})
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(200)
+    // transitionPhase('execute') 写了 exec 态,确保 handleExecution 结束的 done 转移合法
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'execution', phaseStep: '' } })
+    expect(mockHandleExecution).toHaveBeenCalled()
+  })
+
+  it('P2 T4: transitionPhase 失败(fail-closed) → 500 拒绝,不调 handleExecution', async () => {
+    mockTaskFindUnique.mockResolvedValueOnce({
+      id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+      assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+    // gate 读到 exec 放行,transitionPhase 再读时 session 丢失(模拟并发窗口/DB 异常)
+    mockSessionFindUnique
+      .mockResolvedValueOnce({ phase: 'execution', phaseStep: '' })
+      .mockResolvedValueOnce(null)
+    mockTaskFindMany.mockResolvedValue([])
+    mockTaskUpdate.mockResolvedValue({})
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(500)
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 回归守卫 T4: 未知/脏 phase 不兜底放行 → 400 状态异常,不调 handleExecution', async () => {
+    mockTaskFindUnique.mockResolvedValueOnce({
+      id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+      assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+    // alignment + 未知 step(漂移,如尾部空白):旧代码 stateFromSession 兜底 idle 会放行
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'alignment', phaseStep: 'pm_confirm ' })
+    mockTaskFindMany.mockResolvedValue([])
+    mockTaskUpdate.mockResolvedValue({})
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(400)
+    const body = await res.json()
+    expect(body.error).toContain('状态异常')
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 T4: 5 个合法态 idle/align_arch/align_qa/exec/done 的 redo 均放行并执行', async () => {
+    const legalStates = [
+      { phase: 'idle', phaseStep: '' },
+      { phase: 'alignment', phaseStep: 'architect_plan' },
+      { phase: 'alignment', phaseStep: 'agent_qa' },
+      { phase: 'execution', phaseStep: '' },
+      { phase: 'done', phaseStep: '' },
+    ]
+    for (const s of legalStates) {
+      mockHandleExecution.mockClear()
+      mockTaskFindUnique
+        .mockReset()
+        .mockResolvedValueOnce({ id: 't1', sessionId: 's1', status: 'failed', description: 'x', assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]' })
+        .mockResolvedValueOnce({ id: 't1', status: 'completed' })
+      mockSessionFindUnique.mockReset().mockResolvedValue(s)
+      mockSessionUpdate.mockReset()
+      mockTaskFindMany.mockReset().mockResolvedValue([])
+      mockTaskUpdate.mockReset().mockResolvedValue({})
+
+      const res = await POST(makeReq(), params)
+      expect(res.status).toBe(200)
+      expect(mockHandleExecution).toHaveBeenCalledTimes(1)
+    }
   })
 })
