@@ -10,6 +10,9 @@ export async function GET(
   const { id } = await params
   const session = await prisma.session.findUnique({
     where: { id },
+    // P4 T5: decisionTrace 是内部 analytics（决策审计），不回给客户端——前端不需要，且挖掘数据
+    // 将由 /api/sessions/[id]/process 端点提供（P4 T4 落地）。GET 是前端轮询端点，外泄审计数据无益。
+    omit: { decisionTrace: true },
     include: {
       members: {
         include: {
@@ -47,6 +50,7 @@ export async function GET(
     }
   }
 
+  // decisionTrace 已由 findUnique omit 排除（P4 T5 审查整改: 同 class 泄漏面全收敛——GET/PUT/list 三处）
   return NextResponse.json({ ...session, recoveredTaskCount: stuckTasks.length })
 }
 
@@ -66,6 +70,8 @@ export async function PUT(
   const session = await prisma.session.update({
     where: { id },
     data,
+    // P4 T5 审查整改: PUT 返回体同样排除 decisionTrace（前端 PUT 调用方不消费响应体,泄漏无益）
+    omit: { decisionTrace: true },
   })
   return NextResponse.json(session)
 }

@@ -48,6 +48,17 @@ export interface DecisionTraceEntry {
 /** 写入时补的时间戳（ISO，保证乱序/回放可排序） */
 export type StoredDecisionTraceEntry = DecisionTraceEntry & { ts: string }
 
+/**
+ * P4 T2: 决策轨迹封顶（P3 已知残留②）。旧实现 O(n²) 全量 parse+stringify 无封顶——
+ * 长会话每次 append 重写整个数组。封顶保留最近 N 条，成本退化为 O(N) 常量；
+ * 代价是超长会话丢弃最旧条目（directly-follows 图早期边丢失，B 可接受）。
+ * 已拍板：不拆独立表（保留 P3 JSON 数组结构，避免 schema drift 风险）。
+ */
+export const MAX_DECISION_TRACE_ENTRIES = 500
+
+/** 已就截断告警过的 session（审查整改: 每个 session 首次触顶 warn 一次,不刷屏） */
+const warnedCappedSessions = new Set<string>()
+
 /** safe-parse：畸形 JSON / 非数组 → []（不击穿；与 Task.trace appendTrace 同构） */
 function parseTrace(raw: string | null | undefined): unknown[] {
   if (!raw) return []
@@ -76,7 +87,18 @@ export async function appendDecisionTrace(
   const stored: StoredDecisionTraceEntry = { ts: new Date().toISOString(), ...entry }
   let base = currentTrace ?? '[]'
   for (let attempt = 0; attempt < 3; attempt++) {
-    const next = JSON.stringify([...parseTrace(base), stored])
+    // P4 T2: 封顶保留最近 N 条（slice(-N)）。乐观锁 where 用调用方快照 base（首次可能是未封顶长数组），
+    // data 用封顶后的 next；冲突重读 fresh 后 base 才与 DB 封顶值一致。where/data 契约成立——next 是 base 的纯函数。
+    const entries = [...parseTrace(base), stored]
+    const dropped = entries.length - MAX_DECISION_TRACE_ENTRIES
+    const capped = dropped > 0 ? entries.slice(-MAX_DECISION_TRACE_ENTRIES) : entries
+    if (dropped > 0 && !warnedCappedSessions.has(sessionId)) {
+      // 审查整改(攻击者⚠️+生命周期⚠️Q3): 丢弃最旧审计不再静默——每 session 首次触顶 warn 一次,
+      // 可观测(哪些会话触顶、500 是否够用)且不刷屏。丢弃是有意设计(已拍板封顶),需全量再拆独立表。
+      warnedCappedSessions.add(sessionId)
+      console.warn(`[decision-trace] 决策轨迹触顶(${MAX_DECISION_TRACE_ENTRIES}),丢弃最旧 ${dropped} 条 sessionId=${sessionId}`)
+    }
+    const next = JSON.stringify(capped)
     try {
       const res = await prisma.session.updateMany({
         where: { id: sessionId, decisionTrace: base },

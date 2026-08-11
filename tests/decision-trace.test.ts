@@ -7,7 +7,7 @@ const { mockSessionUpdateMany, mockSessionFindUnique } = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/db', () => ({ prisma: { session: { updateMany: mockSessionUpdateMany, findUnique: mockSessionFindUnique } } }))
 
-import { appendDecisionTrace, checkConformance } from '@/lib/orchestrator/decision-trace'
+import { appendDecisionTrace, checkConformance, MAX_DECISION_TRACE_ENTRIES } from '@/lib/orchestrator/decision-trace'
 import type { DecisionTraceEntry, StoredDecisionTraceEntry } from '@/lib/orchestrator/decision-trace'
 
 const baseEntry: DecisionTraceEntry = {
@@ -87,6 +87,38 @@ describe('appendDecisionTrace（P3 §5.6 safe-append + 乐观锁）', () => {
     mockSessionUpdateMany.mockRejectedValue(new Error('db down'))
     const next = await appendDecisionTrace('s1', '[]', baseEntry)
     expect(next).toBeNull()
+  })
+
+  it('P4 T2: 超过封顶 → 保留最近 N 条,丢弃最旧（O(n²) 退化为 O(N) 常量）', async () => {
+    // 预置满 N 条,再追加 1 条 -> 共 N+1 -> 封顶 slice(-N),最旧 t0 被丢
+    const full = JSON.stringify(
+      Array.from({ length: MAX_DECISION_TRACE_ENTRIES }, (_, i) => ({ ts: `t${i}`, ...baseEntry }))
+    )
+    const next = await appendDecisionTrace('s1', full, baseEntry)
+    const arr = JSON.parse(next!)
+    expect(arr).toHaveLength(MAX_DECISION_TRACE_ENTRIES)
+    expect(arr[0]).toMatchObject({ ts: 't1' }) // t0 被丢弃
+    expect(arr[arr.length - 1]).toMatchObject({ ts: expect.any(String) }) // 新条目保留
+    // 乐观锁 where 用传入 base(未封顶满数组),data 是封顶后的 next
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+      where: { id: 's1', decisionTrace: full },
+      data: { decisionTrace: next },
+    })
+  })
+
+  it('P4 T2 审查整改: 乐观锁冲突 → 重读 fresh(满 500) → 重试封顶收敛（声明vs实现 Finding 7 覆盖）', async () => {
+    // base 是调用方长快照(501 条),DB 已是封顶 500 → 首写 where=长串 count=0 冲突 → 重读 fresh=封顶 → 重写成功
+    const longBase = JSON.stringify(Array.from({ length: MAX_DECISION_TRACE_ENTRIES + 1 }, (_, i) => ({ ts: `b${i}`, ...baseEntry })))
+    const full = JSON.stringify(Array.from({ length: MAX_DECISION_TRACE_ENTRIES }, (_, i) => ({ ts: `c${i}`, ...baseEntry })))
+    mockSessionUpdateMany.mockResolvedValueOnce({ count: 0 }) // 基于过期长快照冲突
+    mockSessionFindUnique.mockResolvedValueOnce({ decisionTrace: full }) // DB 已是封顶 500
+    mockSessionUpdateMany.mockResolvedValueOnce({ count: 1 }) // 重试基于 fresh 封顶值成功
+    const next = await appendDecisionTrace('s1', longBase, baseEntry)
+    const arr = JSON.parse(next!)
+    expect(arr).toHaveLength(MAX_DECISION_TRACE_ENTRIES) // 封顶生效
+    // 重试写: where 用 fresh(封顶值)而非旧长快照——与 DB 匹配,收敛
+    const [retryArg] = mockSessionUpdateMany.mock.calls[1]
+    expect(retryArg.where).toEqual({ id: 's1', decisionTrace: full })
   })
 })
 
