@@ -20,7 +20,7 @@ export type State = 'idle' | 'align_pm' | 'align_arch' | 'align_qa' | 'exec' | '
 export type Action = 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_decompose' | 'align_qa' | 'execute' | 'verify' | 'done'
 
 /** 不转 phase 的旁路 action：合法于任何状态，nextState = 当前态（side interaction） */
-const NON_TRANSITIONING: ReadonlySet<Action> = new Set(['self', 'delegate', 'discuss', 'verify'])
+export const NON_TRANSITIONING: ReadonlySet<Action> = new Set(['self', 'delegate', 'discuss', 'verify'])
 
 /**
  * correction 统一重试上限（P2 合一：review.ts 委派路径与 execution.ts batch 路径共用；
@@ -40,8 +40,9 @@ export const STATE_PHASE: Record<State, { phase: string; phaseStep: string }> = 
   done: { phase: 'done', phaseStep: '' },
 }
 
-/** 转移表（仅转 phase 的 action）：TRANSITIONS[from][action] = to */
-const TRANSITIONS: Record<State, Partial<Record<Action, State>>> = {
+/** 转移表（仅转 phase 的 action）：TRANSITIONS[from][action] = to。
+ *  P3 checkConformance 消费：校验实际转移是否落表内（同时服务 A"是否走非法转移"与 B 流程挖掘）。 */
+export const TRANSITIONS: Record<State, Partial<Record<Action, State>>> = {
   idle: {
     align_confirm: 'align_pm',
     align_decompose: 'align_arch',
@@ -100,9 +101,12 @@ export function applyTransition(state: State, action: string): { ok: true; nextS
   if (NON_TRANSITIONING.has(action as Action)) {
     return { ok: true, nextState: state }
   }
-  const target = TRANSITIONS[state]?.[action as Action]
-  if (target) {
-    return { ok: true, nextState: target }
+  // 自有属性查找：`TRANSITIONS[state]?.[action]` 的属性链查找会被 Object.prototype 成员名
+  // （toString/constructor/valueOf 等）命中继承属性而绕过 fail-closed（P3 攻击者审查抓出，
+  // 静默吞消息 + 污染 trace）。Object.hasOwn 只认表内自有 action。
+  const row = TRANSITIONS[state]
+  if (row && Object.hasOwn(row, action)) {
+    return { ok: true, nextState: row[action as Action] as State }
   }
   return { ok: false, reason: `非法转移：${state} + ${action}` }
 }
