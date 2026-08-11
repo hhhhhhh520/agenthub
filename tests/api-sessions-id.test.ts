@@ -90,6 +90,20 @@ describe('GET /api/sessions/[id]', () => {
       data: { status: 'pending' },
     })
   })
+
+  it('P4 T5: findUnique omit decisionTrace（内部 analytics 不外泄客户端,剥离由 prisma 查询层执行）', async () => {
+    const session = {
+      id: 's1', title: 't',
+      decisionTrace: JSON.stringify([{ ts: 'x', decisionPoint: 'handleOrchestratorDecision' }]),
+      members: [], tasks: [], messages: [],
+    }
+    mockFindUnique.mockResolvedValueOnce(session)
+    const res = await GET(makeReq('GET'), params)
+    expect(res.status).toBe(200)
+    // 回归守卫: 路由必须请求 omit decisionTrace(移除则红)——真正剥离由 prisma 查询层执行,
+    // 前端零处消费该字段(已 grep 核实),omit 后响应天然无该键
+    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({ omit: { decisionTrace: true } }))
+  })
 })
 
 describe('PUT /api/sessions/[id]', () => {
@@ -99,6 +113,7 @@ describe('PUT /api/sessions/[id]', () => {
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: 's1' },
       data: { title: 'new-title' },
+      omit: { decisionTrace: true }, // P4 T5 审查整改: PUT 返回体同样排除
     })
   })
 
@@ -108,6 +123,7 @@ describe('PUT /api/sessions/[id]', () => {
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: 's1' },
       data: { title: 't', projectDir: '/p', isPinned: true },
+      omit: { decisionTrace: true },
     })
   })
 
@@ -120,6 +136,7 @@ describe('PUT /api/sessions/[id]', () => {
     expect(data).not.toHaveProperty('isPinned')
     expect(data).not.toHaveProperty('isArchived')
   })
+  // P4 T5 审查整改: PUT 的 omit 排除已由上方 toHaveBeenCalledWith 含 omit: { decisionTrace: true } 断言覆盖
 })
 
 describe('DELETE /api/sessions/[id]', () => {

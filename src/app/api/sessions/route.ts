@@ -8,6 +8,8 @@ export async function GET(request: Request) {
   const sessions = await prisma.session.findMany({
     where: showArchived ? {} : { isArchived: false },
     orderBy: { updatedAt: 'desc' },
+    // P4 T5 审查整改: 列表是仪表盘轮询端点,不发 decisionTrace(内部 analytics)——既防泄漏又是 payload 减负
+    omit: { decisionTrace: true },
     include: {
       _count: { select: { messages: true, members: true } },
       members: { select: { agentId: true, agent: { select: { name: true, accentColor: true } } } },
