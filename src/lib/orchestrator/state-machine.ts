@@ -22,6 +22,14 @@ export type Action = 'self' | 'delegate' | 'discuss' | 'align_confirm' | 'align_
 /** 不转 phase 的旁路 action：合法于任何状态，nextState = 当前态（side interaction） */
 const NON_TRANSITIONING: ReadonlySet<Action> = new Set(['self', 'delegate', 'discuss', 'verify'])
 
+/**
+ * correction 统一重试上限（P2 合一：review.ts 委派路径与 execution.ts batch 路径共用；
+ * 上限数字合一，cliSessionId 失效等生命周期语义仍分路径，属既有设计）。
+ * 消费点：execution.ts 纠偏点（retryCount < MAX）与 review.ts 委派内层重试。
+ * 取宽 max 3（已拍板决定，见规划文档附录第 4 条）。
+ */
+export const MAX_CORRECTION_RETRIES = 3
+
 /** State -> DB (phase, phaseStep) 映射 */
 export const STATE_PHASE: Record<State, { phase: string; phaseStep: string }> = {
   idle: { phase: 'idle', phaseStep: '' },

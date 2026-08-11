@@ -101,7 +101,6 @@ describe('reviewResult', () => {
 
     const retryContext = {
       agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
-      maxRetries: 3,
       currentRetry: 0,
       chatSessionId: 'session-1',
       projectDir: '/test',
@@ -126,7 +125,6 @@ describe('reviewResult', () => {
 
     const retryContext = {
       agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
-      maxRetries: 3,
       currentRetry: 3,
       chatSessionId: 'session-1',
       projectDir: '/test',
@@ -149,7 +147,6 @@ describe('reviewResult', () => {
 
     const retryContext = {
       agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
-      maxRetries: 3,
       currentRetry: 0,
       chatSessionId: 'session-1',
       projectDir: '/test',

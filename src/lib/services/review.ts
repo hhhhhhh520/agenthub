@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion, callLLMForAnalysis, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt, ORCHESTRATOR_DECISION_PROMPT } from '@/lib/orchestrator/prompts'
+import { MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
@@ -14,7 +15,6 @@ export async function reviewResult(
   sendEvent: SendEvent,
   retryContext?: {
     agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; id?: string; tools?: string }
-    maxRetries?: number
     currentRetry?: number
     chatSessionId?: string
     projectDir?: string
@@ -58,7 +58,8 @@ export async function reviewResult(
         sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg, data: { quality: 'poor' } })
 
         // 如果有重试上下文且未超过最大重试次数，自动重新执行 Agent
-        const maxRetries = retryContext?.maxRetries ?? 3
+        // P2: 上限合一——删除可覆盖的 maxRetries 字段，单源约束从类型层闭合，调用方无法绕过（§5.4）
+        const maxRetries = MAX_CORRECTION_RETRIES
         const currentRetry = retryContext?.currentRetry ?? 0
 
         if (retryContext?.agent && currentRetry < maxRetries && Date.now() - startTime < REVIEW_MAX_ELAPSED_MS) {
@@ -159,7 +160,6 @@ export async function delegateToAgent(
 
   const { quality } = await reviewResult(result, taskMessage, sessionId, sendEvent, {
     agent: { name: agent.name, systemPrompt: agent.systemPrompt, platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, id: agent.id, tools: agent.tools },
-    maxRetries: 3,
     currentRetry: 0,
     chatSessionId: sessionId,
     projectDir: workDir,
