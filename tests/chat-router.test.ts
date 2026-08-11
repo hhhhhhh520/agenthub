@@ -1,12 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mocks ---
-const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
+const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionUpdateMany, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockTaskCount: vi.fn().mockResolvedValue(0),
   mockTaskFindMany: vi.fn().mockResolvedValue([]),
   mockTaskFindFirst: vi.fn().mockResolvedValue(null),
   mockSessionUpdate: vi.fn(),
+  mockSessionUpdateMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockMessageCreate: vi.fn(),
 }))
@@ -15,7 +16,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     message: { findMany: mockMessageFindMany, create: mockMessageCreate },
     task: { count: mockTaskCount, findMany: mockTaskFindMany, findFirst: mockTaskFindFirst },
-    session: { update: mockSessionUpdate, findUnique: mockSessionFindUnique },
+    session: { update: mockSessionUpdate, updateMany: mockSessionUpdateMany, findUnique: mockSessionFindUnique },
   },
 }))
 
@@ -77,6 +78,7 @@ beforeEach(() => {
   mockTaskCount.mockResolvedValue(0)
   mockTaskFindMany.mockResolvedValue([])
   mockTaskFindFirst.mockResolvedValue(null)
+  mockSessionUpdateMany.mockResolvedValue({ count: 1 }) // appendDecisionTrace 乐观锁写：默认成功（生命周期审查整改）
   mockIsCodeTask.mockReturnValue(false)
   mockExecuteSingleAgent.mockResolvedValue({ result: 'agent reply' })
   mockGetOrchestratorAgent.mockReturnValue({ platform: 'claude-code', apiKey: 'sk', model: 'test', baseUrl: '' })
@@ -238,6 +240,10 @@ describe('handleOrchestratorDecision', () => {
     expect(mockTaskCount).toHaveBeenCalledWith({ where: { sessionId: 's1', status: { notIn: ['completed', 'blocked'] } } })
     expect(mockTransitionToExecution).toHaveBeenCalled()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('未完成') }))
+    // P3 声明vs实现审查 F5: done 守卫的 corrections 内容要有断言（reason 字符串改动会被拦）
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    expect(JSON.parse(traceCall![0].data.decisionTrace)[0].corrections)
+      .toEqual([{ from: 'done', to: 'execute', reason: '还有 1 个未完成任务，继续执行' }])
   })
 
   it('done 守卫放行: exec 态无未完成任务 -> 直接 done', async () => {
@@ -256,7 +262,12 @@ describe('handleOrchestratorDecision', () => {
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     // 旧代码: blocked 不在 unfinished → 直接 done;新代码: verify 未 completed → redirect execute
     expect(mockTransitionToExecution).toHaveBeenCalled()
-    expect(mockSessionUpdate).not.toHaveBeenCalled()
+    // P3 起 session.update 会被 decisionTrace 写入调用——只断言"没写 done phase"（trace 写是设计内行为）
+    expect(mockSessionUpdate).not.toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    // P3 声明vs实现审查 F5: verify-blocked 变体的 corrections 内容断言
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    expect(JSON.parse(traceCall![0].data.decisionTrace)[0].corrections)
+      .toEqual([{ from: 'done', to: 'execute', reason: '验证任务未完成（blocked），继续执行' }])
   })
 
   it('P2 done-verify 放行: verify 已 completed → 正常 done', async () => {
@@ -267,6 +278,77 @@ describe('handleOrchestratorDecision', () => {
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
     expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+  })
+
+  // ── P3 新增:决策输入 trace 回归守卫（§5.6 六字段,回退 trace 钩子必红）──
+
+  it('P3 回归守卫: 决策点把决策输入写进 decisionTrace（6 字段可还原"为什么"）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '有任务', declaredFiles: '[]' }])
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
+    // 回退 trace 钩子 → session.updateMany 无 decisionTrace 调用 → 必红
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 's1' }),
+      data: expect.objectContaining({ decisionTrace: expect.any(String) }),
+    }))
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry).toMatchObject({
+      decisionPoint: 'handleOrchestratorDecision',
+      inputState: { phase: 'execution', phaseStep: '', state: 'exec' },
+      llmProposal: { action: 'execute', reason: 'r' },
+      corrections: [],
+      validation: { passed: true, validator: 'applyTransition' },
+      actualTransition: { from: 'exec', to: 'exec', action: 'execute', applied: true, escalated: false },
+      ts: expect.any(String),
+    })
+  })
+
+  it('P3 回归守卫: escalate 也写 trace（escalated=true, applied=false）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_qa', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignPm)
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'awaiting_user_input', content: 'escalate' }))
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.actualTransition).toMatchObject({ from: 'align_pm', to: 'align_pm', action: 'align_qa', applied: false, escalated: true })
+    expect(entry.validation).toMatchObject({ passed: false, validator: 'applyTransition' })
+  })
+
+  it('P3 回归守卫: Object.prototype 成员名 action（toString）→ escalate 而非静默通过', async () => {
+    // 攻击者审查抓出：旧代码 TRANSITIONS[state]?.[action] 属性链查找被 toString 继承属性命中 → 通过校验 → switch 无 case → 消息静默吞掉
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'toString', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'awaiting_user_input', content: 'escalate' }))
+    expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+    expect(mockDelegateToAgent).not.toHaveBeenCalled()
+    expect(mockTransitionToExecution).not.toHaveBeenCalled()
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.actualTransition).toMatchObject({ action: 'toString', escalated: true })
+  })
+
+  it('P3 回归守卫: 规范化纠正记进 corrections（被否决的备选）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignPm)
+    // align_pm + done → 规则1 纠正为 align_decompose
+    expect(mockHandleArchitectPlan).toHaveBeenCalled()
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.llmProposal).toMatchObject({ action: 'done', reason: 'r' })
+    expect(entry.corrections).toEqual([{ from: 'done', to: 'align_decompose', reason: expect.stringContaining('规范化纠正') }])
+    expect(entry.actualTransition).toMatchObject({ from: 'align_pm', to: 'align_arch', action: 'align_decompose', applied: true })
+  })
+
+  it('P3 回归守卫: idle→execute 闸门拦截记 corrections（execute 被否决）', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '实现登录', declaredFiles: '["src/login.ts"]' }])
+    mockIsCodeTask.mockReturnValueOnce(true)
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+    expect(mockHandleArchitectPlan).toHaveBeenCalled()
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.llmProposal).toMatchObject({ action: 'execute' })
+    expect(entry.corrections).toEqual([{ from: 'execute', to: 'align_decompose', reason: '确定性闸门：需先对齐拆解' }])
   })
 })
 

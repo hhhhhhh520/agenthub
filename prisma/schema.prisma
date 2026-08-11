@@ -21,6 +21,7 @@ model Session {
   updatedAt      DateTime  @updatedAt
   isPinned       Boolean   @default(false)    // 置顶
   isArchived     Boolean   @default(false)    // 归档
+  decisionTrace  String    @default("[]")     // JSON 数组，决策轨迹（P3：决策输入字段，回答"为什么"）
 
   members     SessionMember[]
   tasks       Task[]

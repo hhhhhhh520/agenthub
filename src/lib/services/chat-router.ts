@@ -7,6 +7,7 @@ import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { stateFromSession, applyTransition, canonicalCorrect, transitionPhase, idleExecuteGate } from '@/lib/orchestrator/state-machine'
+import { appendDecisionTrace, type DecisionTraceEntry } from '@/lib/orchestrator/decision-trace'
 
 /**
  * safe-parse declaredFiles：架构师 LLM 拆解可能输出畸形 declared_files（字符串/数字等），
@@ -44,7 +45,7 @@ export async function handleOrchestratorDecision(
   sessionId: string,
   agents: AgentConfig[],
   sendEvent: SendEvent,
-  sessionPhase: { phase: string; phaseStep: string },
+  sessionPhase: { phase: string; phaseStep: string; decisionTrace?: string },
   attachments?: TaskAttachment[],
   workDir?: string,
   permissionMode?: string,
@@ -77,11 +78,22 @@ export async function handleOrchestratorDecision(
     return
   }
 
+  // P3: LLM 提议原始返回（getOrchestratorDecision 快照，供 trace 的"它想干嘛"——纠正/守卫改动的是副本）
+  const llmProposal: DecisionTraceEntry['llmProposal'] = {
+    action: decision.action,
+    target: decision.target,
+    targets: decision.targets,
+    reason: decision.reason,
+  }
+  // P3: 被否决的备选（规范化纠正 + 业务守卫 redirect 都记；旁路 delegate 只补 reason 不改 action，不算纠正）
+  const corrections: Array<{ from: string; to: string; reason: string }> = []
+
   const state = stateFromSession(sessionPhase.phase, sessionPhase.phaseStep)
 
   // Hybrid 规范化纠正（3 条）：命中 -> redirect 到合法 action（不静默，附 reason）
   const correction = canonicalCorrect(state, decision.action, history)
   if (correction) {
+    corrections.push({ from: decision.action, to: correction.redirect, reason: `规范化纠正: ${decision.reason}` })
     decision = { ...decision, action: correction.redirect, reason: `${decision.reason}（规范化纠正 -> ${correction.redirect}）` }
   }
 
@@ -91,7 +103,9 @@ export async function handleOrchestratorDecision(
     const tasks = await prisma.task.findMany({ where: { sessionId }, select: { description: true, declaredFiles: true } })
     const hasCodeTask = tasks.some(t => isCodeTask({ description: t.description, declaredFiles: parseDeclaredFiles(t.declaredFiles) }))
     if (state === 'idle' ? !idleExecuteGate(tasks.length, hasCodeTask) : tasks.length === 0) {
-      decision = { ...decision, action: 'align_decompose', reason: state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解' }
+      const reason = state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解'
+      corrections.push({ from: 'execute', to: 'align_decompose', reason })
+      decision = { ...decision, action: 'align_decompose', reason }
     }
   }
 
@@ -100,6 +114,7 @@ export async function handleOrchestratorDecision(
   if (decision.action === 'done' && state === 'exec') {
     const unfinished = await prisma.task.count({ where: { sessionId, status: { notIn: ['completed', 'blocked'] } } })
     if (unfinished > 0) {
+      corrections.push({ from: 'done', to: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` })
       decision = { ...decision, action: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` }
     } else {
       // §5.3: 有 verify 任务但未 completed（blocked 计入 allDone，会漏）-> 不关闭会话。
@@ -107,6 +122,7 @@ export async function handleOrchestratorDecision(
       // 放行 done 会造成"完成但未验证"。
       const verify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } }, select: { status: true } })
       if (verify && verify.status !== 'completed') {
+        corrections.push({ from: 'done', to: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` })
         decision = { ...decision, action: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` }
       }
     }
@@ -122,6 +138,22 @@ export async function handleOrchestratorDecision(
 
   // 转移合法性校验（纠正 + 业务守卫之后）：真非法 -> escalate（不静默，学 CrewAI 反面）
   const transition = applyTransition(state, decision.action)
+  // P3 §5.6: 决策输入记进 trace——决策已定（提议/纠正/校验/实际转移全就位），
+  // 先落库再派发 handler。Temporal 精神：长操作（执行/讨论）前决策已持久化，重试/恢复可复用同一转移。
+  const traceEntry: DecisionTraceEntry = {
+    decisionPoint: 'handleOrchestratorDecision',
+    inputState: { phase: sessionPhase.phase, phaseStep: sessionPhase.phaseStep, state },
+    llmProposal,
+    corrections,
+    validation: transition.ok
+      ? { passed: true, validator: 'applyTransition' }
+      : { passed: false, validator: 'applyTransition', reason: transition.reason },
+    actualTransition: transition.ok
+      ? { from: state, to: transition.nextState, action: decision.action, applied: true, escalated: false }
+      : { from: state, to: state, action: decision.action, applied: false, escalated: true },
+  }
+  await appendDecisionTrace(sessionId, sessionPhase.decisionTrace, traceEntry)
+
   if (!transition.ok) {
     sendEvent({ agentId: 'orchestrator', type: 'text', content: `[需人工介入] 当前状态「${state}」下不允许「${decision.action}」。${transition.reason}。请调整指令或手动引导下一步。` })
     sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })

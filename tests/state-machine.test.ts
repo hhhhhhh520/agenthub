@@ -94,6 +94,17 @@ describe('state-machine: applyTransition', () => {
     // done + verify 是旁路（合法），done + delegate 旁路合法
     expect(applyTransition('done', 'verify').ok).toBe(true)
   })
+
+  it('P3 回归守卫: Object.prototype 成员名 action 不被继承属性绕过 fail-closed（自有属性查找）', () => {
+    // 攻击者审查抓出：TRANSITIONS[state]?.[action] 属性链查找被 toString/constructor 继承属性命中 → 误判 ok → 静默吞消息
+    expect(applyTransition('idle', 'toString').ok).toBe(false)
+    expect(applyTransition('idle', 'constructor').ok).toBe(false)
+    expect(applyTransition('idle', 'valueOf').ok).toBe(false)
+    expect(applyTransition('idle', 'hasOwnProperty').ok).toBe(false)
+    expect(applyTransition('exec', '__proto__').ok).toBe(false)
+    // 表内 action 不受影响
+    expect(applyTransition('idle', 'execute')).toEqual({ ok: true, nextState: 'exec' })
+  })
 })
 
 describe('state-machine: canonicalCorrect (Hybrid 3 条纠正)', () => {
