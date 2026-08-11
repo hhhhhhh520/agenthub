@@ -273,6 +273,8 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **idle→execute 跳步必须过 `idleExecuteGate` 确定性闸门,exec→done 必须有 verify 任务 completed(若有代码任务)** — P2(2026-08-11):idle 态 LLM 提议 execute 时查"有任务且全非代码"(isCodeTask)才放行,否则 redirect align_decompose——跳步不是"LLM 说简单就简单"(ISSUE-008 同构);done 守卫在 unfinished 检查后补 verify-completed(blocked 计入 allDone 会漏,§5.3)。改闸门/守卫必须同步 chat-router 决策点与 tests
 - **redo 路由必须经状态机闸门(`applyTransition(state,'execute')`),align_pm/未知态 fail-closed 拒绝** — P2(2026-08-11,待办③):redo/route.ts 调 handleExecution 前校验 phase,非法(align_pm 需求确认中)400、未知/脏 phase 400(HTTP 变更接口不做 idle 兜底放行),`transitionPhase('execute')` 前置且判返回值(失败 500)。绕过闸门=phase 不对时硬跑 handleExecution,allDone→done 转移可能 fail-closed 拒写
 - **每轮 LLM 决策必须写 `Session.decisionTrace`(先落库再派发 handler)** — P3(2026-08-11):handleOrchestratorDecision 记决策输入 6 字段(llmProposal/corrections/validation/actualTransition/inputState/decisionPoint),escalate 也记(escalated=true)。删 trace 钩子 → 审计数据断供 + P4 可视化/B 流程挖掘无数据。append 走 `appendDecisionTrace`(safe-parse + 乐观锁 updateMany where decisionTrace + 3 次重读重试),别裸 prisma.session.update 追加
+- **每个实际 phase 写入都入 decisionTrace,且不双记** — P4(2026-08-12):transitionPhase 默认补记代码驱动转移(redo/0-task 补拆/QA直发 exec/自动 done,decisionPoint:'transitionPhase'),LLM 决策路径(chat-router 的 done/align_confirm/align_decompose/align_qa/execute 五 case,决策点已记)显式 `recordTrace:false` 抑制。决策点 append 失败时 `decisionRecorded=false` → 抑制转兜底补记(不丢审计)。删补记或误抑制 → directly-follows 图断边/双记,checkConformance/流程挖掘失真
+- **decisionTrace 是内部 analytics,不回客户端** — P4(2026-08-12,T5):sessions GET/PUT/list 全部 `omit: { decisionTrace: true }`,权威 API 通道是 `/api/sessions/[id]/process` + `/api/analytics/process`(返回挖掘结果非原始条目)。新增 session 读端点必须 omit decisionTrace
 
 ### Chat API Session Lock
 
