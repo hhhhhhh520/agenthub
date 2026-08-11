@@ -59,8 +59,12 @@ export const MAX_DECISION_TRACE_ENTRIES = 500
 /** 已就截断告警过的 session（审查整改: 每个 session 首次触顶 warn 一次,不刷屏） */
 const warnedCappedSessions = new Set<string>()
 
-/** safe-parse：畸形 JSON / 非数组 → []（不击穿；与 Task.trace appendTrace 同构） */
-function parseTrace(raw: string | null | undefined): unknown[] {
+/**
+ * safe-parse：畸形 JSON / 非数组 → []（不击穿；与 Task.trace appendTrace 同构）。P4 由 API 消费方复用。
+ * 契约（生命周期审查 Q5）：仅保证返回"数组"，元素形状不校验——消费方须自行逐元素防御
+ * （process-mining 的 safeTransition 已做），勿把本函数当 typed 解析入口直接 as 后交给强假设消费方。
+ */
+export function parseTrace(raw: string | null | undefined): unknown[] {
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw)
