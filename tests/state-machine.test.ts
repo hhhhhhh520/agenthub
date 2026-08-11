@@ -17,6 +17,7 @@ import {
   applyTransition,
   canonicalCorrect,
   transitionPhase,
+  idleExecuteGate,
   STATE_PHASE,
   type State,
 } from '@/lib/orchestrator/state-machine'
@@ -227,5 +228,22 @@ describe('state-machine: transitionPhase', () => {
     const r = await transitionPhase('s1', 'align_confirm')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('align_pm')
+  })
+})
+
+describe('idleExecuteGate (P2 idle→execute 确定性闸门)', () => {
+  it('无任务 -> 拒绝跳步（连"简单"都无从证明）', () => {
+    expect(idleExecuteGate(0, false)).toBe(false)
+    expect(idleExecuteGate(0, true)).toBe(false)
+  })
+
+  it('有任务但含代码任务 -> 拒绝跳步（需先对齐）', () => {
+    expect(idleExecuteGate(1, true)).toBe(false)
+    expect(idleExecuteGate(3, true)).toBe(false)
+  })
+
+  it('有任务且全非代码 -> 允许简单任务跳步', () => {
+    expect(idleExecuteGate(1, false)).toBe(true)
+    expect(idleExecuteGate(5, false)).toBe(true)
   })
 })

@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // --- Mocks ---
-const { mockMessageFindMany, mockTaskCount, mockSessionUpdate, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
+const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockTaskCount: vi.fn().mockResolvedValue(0),
+  mockTaskFindMany: vi.fn().mockResolvedValue([]),
+  mockTaskFindFirst: vi.fn().mockResolvedValue(null),
   mockSessionUpdate: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockMessageCreate: vi.fn(),
@@ -12,7 +14,7 @@ const { mockMessageFindMany, mockTaskCount, mockSessionUpdate, mockSessionFindUn
 vi.mock('@/lib/db', () => ({
   prisma: {
     message: { findMany: mockMessageFindMany, create: mockMessageCreate },
-    task: { count: mockTaskCount },
+    task: { count: mockTaskCount, findMany: mockTaskFindMany, findFirst: mockTaskFindFirst },
     session: { update: mockSessionUpdate, findUnique: mockSessionFindUnique },
   },
 }))
@@ -44,11 +46,12 @@ vi.mock('@/lib/services/review', () => ({
   runMultiAgentDiscussion: mockRunMultiAgentDiscussion,
 }))
 
-const { mockHandlePMConfirm, mockHandleArchitectPlan, mockHandleAgentQA, mockTransitionToExecution } = vi.hoisted(() => ({
+const { mockHandlePMConfirm, mockHandleArchitectPlan, mockHandleAgentQA, mockTransitionToExecution, mockIsCodeTask } = vi.hoisted(() => ({
   mockHandlePMConfirm: vi.fn(),
   mockHandleArchitectPlan: vi.fn(),
   mockHandleAgentQA: vi.fn(),
   mockTransitionToExecution: vi.fn(),
+  mockIsCodeTask: vi.fn().mockReturnValue(false),
 }))
 
 vi.mock('@/lib/services/alignment', () => ({
@@ -56,9 +59,10 @@ vi.mock('@/lib/services/alignment', () => ({
   handleArchitectPlan: mockHandleArchitectPlan,
   handleAgentQA: mockHandleAgentQA,
   transitionToExecution: mockTransitionToExecution,
+  isCodeTask: mockIsCodeTask,
 }))
 
-import { handleOrchestratorDecision, handleOrchestratorChat, isCreateAgentIntent } from '@/lib/services/chat-router'
+import { handleOrchestratorDecision, handleOrchestratorChat, isCreateAgentIntent, parseDeclaredFiles } from '@/lib/services/chat-router'
 
 const sendEvent = vi.fn()
 const agents = [
@@ -67,9 +71,13 @@ const agents = [
 ]
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  // resetAllMocks: 清空 pending mockResolvedValueOnce 队列（clearAllMocks 不清，跨测试泄漏）
+  vi.resetAllMocks()
   mockMessageFindMany.mockResolvedValue([])
   mockTaskCount.mockResolvedValue(0)
+  mockTaskFindMany.mockResolvedValue([])
+  mockTaskFindFirst.mockResolvedValue(null)
+  mockIsCodeTask.mockReturnValue(false)
   mockExecuteSingleAgent.mockResolvedValue({ result: 'agent reply' })
   mockGetOrchestratorAgent.mockReturnValue({ platform: 'claude-code', apiKey: 'sk', model: 'test', baseUrl: '' })
 })
@@ -121,17 +129,36 @@ describe('handleOrchestratorDecision', () => {
 
   it('action=execute → calls transitionToExecution', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
-    mockTaskCount.mockResolvedValueOnce(1)
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '有任务', declaredFiles: '[]' }]) // 非 idle,有任务即可执行
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).toHaveBeenCalled()
   })
 
   it('action=execute with 0 tasks → redirect to align_decompose', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
-    mockTaskCount.mockResolvedValueOnce(0)
+    mockTaskFindMany.mockResolvedValueOnce([])
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockHandleArchitectPlan).toHaveBeenCalled()
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 回归守卫 T1: idle + execute + 已有代码任务 → 确定性闸门拦截,redirect align_decompose', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    // 旧代码只查 taskCount: count=1 会放行 execute;新代码闸门看 isCodeTask → 拒绝跳步
+    mockTaskCount.mockResolvedValueOnce(1) // 保证旧代码(只读 count)下必红
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '实现登录', declaredFiles: '["src/login.ts"]' }])
+    mockIsCodeTask.mockReturnValueOnce(true)
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+    expect(mockHandleArchitectPlan).toHaveBeenCalled()
+    expect(mockTransitionToExecution).not.toHaveBeenCalled()
+  })
+
+  it('P2 闸门放行: idle + execute + 已有任务且全非代码 → 允许简单任务跳步', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'execute', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '整理文档', declaredFiles: '[]' }])
+    mockIsCodeTask.mockReturnValueOnce(false)
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+    expect(mockTransitionToExecution).toHaveBeenCalled()
   })
 
   it('action=verify with target → calls delegateToAgent（验证不静默丢失）', async () => {
@@ -185,7 +212,7 @@ describe('handleOrchestratorDecision', () => {
 
   it('Hybrid 规则2: exec 提议 align_confirm → redirect execute(继续执行,不回退对齐)', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'align_confirm', message: '', reason: 'r' }, sessionId: 'orch-ses' })
-    mockTaskCount.mockResolvedValueOnce(1)
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '有任务', declaredFiles: '[]' }])
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).toHaveBeenCalled()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('规范化纠正') }))
@@ -197,7 +224,7 @@ describe('handleOrchestratorDecision', () => {
       { role: 'agent', agentId: '前端工程师', rawContent: '用什么框架？' },
       { role: 'user', agentId: null, rawContent: 'React' },
     ])
-    mockTaskCount.mockResolvedValueOnce(1)
+    mockTaskFindMany.mockResolvedValueOnce([{ description: '有任务', declaredFiles: '[]' }])
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, alignArch)
     expect(mockTransitionToExecution).toHaveBeenCalled()
     expect(mockHandleAgentQA).not.toHaveBeenCalled()
@@ -216,6 +243,26 @@ describe('handleOrchestratorDecision', () => {
   it('done 守卫放行: exec 态无未完成任务 -> 直接 done', async () => {
     mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '', reason: 'r' }, sessionId: 'orch-ses' })
     mockTaskCount.mockResolvedValueOnce(0) // 无未完成任务
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'execution', phaseStep: '' })
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
+    expect(mockTransitionToExecution).not.toHaveBeenCalled()
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+  })
+
+  it('P2 回归守卫 T2: exec + done + verify 任务 blocked → 不关闭会话,redirect execute', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskCount.mockResolvedValueOnce(0) // blocked 计入 allDone,unfinished=0
+    mockTaskFindFirst.mockResolvedValueOnce({ status: 'blocked' }) // verify 被 blocked
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
+    // 旧代码: blocked 不在 unfinished → 直接 done;新代码: verify 未 completed → redirect execute
+    expect(mockTransitionToExecution).toHaveBeenCalled()
+    expect(mockSessionUpdate).not.toHaveBeenCalled()
+  })
+
+  it('P2 done-verify 放行: verify 已 completed → 正常 done', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskCount.mockResolvedValueOnce(0)
+    mockTaskFindFirst.mockResolvedValueOnce({ status: 'completed' })
     mockSessionFindUnique.mockResolvedValueOnce({ phase: 'execution', phaseStep: '' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
@@ -243,6 +290,24 @@ describe('isCreateAgentIntent', () => {
     expect(isCreateAgentIntent('agent 是什么？')).toBe(false) // 有关键词无创建动词
     expect(isCreateAgentIntent('创建目录')).toBe(false) // 有创建动词无关键词
     expect(isCreateAgentIntent('')).toBe(false)
+  })
+})
+
+describe('parseDeclaredFiles (P2 安全解析,审查整改)', () => {
+  it('畸形 JSON（字符串/数字/非数组）→ 降级为 []，不击穿决策点', () => {
+    expect(parseDeclaredFiles('"src/login.ts"')).toEqual([]) // LLM 输出字符串而非数组
+    expect(parseDeclaredFiles('123')).toEqual([])
+    expect(parseDeclaredFiles('not json')).toEqual([])
+    expect(parseDeclaredFiles('')).toEqual([])
+    expect(parseDeclaredFiles(null)).toEqual([])
+  })
+
+  it('数组内非字符串元素被过滤,合法字符串保留', () => {
+    expect(parseDeclaredFiles('["a.ts", 42, null, "b.ts"]')).toEqual(['a.ts', 'b.ts'])
+  })
+
+  it('合法数组原样返回', () => {
+    expect(parseDeclaredFiles('["src/a.ts", "src/b.ts"]')).toEqual(['src/a.ts', 'src/b.ts'])
   })
 })
 

@@ -108,6 +108,18 @@ export function applyTransition(state: State, action: string): { ok: true; nextS
 }
 
 /**
+ * idle→execute 确定性闸门（P2，已拍板决定 3）：跳步不是"LLM 说简单就简单"，
+ * 是代码看任务数据决定——与 ISSUE-008（LLM 自证"验证过了"）同构，不可自证。
+ * - 无任务：连"简单"都无从证明 → 拒绝跳步（须先对齐拆解）
+ * - 有任务且全非代码（isCodeTask：declaredFiles 与 description 均无代码后缀）→ 允许简单任务跳步
+ * 非 idle 态的 execute 不走此闸门（由决策点 0-task 守卫兜底）。
+ */
+export function idleExecuteGate(taskCount: number, hasCodeTask: boolean): boolean {
+  if (taskCount === 0) return false
+  return !hasCodeTask
+}
+
+/**
  * Hybrid 规范化纠正（3 条，决策点对 LLM 提议用）。命中 -> {redirect}；不命中 -> null。
  *
  * 1. align_* + done -> 推进到下一对齐步（align_pm->align_decompose / align_arch|align_qa->execute）
