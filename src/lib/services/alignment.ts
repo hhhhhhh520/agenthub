@@ -106,17 +106,25 @@ export async function handlePMConfirm(
   }
 }
 
+/**
+ * 架构师拆解任务。返回 true=成功(任务全建 + phase 推进), false=0 任务或拆解超时(未写 phase,调用方应中止)。
+ * P2 待办④: 0 任务时不把 phase 空转 align_arch(旧代码顶部先 transitionPhase,0 任务也停在对齐态)——
+ * phase 转移到拆解成功且任务全建之后,0 任务持久化 [REPLAN] 标记 + 等用户重述;拆解超时同样中止。
+ */
 export async function handleArchitectPlan(
   message: string,
   sessionId: string,
   agents: AgentConfig[],
   sendEvent: SendEvent
-) {
-  await transitionPhase(sessionId, 'align_decompose')
-  sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
-
+): Promise<boolean> {
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
-  const originalRequest = history.find(m => m.role === 'user')?.rawContent || message
+  // P2 待办④: 上一轮拆解 0 任务([REPLAN] 标记)时用最新 user 重述,否则用首条需求——
+  // 否则重述只进 orchestrator 上下文,架构师拆的仍是冻结旧需求,无限重述零进展(审查抓出)
+  const lastOrch = [...history].reverse().find(m => m.role === 'orchestrator')
+  const isReplan = lastOrch?.role === 'orchestrator' && String(lastOrch.rawContent).startsWith('[REPLAN]')
+  const originalRequest = isReplan
+    ? [...history].reverse().find(m => m.role === 'user')?.rawContent || message
+    : history.find(m => m.role === 'user')?.rawContent || message
 
   const archAgent = agents.find(a => a.name === '架构师')
   let scheduledTasks: ScheduledTask[]
@@ -169,7 +177,8 @@ export async function handleArchitectPlan(
       if (err instanceof TimeoutError) {
         console.error('[TIMEOUT] handleArchitectPlan')
         sendEvent({ agentId: 'orchestrator', type: 'error', content: '架构师任务拆解超时，请重试' })
-        return
+        sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'replan' })
+        return false
       }
       scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
     }
@@ -179,8 +188,12 @@ export async function handleArchitectPlan(
   }
 
   if (scheduledTasks.length === 0) {
-    sendEvent({ agentId: '架构师', type: 'text', content: '未能生成有效任务方案，请重新描述需求或手动指定任务' })
-    return
+    // P2 待办④: 0 任务不把 phase 空转 align_arch——持久化 [REPLAN] 标记 + 发 error + 等用户重述,
+    // 返回 false 让调用方(transitionToExecution)中止。标记供下次拆解用最新重述(审查抓出重述不生效)
+    await prisma.message.create({ data: { role: 'orchestrator', rawContent: '[REPLAN]未能生成有效任务方案，请重新描述需求或手动指定任务', sessionId } })
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: '未能生成有效任务方案，请重新描述需求或手动指定任务' })
+    sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'replan' })
+    return false
   }
 
   const agentNameToId = new Map(agents.map(a => [a.name, a.id]))
@@ -226,10 +239,16 @@ export async function handleArchitectPlan(
     }
   }
 
+  // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
+  // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
+  await transitionPhase(sessionId, 'align_decompose')
+  sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
+
   const planSummary = formatArchitectPlan(scheduledTasks, agents)
   await prisma.message.create({ data: { role: 'agent', rawContent: planSummary, sessionId, agentId: '架构师' } })
   sendEvent({ agentId: '架构师', type: 'done', content: planSummary })
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
+  return true
 }
 
 export async function handleAgentQA(
@@ -320,7 +339,9 @@ export async function transitionToExecution(
   const existingTasks = await prisma.task.findMany({ where: { sessionId } })
   if (existingTasks.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'status', content: '任务列表为空，正在自动拆解...' })
-    await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
+    // P2 待办④: 补拆 0 任务(handleArchitectPlan 返回 false)则中止,不进 execute 空跑 handleExecution
+    const ok = await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
+    if (!ok) return
   }
 
   await transitionPhase(sessionId, 'execute')
