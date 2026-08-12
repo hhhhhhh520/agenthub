@@ -55,10 +55,10 @@ pilot（本 spec）的目的：
 ```
 pass ⇔ 全部成立：
   ① 终点 state = done（DB 判定，非 SSE 事件）
-  ② applied 边真实包含规范序列：
-     存在一条 align_decompose（→align_arch 或等效拆解边）
-     ∧ 存在一条 execute（→exec）
-     ∧ 存在最终 exec→done
+  ② applied 边真实包含规范序列（审查澄清：判据钉死，不设"等效"歧义）：
+     存在一条 applied actualTransition 满足 action==='align_decompose' && to==='align_arch'
+     ∧ 存在一条 applied actualTransition 满足 action==='execute' && to==='exec'
+     ∧ 存在最终 exec→done（action==='done' && from==='exec' && to==='done'）
      （从 decisionTrace 的 applied actualTransition 里查）
   ③ 【仅 ON 模式评估】零 illegal_transition + 零 escalate_but_legal
      （这两个是代码漂移，非 LLM 的锅；OFF 不评估——OFF 的表外 no-op 是预期实验条件）
@@ -97,18 +97,24 @@ pass ⇔ 全部成立：
 **`state-machine.ts`** 导出 override 版，纯函数保持不动（测试依赖）：
 ```ts
 export function applyTransition(state: State, action: string): ... // 原逻辑不变
-export function applyTransitionWithOverride(state: State, action: string, bypass: boolean): ... {
+// bypass 返回带 inTable 标志（审查必改 2）：表外/表内自环都 nextState===state，
+// 无法靠 nextState 反推是否表内——决策点需据此区分 trace 的 applied。
+export function applyTransitionWithOverride(
+  state: State, action: string, bypass: boolean
+): { ok: true; nextState: State; inTable: boolean } | { ok: false; reason: string } {
   if (bypass) {
     const row = TRANSITIONS[state]
-    if (row && Object.hasOwn(row, action)) return { ok: true, nextState: row[action] }
-    return { ok: true, nextState: state }   // 表外 action：保持当前 state，无幻 phase
+    if (row && Object.hasOwn(row, action)) return { ok: true, nextState: row[action], inTable: true }
+    // 旁路 action（NON_TRANSITIONING）也是 inTable 语义（任意状态合法，不记非法）
+    if (NON_TRANSITIONING.has(action as Action)) return { ok: true, nextState: state, inTable: true }
+    return { ok: true, nextState: state, inTable: false }   // 表外 action：保持当前 state，无幻 phase
   }
-  return applyTransition(state, action)
+  return applyTransition(state, action)  // 非 bypass：保持原语义（不含 inTable，调用方按非实验路径处理）
 }
 export function isExperimentOff(): boolean { return process.env.EXPERIMENT_STATE_MACHINE === 'off' }
 ```
 - `transitionPhase` 内部改调 `applyTransitionWithOverride(state, action, isExperimentOff())`
-- **`chat-router.ts:140` 决策点改调 `applyTransitionWithOverride`**（这是关键——不改这行 OFF 闸门没关）；bypass 时跳过 160-166 的 escalate return 直进 switch，**但 141-158 的 trace 块照常走**（llmProposal 保留原提议、validation 打 `validator:'experiment-off'` 标记、表外条目 `applied:false`）
+- **`chat-router.ts:140` 决策点改调 `applyTransitionWithOverride`**（这是关键——不改这行 OFF 闸门没关）。**无需显式跳过 escalate return**：bypass 下 override 恒 `ok:true`，`:160 if(!transition.ok)` 天然不触发。**但 141-158 的 trace 块照常走**：llmProposal 保留原提议、validation 打 `validator:'experiment-off'` 标记、`actualTransition` 据 `inTable` 区分——`inTable:true` → `applied:true, escalated:false`；`inTable:false` → `applied:false, escalated:false`（表外 no-op 是预期实验条件，不判非法）
 - `chat-router` 决策点 OFF 时跳过 canonicalCorrect + 业务守卫（execute 闸门/done 守卫）
 - **副作用（已确认）**：redo/route.ts:53 调纯 `applyTransition`——OFF **不**影响 redo 闸门（harness 不触发 redo，无影响；但 spec 明示避免误解）
 
@@ -176,7 +182,7 @@ experiments/p5/                  ← repo 根，不进 Next 构建图（src/ 不
 ### 7.1 独立 DB（审查整改——vi.stubEnv 无效）
 prisma 是模块加载期单例（db.ts 读 env），`vi.stubEnv` 在测试体内无效。改为：
 - **`experiments/p5/vitest.config.ts` 的 `test.env` 设 `DATABASE_URL=file:./p5.db`**——在 `@/lib/db` 首次求值前生效，全程 30 次 run 恒定
-- `beforeAll`：`delete (globalThis as any).prisma`（防 worker 复用串库）+ `npx prisma migrate deploy`（空库无表，不部署则 30/30 error）
+- `beforeAll`：`delete (globalThis as any).prisma`（防 worker 复用串库）+ `npx prisma migrate deploy`（空库无表，不部署则 30/30 error）。**注意 cwd**：`file:./p5.db` 是相对路径，按子进程 cwd 解析——migrate deploy 的 cwd 必须与 vitest `test.env` 的 `DATABASE_URL` 相对基准一致（建议都用绝对路径 `file:D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db` 消除歧义），并确认 `prisma/schema.prisma` 路径可寻
 - 独立 projectDir：每 run `mkdtempSync`（否则 shadow-git 在仓库根快照 + cleanupUndeclared 可能删 p5.db）
 
 ### 7.2 错误处理
@@ -206,7 +212,7 @@ pass 只看决策路径质量，不判产物正确性（mock 结果固定 SUCCES
 ## 9. 测试（真回归守卫）
 - `applyTransitionWithOverride` 表外 action 保持当前 state（红绿验证）
 - OFF 开关下 chat-router 决策点跳过 escalate return 但仍记 trace（红绿验证）
-- ON 默认（无 env）→ 全量测试不破（基线现 1096 个用例，跑 `npx vitest run` 确认）
+- ON 默认（无 env）→ 全量测试不破（**基线 1040 passed / 3 skipped，P4 末实测**，2026-08-13 复测确认；如新增 harness 单测需在 P5 提交内一并反映新总数）
 - harness 纯函数单测：metrics/stats/oracle 判定（含 OFF 不评估 ③）
 - **mock 返回形状喂给 handleExecution 不抛**（防 `undefined.slice` 类回归）
 - 禁 MCP 生效、DATABASE_URL 指向 p5.db 且非 dev.db（断言）
