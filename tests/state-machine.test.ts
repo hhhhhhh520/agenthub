@@ -20,6 +20,8 @@ import {
   canonicalCorrect,
   transitionPhase,
   idleExecuteGate,
+  applyTransitionWithOverride,
+  isExperimentOff,
   STATE_PHASE,
   type State,
 } from '@/lib/orchestrator/state-machine'
@@ -304,5 +306,49 @@ describe('idleExecuteGate (P2 idle→execute 确定性闸门)', () => {
   it('有任务且全非代码 -> 允许简单任务跳步', () => {
     expect(idleExecuteGate(1, false)).toBe(true)
     expect(idleExecuteGate(5, false)).toBe(true)
+  })
+})
+
+describe('P5: applyTransitionWithOverride（状态机 off 开关）', () => {
+  it('bypass + 表内 action → 表值 + inTable:true', () => {
+    expect(applyTransitionWithOverride('idle', 'execute', true)).toEqual({ ok: true, nextState: 'exec', inTable: true })
+  })
+  it('bypass + 旁路 action → 当前态 + inTable:true（任意状态合法）', () => {
+    expect(applyTransitionWithOverride('idle', 'self', true)).toEqual({ ok: true, nextState: 'idle', inTable: true })
+  })
+  it('bypass + 表外 action → 当前态 + inTable:false（无幻 phase）', () => {
+    expect(applyTransitionWithOverride('idle', 'align_qa', true)).toEqual({ ok: true, nextState: 'idle', inTable: false })
+  })
+  it('非 bypass → 与 applyTransition 完全一致', () => {
+    expect(applyTransitionWithOverride('idle', 'execute', false)).toEqual(applyTransition('idle', 'execute'))
+    expect(applyTransitionWithOverride('idle', 'align_qa', false)).toEqual(applyTransition('idle', 'align_qa'))
+  })
+  it('isExperimentOff: off 时 true / 缺省时 false', () => {
+    const prev = process.env.EXPERIMENT_STATE_MACHINE
+    try {
+      process.env.EXPERIMENT_STATE_MACHINE = 'off'
+      expect(isExperimentOff()).toBe(true)
+      delete process.env.EXPERIMENT_STATE_MACHINE
+      expect(isExperimentOff()).toBe(false)
+    } finally {
+      // 断言失败也恢复 env，防 'off' 残留污染后续测试（审查整改：try/finally）
+      if (prev === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
+      else process.env.EXPERIMENT_STATE_MACHINE = prev
+    }
+  })
+  it('off 接线：transitionPhase 表外 action 不再 fail-closed（写当前态 + ok:true，无幻 phase）', async () => {
+    const prev = process.env.EXPERIMENT_STATE_MACHINE
+    try {
+      process.env.EXPERIMENT_STATE_MACHINE = 'off'
+      // align_pm + execute：转移表非法（applyTransition fail-closed）→ bypass 下变 ok:true + 当前态
+      mockSessionFindUnique.mockResolvedValue({ phase: 'alignment', phaseStep: 'pm_confirm', decisionTrace: '[]' })
+      const r = await transitionPhase('s1', 'execute')
+      expect(r.ok).toBe(true)
+      if (r.ok) expect(r.nextState).toBe('align_pm') // 表外 → 当前态，不制造幻 phase
+      expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.align_pm })
+    } finally {
+      if (prev === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
+      else process.env.EXPERIMENT_STATE_MACHINE = prev
+    }
   })
 })

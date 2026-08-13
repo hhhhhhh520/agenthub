@@ -122,6 +122,38 @@ export function applyTransition(state: State, action: string): { ok: true; nextS
 }
 
 /**
+ * P5 受控实验：状态机 off 开关的转移校验。
+ * bypass=true（EXPERIMENT_STATE_MACHINE=off）时只关 enforcement 不关 trace：
+ * - 表内 action → 表值（inTable:true）
+ * - 旁路 action（NON_TRANSITIONING）→ 当前态（inTable:true，任意状态合法）
+ * - 表外 action → 当前态（inTable:false，保持 state 不制造幻 phase）
+ * inTable 标志供决策点区分 trace 的 applied（表外 no-op 是预期实验条件，不判非法）。
+ * 非 bypass → 原 applyTransition 语义（纯函数，测试依赖）。
+ */
+export function applyTransitionWithOverride(
+  state: State,
+  action: string,
+  bypass: boolean
+): { ok: true; nextState: State; inTable: boolean } | { ok: true; nextState: State } | { ok: false; reason: string } {
+  if (bypass) {
+    const row = TRANSITIONS[state]
+    if (row && Object.hasOwn(row, action)) {
+      return { ok: true, nextState: row[action as Action] as State, inTable: true }
+    }
+    if (NON_TRANSITIONING.has(action as Action)) {
+      return { ok: true, nextState: state, inTable: true }
+    }
+    return { ok: true, nextState: state, inTable: false }
+  }
+  return applyTransition(state, action)
+}
+
+/** P5 受控实验开关：`EXPERIMENT_STATE_MACHINE=off` 时状态机 enforcement 关闭 */
+export function isExperimentOff(): boolean {
+  return process.env.EXPERIMENT_STATE_MACHINE === 'off'
+}
+
+/**
  * idle→execute 确定性闸门（P2，已拍板决定 3）：跳步不是"LLM 说简单就简单"，
  * 是代码看任务数据决定——与 ISSUE-008（LLM 自证"验证过了"）同构，不可自证。
  * - 无任务：连"简单"都无从证明 → 拒绝跳步（须先对齐拆解）
@@ -203,7 +235,7 @@ export async function transitionPhase(
     const session = await prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true, decisionTrace: true } })
     if (!session) return { ok: false, reason: 'session 不存在' }
     const state = stateFromSession(session.phase, session.phaseStep)
-    const result = applyTransition(state, action)
+    const result = applyTransitionWithOverride(state, action, isExperimentOff())
     if (result.ok) {
       await prisma.session.update({ where: { id: sessionId }, data: STATE_PHASE[result.nextState] })
       if (opts?.recordTrace !== false) {
