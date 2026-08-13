@@ -6,6 +6,8 @@ import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, type RunMetrics } from './metrics'
+import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
+import { generateReport } from './report'
 
 // —— vi.mock 注入（Spec §5.2，必须在 src 模块首次 import 前）——
 // 决策保留真实 LLM（getOrchestratorDecision 内部调 executeSingleAgent，orchestrator 系统提示不含
@@ -33,30 +35,6 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
   }
 })
 vi.mock('@/lib/mcp-config', () => ({ buildMCPConfig: () => undefined }))
-
-/** 报告生成（占位——完整 stats+报告由 T7 report.ts 提供；此处仅逐格 pass 汇总 + 失效模式分布） */
-function generateReport(metrics: RunMetrics[]): string {
-  const lines: string[] = []
-  lines.push('# P5 Pilot Report', '')
-  lines.push(`> model: ${CONFIG.model} | runsPerCell: ${CONFIG.runsPerCell} | escalateLimit: ${CONFIG.escalateLimit} | maxRounds: ${CONFIG.maxRounds}`, '')
-  lines.push('', '## 逐格 pass 数组')
-  lines.push('| config | task | pass 数组 | pass 率 |')
-  lines.push('|---|---|---|---|')
-  for (const config of CONFIG.configs) {
-    for (const taskId of CONFIG.taskIds) {
-      const cell = metrics.filter(m => m.config === config && m.taskId === taskId)
-      if (cell.length === 0) continue
-      const passes = cell.map(m => m.pass)
-      lines.push(`| ${config} | ${taskId} | ${passes.map(p => (p ? '1' : '0')).join('/')} | ${passes.filter(Boolean).length}/${passes.length} |`)
-    }
-  }
-  lines.push('', '## 失效模式分布')
-  const fm = new Map<string, number>()
-  for (const m of metrics) fm.set(m.failureMode, (fm.get(m.failureMode) ?? 0) + 1)
-  lines.push('- ' + Array.from(fm.entries()).map(([k, v]) => `${k}: ${v}`).join(' | '))
-  lines.push('', '> 完整统计（bootstrap CI / McNemar / seed noise）由 T7 stats.ts + report.ts 补齐')
-  return lines.join('\n')
-}
 
 // —— harness 纯函数单测（不依赖 DB / 真实 LLM，GLM_API_KEY=test-key 即可跑；setupExperiment 只由 30-run 调）——
 describe('P5 harness 单测', () => {
@@ -98,6 +76,47 @@ describe('P5 harness 单测', () => {
   })
 })
 
+// —— T7 stats + report 纯函数单测（fixture 数据，不依赖 DB / 真实 LLM）——
+describe('P5 stats', () => {
+  it('bootstrapCI 恒返回区间且含均值', () => {
+    const ci = bootstrapCI([true, true, false, false, true], 200)
+    expect(ci.low).toBeLessThanOrEqual(ci.high)
+    expect(ci.mean).toBeCloseTo(0.6, 5)
+  })
+  it('pairedMcNemar: OFF 赢多则 p 小', () => {
+    const r = pairedMcNemar([true, true, true], [false, false, false]) // b=3 c=0
+    expect(r.b).toBe(3)
+    expect(r.c).toBe(0)
+    expect(r.pValue).toBeLessThan(0.1)
+  })
+  it('seedNoise: 全同 → 0 方差', () => {
+    const ns = seedNoise([
+      { config: 'on', taskId: 'A', pass: true, failureMode: 'pass' } as any,
+      { config: 'on', taskId: 'A', pass: true, failureMode: 'pass' } as any,
+    ])
+    expect(ns[0].variance).toBe(0)
+  })
+})
+
+describe('P5 report', () => {
+  it('generateReport 覆盖关键 section + M3 trace 说明（不假装 trace 文件存在）', () => {
+    const fixtures: RunMetrics[] = [
+      { runId: 'r1', config: 'off', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 2, totalTransitions: 3, latencyMs: 10, tracePath: '' },
+      { runId: 'r2', config: 'on', taskId: 'A', seed: 0, pass: false, failureMode: 'stuck', rounds: CONFIG.maxRounds, escalateCount: 1, correctionCount: 1, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 12, tracePath: '' },
+    ]
+    const report = generateReport(fixtures)
+    expect(report).toContain('# P5 Pilot Report')
+    expect(report).toContain('## 逐格 pass 数组')
+    expect(report).toContain('## 配对 McNemar')
+    expect(report).toContain('## seed noise')
+    expect(report).toContain('## 失效模式分布')
+    expect(report).toContain('## OFF 非法尝试率 vs ON correctionCount')
+    expect(report).toContain('方向性差异当传闻看')
+    expect(report).toContain('session.decisionTrace') // M3
+    expect(report).toContain('| off | A | 1 | 1/1 |')
+  })
+})
+
 // —— 30 次 run（Spec §3.3：3任务×2配置×5次；5 固定 seed 同 seed 配对 ON/OFF）——
 const SEEDS = [0, 1, 2, 3, 4]
 describe('P5 pilot: 30 次受控实验', () => {
@@ -119,7 +138,10 @@ describe('P5 pilot: 30 次受控实验', () => {
       for (const seed of SEEDS) {
         it(`${config} ${task.id} seed=${seed}`, async () => {
           const m = await runOne({ config, taskId: task.id, seed })
-          expect(['pass','no-pass','escalate-exhausted','stuck','error'].includes(m.failureMode)).toBe(true)
+          // M2：断言 m 结构完整（原 includes(m.failureMode) 对 5 值联合类型恒真，是重言式）
+          expect(m.runId).toBeTruthy()
+          expect(typeof m.pass).toBe('boolean')
+          expect(m.rounds).toBeGreaterThanOrEqual(0)
         }, 6 * 60 * 1000)
       }
     }
