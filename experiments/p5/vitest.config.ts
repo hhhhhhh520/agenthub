@@ -1,0 +1,23 @@
+import { defineConfig } from 'vitest/config'
+import path from 'path'
+
+// P5 实验独立 vitest config：
+// - test.env 设 DATABASE_URL 指向独立 p5.db（prisma 是模块加载期单例，必须在 @/lib/db 首次求值前生效）
+// - testTimeout 设到小时级（30 次真实 LLM run 串行）
+// - fileParallelism:false（串行，避免 on/off env 串扰 + DB 竞争）
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+    include: ['run.test.ts'],
+    testTimeout: 6 * 60 * 1000,       // 单 run 上限（含决策/补拆/执行 mock）
+    hookTimeout: 2 * 60 * 1000,
+    fileParallelism: false,
+    env: {
+      DATABASE_URL: 'file:D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db', // 绝对路径，消除 cwd 歧义
+    },
+  },
+  resolve: {
+    alias: { '@': path.resolve(__dirname, '../../src') },
+  },
+})
