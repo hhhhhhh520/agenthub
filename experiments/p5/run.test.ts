@@ -5,7 +5,7 @@ import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne } from './run-one'
-import { loadMetrics, appendMetrics, countIllegalProposals, type RunMetrics } from './metrics'
+import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, type RunMetrics } from './metrics'
 
 // —— vi.mock 注入（Spec §5.2，必须在 src 模块首次 import 前）——
 // 决策保留真实 LLM（getOrchestratorDecision 内部调 executeSingleAgent，orchestrator 系统提示不含
@@ -78,6 +78,13 @@ describe('P5 harness 单测', () => {
     ]
     expect(countIllegalProposals(entries, true)).toBe(1)
     expect(countIllegalProposals(entries, false)).toBe(0) // ON 用 escalateCount/correctionCount 表达
+  })
+  it('resolveFailureMode: error/stuck 显式可达（review I1 修正，不再依赖 rounds > maxRounds 永假）', () => {
+    expect(resolveFailureMode(false, 0, CONFIG.maxRounds)).toBe('stuck')            // 撞 maxRounds 上界且未 done
+    expect(resolveFailureMode(false, 0, CONFIG.maxRounds - 1)).toBe('no-pass')      // no-progress 提前 break
+    expect(resolveFailureMode(false, 0, 3, true)).toBe('error')                     // 异常击穿
+    expect(resolveFailureMode(false, CONFIG.escalateLimit + 1, 3)).toBe('escalate-exhausted')
+    expect(resolveFailureMode(true, 0, 5)).toBe('pass')                             // pass 优先
   })
   it('metrics 落盘往返', () => {
     const runId = `__harness_${Date.now()}`
