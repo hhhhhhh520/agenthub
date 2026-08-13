@@ -45,9 +45,32 @@ export function countIllegalProposals(entries: any[], isOff: boolean): number {
   ).length
 }
 
+/**
+ * 失效模式判定（review I1 修正）：显式支持 error/stuck，不再依赖 rounds > maxRounds 永假表达式。
+ * - error：runOne 异常击穿时落 'error' 行（防格子 N 从 5 变 4 破坏配对）
+ * - pass：oracle 全过
+ * - escalate-exhausted：escalate 超过上限（提前 break）
+ * - stuck：循环撞 maxRounds 上界且未 done（rounds >= maxRounds）
+ * - 其余（no-progress break / snap null）：no-pass
+ * 纯函数，便于单测。
+ */
+export function resolveFailureMode(
+  pass: boolean,
+  escalateCount: number,
+  rounds: number,
+  error?: boolean
+): RunMetrics['failureMode'] {
+  if (error) return 'error'
+  if (pass) return 'pass'
+  if (escalateCount > CONFIG.escalateLimit) return 'escalate-exhausted'
+  if (rounds >= CONFIG.maxRounds) return 'stuck'
+  return 'no-pass'
+}
+
 export async function collectMetrics(
   runId: string, sessionId: string, config: 'on'|'off', taskId: 'A'|'B'|'C', seed: number,
-  rounds: number, escalateCount: number, latencyMs: number
+  rounds: number, escalateCount: number, latencyMs: number,
+  error?: boolean
 ): Promise<RunMetrics> {
   const { prisma } = await import('@/lib/db')
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
@@ -71,12 +94,8 @@ export async function collectMetrics(
     onConformanceOk = illegalTransitions === 0 && escalateButLegal === 0
   }
 
-  const pass = done && requiredEdgesOk && (config === 'off' ? true : onConformanceOk)
-
-  let failureMode: RunMetrics['failureMode'] = 'no-pass'
-  if (pass) failureMode = 'pass'
-  else if (escalateCount > CONFIG.escalateLimit) failureMode = 'escalate-exhausted'
-  else if (rounds > CONFIG.maxRounds) failureMode = 'stuck'
+  const pass = error ? false : (done && requiredEdgesOk && (config === 'off' ? true : onConformanceOk))
+  const failureMode = resolveFailureMode(pass, escalateCount, rounds, error)
 
   const correctionCount = entries.reduce((n, e) => n + (e.corrections?.length ?? 0), 0)
   const illegalProposalCount = countIllegalProposals(entries, config === 'off')
