@@ -50,6 +50,8 @@ dev.db-shm
 dev.db-wal
 # P5 experiment (experiments/p5)
 experiments/p5/p5.db*
+experiments/p5/results/
+experiments/p5/work/
 
 # agent workspaces
 workspaces/
