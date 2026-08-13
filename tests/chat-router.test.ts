@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // --- Mocks ---
 const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionUpdateMany, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
@@ -405,6 +405,97 @@ describe('parseDeclaredFiles (P2 安全解析,审查整改)', () => {
 
   it('合法数组原样返回', () => {
     expect(parseDeclaredFiles('["src/a.ts", "src/b.ts"]')).toEqual(['src/a.ts', 'src/b.ts'])
+  })
+})
+
+describe('P5: OFF 开关（EXPERIMENT_STATE_MACHINE=off）', () => {
+  const prevEnv = process.env.EXPERIMENT_STATE_MACHINE
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
+    else process.env.EXPERIMENT_STATE_MACHINE = prevEnv
+  })
+
+  it('OFF 下表外 action：不 escalate，直派 handler，trace 记 applied:false', async () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    // idle 态提表外 align_qa（idle 转移表无 align_qa）→ 不弹 escalate，调 handleAgentQA
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'align_qa', target: null, targets: null, message: '问一下', reason: '需要澄清' },
+      sessionId: 'cli-1',
+    })
+    mockMessageFindMany.mockResolvedValue([])
+    mockTaskFindMany.mockResolvedValue([])
+    await handleOrchestratorDecision('澄清一下', 's1', [], sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+
+    // 断言：escalate 事件没发（OFF 放行）
+    const escalateEvents = sendEvent.mock.calls.filter(c => c[0].type === 'awaiting_user_input' && c[0].content === 'escalate')
+    expect(escalateEvents.length).toBe(0)
+    // 断言：trace 落库一次，validator=experiment-off、applied:false
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
+    const traceArg = mockSessionUpdateMany.mock.calls[0][0].data.decisionTrace
+    const parsed = JSON.parse(traceArg)
+    expect(parsed.length).toBe(1)
+    expect(parsed[0].validation.validator).toBe('experiment-off')
+    expect(parsed[0].actualTransition.applied).toBe(false)
+    expect(parsed[0].actualTransition.escalated).toBe(false)
+    expect(parsed[0].llmProposal.action).toBe('align_qa') // 原提议保留
+  })
+
+  it('默认（无 env）ON 行为不变：表外 action 仍 escalate', async () => {
+    // 与上例同输入，但无 EXPERIMENT_STATE_MACHINE
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'align_qa', target: null, targets: null, message: '问一下', reason: '需要澄清' },
+      sessionId: 'cli-1',
+    })
+    mockMessageFindMany.mockResolvedValue([])
+    await handleOrchestratorDecision('澄清一下', 's1', [], sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const escalateEvents = sendEvent.mock.calls.filter(c => c[0].type === 'awaiting_user_input' && c[0].content === 'escalate')
+    expect(escalateEvents.length).toBe(1)
+  })
+
+  it('OFF 下表内 action：跳过纠正直派 handler，trace 记 applied:true + validator=experiment-off', async () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    // align_arch 态提 align_qa 且 Q&A 已答：ON 模式规则3纠正→execute；OFF 跳过纠正 → 直派 handleAgentQA
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'align_qa', target: null, targets: null, message: '确认一下', reason: '需要澄清' },
+      sessionId: 'cli-1',
+    })
+    mockMessageFindMany.mockResolvedValue([
+      { role: 'agent', agentId: '前端工程师', rawContent: '用什么框架？' },
+      { role: 'user', agentId: null, rawContent: 'React' },
+    ])
+    await handleOrchestratorDecision('确认一下', 's1', [], sendEvent, { phase: 'alignment', phaseStep: 'architect_plan', decisionTrace: '[]' })
+
+    const escalateEvents = sendEvent.mock.calls.filter(c => c[0].type === 'awaiting_user_input' && c[0].content === 'escalate')
+    expect(escalateEvents.length).toBe(0)
+    expect(mockHandleAgentQA).toHaveBeenCalled()
+    expect(mockTransitionToExecution).not.toHaveBeenCalled() // OFF 跳过规则3纠正
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const parsed = JSON.parse(traceCall![0].data.decisionTrace)
+    expect(parsed.length).toBe(1)
+    expect(parsed[0].validation.validator).toBe('experiment-off')
+    expect(parsed[0].corrections).toEqual([])
+    expect(parsed[0].actualTransition).toEqual({ from: 'align_arch', to: 'align_qa', action: 'align_qa', applied: true, escalated: false })
+  })
+
+  it('OFF 下表外且无 case 的 action：不 escalate，兜底走聊天回复（不静默吞掉）', async () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    // 对抗性/未知 action（toString）在 OFF 下无对应 case → 兜底 handleOrchestratorChat，UI/实验驱动不悬挂
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'toString', target: null, targets: null, message: 'hi', reason: 'r' },
+      sessionId: 'orch-ses',
+    })
+    mockMessageFindMany.mockResolvedValue([])
+    mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' }) // handleOrchestratorChat 读 projectDir
+    await handleOrchestratorDecision('hi', 's1', [], sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+
+    const escalateEvents = sendEvent.mock.calls.filter(c => c[0].type === 'awaiting_user_input' && c[0].content === 'escalate')
+    expect(escalateEvents.length).toBe(0)
+    expect(mockExecuteSingleAgent).toHaveBeenCalled() // 兜底走 handleOrchestratorChat
+    // trace 仍照记 applied:false（不因兜底而丢失）
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const parsed = JSON.parse(traceCall![0].data.decisionTrace)
+    expect(parsed[0].actualTransition).toMatchObject({ action: 'toString', applied: false, escalated: false })
   })
 })
 

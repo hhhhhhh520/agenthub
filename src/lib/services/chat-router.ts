@@ -6,7 +6,7 @@ import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecut
 import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
-import { stateFromSession, applyTransition, canonicalCorrect, transitionPhase, idleExecuteGate } from '@/lib/orchestrator/state-machine'
+import { stateFromSession, applyTransitionWithOverride, canonicalCorrect, transitionPhase, idleExecuteGate, isExperimentOff } from '@/lib/orchestrator/state-machine'
 import { appendDecisionTrace, type DecisionTraceEntry } from '@/lib/orchestrator/decision-trace'
 
 /**
@@ -89,67 +89,79 @@ export async function handleOrchestratorDecision(
   const corrections: Array<{ from: string; to: string; reason: string }> = []
 
   const state = stateFromSession(sessionPhase.phase, sessionPhase.phaseStep)
+  // P5 受控实验：OFF 开关只关 enforcement，不关 trace。跳过纠正+守卫，转移校验用 override，
+  // trace 块照常记录（validator:'experiment-off'，表外 inTable:false → applied:false）。
+  const experimentOff = isExperimentOff()
 
-  // Hybrid 规范化纠正（3 条）：命中 -> redirect 到合法 action（不静默，附 reason）
-  const correction = canonicalCorrect(state, decision.action, history)
-  if (correction) {
-    corrections.push({ from: decision.action, to: correction.redirect, reason: `规范化纠正: ${decision.reason}` })
-    decision = { ...decision, action: correction.redirect, reason: `${decision.reason}（规范化纠正 -> ${correction.redirect}）` }
-  }
-
-  // P2 idle→execute 确定性闸门（决定 3）：idle 态跳步执行需过 idleExecuteGate（有任务且全非代码），
-  // 否则回对齐拆解——跳步不是"LLM 说简单就简单"。非 idle 态保留 0-task 守卫（补拆，T5）。
-  if (decision.action === 'execute') {
-    const tasks = await prisma.task.findMany({ where: { sessionId }, select: { description: true, declaredFiles: true } })
-    const hasCodeTask = tasks.some(t => isCodeTask({ description: t.description, declaredFiles: parseDeclaredFiles(t.declaredFiles) }))
-    if (state === 'idle' ? !idleExecuteGate(tasks.length, hasCodeTask) : tasks.length === 0) {
-      const reason = state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解'
-      corrections.push({ from: 'execute', to: 'align_decompose', reason })
-      decision = { ...decision, action: 'align_decompose', reason }
+  if (!experimentOff) {
+    // Hybrid 规范化纠正（3 条）：命中 -> redirect 到合法 action（不静默，附 reason）
+    const correction = canonicalCorrect(state, decision.action, history)
+    if (correction) {
+      corrections.push({ from: decision.action, to: correction.redirect, reason: `规范化纠正: ${decision.reason}` })
+      decision = { ...decision, action: correction.redirect, reason: `${decision.reason}（规范化纠正 -> ${correction.redirect}）` }
     }
-  }
 
-  // done 业务守卫（§5.1: exec→done 需 allDone，allDone = 全部 completed|blocked）：
-  // exec 态还有未完成任务（含 failed）-> 不关闭会话，redirect execute 继续执行/提示收尾
-  if (decision.action === 'done' && state === 'exec') {
-    const unfinished = await prisma.task.count({ where: { sessionId, status: { notIn: ['completed', 'blocked'] } } })
-    if (unfinished > 0) {
-      corrections.push({ from: 'done', to: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` })
-      decision = { ...decision, action: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` }
-    } else {
-      // §5.3: 有 verify 任务但未 completed（blocked 计入 allDone，会漏）-> 不关闭会话。
-      // verify 由 alignment.ts 拆解代码任务时自动追加，blocked 意味着验证被依赖失败波及，
-      // 放行 done 会造成"完成但未验证"。
-      const verify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } }, select: { status: true } })
-      if (verify && verify.status !== 'completed') {
-        corrections.push({ from: 'done', to: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` })
-        decision = { ...decision, action: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` }
+    // P2 idle→execute 确定性闸门（决定 3）：idle 态跳步执行需过 idleExecuteGate（有任务且全非代码），
+    // 否则回对齐拆解——跳步不是"LLM 说简单就简单"。非 idle 态保留 0-task 守卫（补拆，T5）。
+    if (decision.action === 'execute') {
+      const tasks = await prisma.task.findMany({ where: { sessionId }, select: { description: true, declaredFiles: true } })
+      const hasCodeTask = tasks.some(t => isCodeTask({ description: t.description, declaredFiles: parseDeclaredFiles(t.declaredFiles) }))
+      if (state === 'idle' ? !idleExecuteGate(tasks.length, hasCodeTask) : tasks.length === 0) {
+        const reason = state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解'
+        corrections.push({ from: 'execute', to: 'align_decompose', reason })
+        decision = { ...decision, action: 'align_decompose', reason }
+      }
+    }
+
+    // done 业务守卫（§5.1: exec→done 需 allDone，allDone = 全部 completed|blocked）：
+    // exec 态还有未完成任务（含 failed）-> 不关闭会话，redirect execute 继续执行/提示收尾
+    if (decision.action === 'done' && state === 'exec') {
+      const unfinished = await prisma.task.count({ where: { sessionId, status: { notIn: ['completed', 'blocked'] } } })
+      if (unfinished > 0) {
+        corrections.push({ from: 'done', to: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` })
+        decision = { ...decision, action: 'execute', reason: `还有 ${unfinished} 个未完成任务，继续执行` }
+      } else {
+        // §5.3: 有 verify 任务但未 completed（blocked 计入 allDone，会漏）-> 不关闭会话。
+        // verify 由 alignment.ts 拆解代码任务时自动追加，blocked 意味着验证被依赖失败波及，
+        // 放行 done 会造成"完成但未验证"。
+        const verify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } }, select: { status: true } })
+        if (verify && verify.status !== 'completed') {
+          corrections.push({ from: 'done', to: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` })
+          decision = { ...decision, action: 'execute', reason: `验证任务未完成（${verify.status}），继续执行` }
+        }
+      }
+    }
+
+    // If delegate is chosen but there are pending tasks, append a note but don't override the action
+    if (decision.action === 'delegate') {
+      const pendingTasks = await prisma.task.count({ where: { sessionId, status: 'pending' } })
+      if (pendingTasks > 0) {
+        decision = { ...decision, reason: `${decision.reason}（另有${pendingTasks}个待执行任务）` }
       }
     }
   }
 
-  // If delegate is chosen but there are pending tasks, append a note but don't override the action
-  if (decision.action === 'delegate') {
-    const pendingTasks = await prisma.task.count({ where: { sessionId, status: 'pending' } })
-    if (pendingTasks > 0) {
-      decision = { ...decision, reason: `${decision.reason}（另有${pendingTasks}个待执行任务）` }
-    }
-  }
-
-  // 转移合法性校验（纠正 + 业务守卫之后）：真非法 -> escalate（不静默，学 CrewAI 反面）
-  const transition = applyTransition(state, decision.action)
+  // 转移合法性校验（纠正 + 业务守卫之后）：P5 OFF 时用 override（bypass 恒 ok，表外保持当前态不 escalate，
+  // 旁路 action 不转 phase 走原 handler）；ON 时走原 applyTransition 语义，真非法 -> escalate（不静默，学 CrewAI 反面）
+  const transition = applyTransitionWithOverride(state, decision.action, experimentOff)
   // P3 §5.6: 决策输入记进 trace——决策已定（提议/纠正/校验/实际转移全就位），
   // 先落库再派发 handler。Temporal 精神：长操作（执行/讨论）前决策已持久化，重试/恢复可复用同一转移。
+  // P5: OFF 表外条目打 experiment-off 标记（inTable:false → applied:false），供 oracle 区分预期实验条件 vs 漂移。
+  // TS 联合收窄：override 的 bypass 分支返回 inTable，非 bypass 分支无 inTable（'inTable' in 收窄后取表内标志）。
+  const offBypass = experimentOff && transition.ok && 'inTable' in transition
+  const offInTable = offBypass ? transition.inTable : true
   const traceEntry: DecisionTraceEntry = {
     decisionPoint: 'handleOrchestratorDecision',
     inputState: { phase: sessionPhase.phase, phaseStep: sessionPhase.phaseStep, state },
     llmProposal,
     corrections,
     validation: transition.ok
-      ? { passed: true, validator: 'applyTransition' }
+      ? { passed: true, validator: offBypass ? 'experiment-off' : 'applyTransition' }
       : { passed: false, validator: 'applyTransition', reason: transition.reason },
     actualTransition: transition.ok
-      ? { from: state, to: transition.nextState, action: decision.action, applied: true, escalated: false }
+      ? offInTable
+        ? { from: state, to: transition.nextState, action: decision.action, applied: true, escalated: false }
+        : { from: state, to: state, action: decision.action, applied: false, escalated: false }
       : { from: state, to: state, action: decision.action, applied: false, escalated: true },
   }
   // 审查整改(攻击者⚠️3.2): 决策点 append 失败(null: DB 异常/乐观锁重试超限)时,后续 handler 的
@@ -213,6 +225,11 @@ export async function handleOrchestratorDecision(
       await transitionPhase(sessionId, 'done', { recordTrace: !decisionRecorded })
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
       sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })
+      break
+    default:
+      // P5 OFF 模式：表外 action 无对应 case（如对抗性 toString）时兜底走聊天回复，不静默吞掉、UI/实验驱动不悬挂。
+      // ON 模式到不了这里——非法 action 已被上方的 escalate 拦截（transition.ok=false 提前 return）。
+      await handleOrchestratorChat(message, sessionId, sendEvent, agents, orchSessionId)
       break
   }
 }
