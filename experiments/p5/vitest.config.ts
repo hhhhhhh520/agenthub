@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['run.test.ts'],
+    include: ['**/run.test.ts'],
     testTimeout: 6 * 60 * 1000,       // 单 run 上限（含决策/补拆/执行 mock）
     hookTimeout: 2 * 60 * 1000,
     fileParallelism: false,
