@@ -8,6 +8,8 @@ export function generateReport(metrics: RunMetrics[]): string {
   lines.push('# P5 Pilot Report', '')
   lines.push(`> model: ${CONFIG.model} | runsPerCell: ${CONFIG.runsPerCell} | escalateLimit: ${CONFIG.escalateLimit} | maxRounds: ${CONFIG.maxRounds}`)
   lines.push(`> 执行 mock（executeTaskBatch + monitoring 恒不纠正）| 决策真实 LLM`)
+  // Spec §6：混淆变量必须固定，报告写明罐头消息
+  lines.push(`> 罐头消息: ${JSON.stringify(CONFIG.cannedReplies)}`)
   // M3：trace 只在 DB session.decisionTrace，runOne 不写 trace-*.json 文件；不假装文件存在
   lines.push('> trace 存于 DB session.decisionTrace（runOne 不落 trace-*.json 文件，RunMetrics.tracePath 仅占位不指向真实文件）', '')
   lines.push('## 逐格 pass 数组')
