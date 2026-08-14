@@ -10,15 +10,26 @@ import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
 
 // —— vi.mock 注入（Spec §5.2，必须在 src 模块首次 import 前）——
-// 决策保留真实 LLM（getOrchestratorDecision 内部调 executeSingleAgent，orchestrator 系统提示不含
-// '代码审查专家'，透传真实调用），任务执行 mock（executeTaskBatch）+ monitoring mock（代码审查专家→不纠正）。
+// 决策保留真实 LLM：getOrchestratorDecision 内部直调原 executeSingleAgent（模块内部绑定，mock 拦不到）→ 真实。
+// 判定分支用 agent.systemPrompt（ORCHESTRATOR_DECISION_PROMPT 硬编码模板，LLM 不可污染）作安全网——
+// 若未来重构让决策路由到 mock 仍放行真实；不用 prompt 判定（LLM 可能在 reason/message 回显 prompt 造成误判）。
+// 执行全 mock（冒烟诊断：delegate/discuss/self 走真实 CLI 编码会 hang；且 provider 慢，对齐 PM/QA/decompose 也 mock 以控时长）。
+// decompose 需有效任务 JSON 才能建任务推进流程（alignment.ts:171 parseJSON(['tasks'])）；
+// 非 decompose 消费者（PM/QA/delegate/self）只展示/转发 result，拿任务 JSON 字符串无害。
+// discuss 走 runDiscussion（adapter 直连，不经 executeSingleAgent）→ 单独 mock 防真实 CLI。
+// preflight 固定 prompt '只回复两个字：就绪' → 放行真实（provider 快速失败闸门，Spec §7.2，审查 ❌B）。
+// 常量放 vi.hoisted（vi.mock factory 被 hoisted，引用模块级 const 会 TDZ）。
 const mocks = vi.hoisted(() => {
+  const preflightPromptMarker = '只回复两个字：就绪'
+  const cannedTasksJson = JSON.stringify({
+    tasks: [{ id: 1, description: '实现核心功能并自测', assignedAgent: '后端工程师', dependencies: [], declared_files: ['src/index.ts'] }],
+  })
   const mockExecuteTaskBatch = vi.fn(async (tasks: any[]) => {
     const results = new Map<string, { result: string; sessionId?: string }>()
     for (const t of tasks) results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
     return { results, preloadedIds: [], failedTaskIds: [], failedTaskReasons: {} }
   })
-  return { mockExecuteTaskBatch }
+  return { mockExecuteTaskBatch, preflightPromptMarker, cannedTasksJson }
 })
 
 vi.mock('@/lib/orchestrator', async (importOriginal) => {
@@ -27,11 +38,23 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
     ...mod,
     executeTaskBatch: mocks.mockExecuteTaskBatch,
     executeSingleAgent: vi.fn(async (agent: any, prompt: string, context: string, onChunk: any, ...rest: any[]) => {
+      // 0. preflight（provider 快速失败闸门，固定 prompt）→ 真实调用（审查 ❌B）
+      if (typeof prompt === 'string' && prompt.includes(mocks.preflightPromptMarker)) {
+        return mod.executeSingleAgent(agent, prompt, context, onChunk, ...rest)
+      }
+      // 1. 决策安全网（ORCHESTRATOR_DECISION_PROMPT 硬编码模板，审查 ⚠️污染）→ 真实 LLM；当前决策由内部绕过保证
+      if (agent?.systemPrompt?.includes('决定下一步该做什么')) {
+        return mod.executeSingleAgent(agent, prompt, context, onChunk, ...rest)
+      }
+      // 2. monitoring（代码审查专家）→ 不纠正
       if (agent?.systemPrompt?.includes('代码审查专家')) {
         return { result: JSON.stringify({ needsCorrection: false }) }
       }
-      return mod.executeSingleAgent(agent, prompt, context, onChunk, ...rest)
+      // 3. 其余执行（decompose/PM/QA/delegate/self）→ 有效任务 JSON（decompose 可解析建任务，其余展示无害）
+      return { result: mocks.cannedTasksJson }
     }),
+    // discuss 路径：runMultiAgentDiscussion → runDiscussion（adapter 直连，不经 executeSingleAgent）→ mock 防真实 CLI hang（审查 ❌A）
+    runDiscussion: vi.fn(async () => ['罐头讨论意见（agent A 认为应澄清需求）', '罐头讨论意见（agent B 同意推进）']),
   }
 })
 vi.mock('@/lib/mcp-config', () => ({ buildMCPConfig: () => undefined }))
