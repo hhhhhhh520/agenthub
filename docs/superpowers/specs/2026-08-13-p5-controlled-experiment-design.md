@@ -134,8 +134,10 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
 //   preloadedIds: [], failedTaskIds: [], failedTaskReasons: {}
 ```
 **审查整改（mock 范围）**：
-- **monitoring LLM 也 mock**：`handleExecution` 每任务真实 monitoring（execution.ts:434）未被 mock 会拖爆 run。在 harness 里 wrapper `executeSingleAgent`：systemPrompt 含 `'代码审查专家'`（监控专用）→ 返回 `{ result: '{"needsCorrection":false}' }`；其余（决策/PM/架构师/QA）透传真实。
+- **monitoring LLM 也 mock**：`handleExecution` 每任务真实 monitoring（execution.ts:434）未被 mock 会拖爆 run。在 harness 里 wrapper `executeSingleAgent`：systemPrompt 含 `'代码审查专家'`（监控专用）→ 返回 `{ result: '{"needsCorrection":false}' }`。
 - mock 值必须 `{ result, sessionId }` 对象（`execution.ts:292` 解构），否则 `undefined.slice` 崩 → 30/30 error。
+
+> **实现偏差（2026-08-14 冒烟后记录，deviation from spec）**：实际实现比 spec 更激进——`executeSingleAgent` 对**所有非决策调用**（PM/架构师/QA/delegate/self/decompose）返回固定任务 JSON，不只 mock monitoring + executeTaskBatch。原因：① 冒烟实测 delegate/discuss/self 走真实 CLI 编码会 hang（executeSingleAgent 真实路径），而 spec 原样"透传真实"会让 30-run 挂死；② provider（opencode.ai/zen/go + deepseek-v4-flash）慢，对齐 PM/QA 也 mock 以控时长。**决策识别**：`getOrchestratorDecision` 内部直调原 `executeSingleAgent`（模块内部绑定，mock 拦不到）→ 决策天然真实；另用 `agent.systemPrompt` 含 `'决定下一步该做什么'`（ORCHESTRATOR_DECISION_PROMPT 硬编码模板，LLM 不可污染）作安全网。**discuss 路径**（`runDiscussion` 走 adapter 直连不经 executeSingleAgent）单独 mock 防真实 CLI。**preflight** 固定 prompt `'只回复两个字：就绪'` 放行真实（保 provider 快速失败闸门）。**影响**：决策上下文含固定任务 JSON 噪音（PM/QA 落库为消息），ON/OFF 同侧可抵消；罐头恒代码任务压缩 task 间差异，pilot 灵敏度降低但方向信号仍显著（task B McNemar p≈0.025）。decompose 固定 JSON 恒可解析 → `decomposeTasks` fallback（走 callLLM）不触发。
 - **禁 MCP**：`vi.mock('@/lib/mcp-config', () => ({ buildMCPConfig: () => undefined }))`——MCP 子进程硬编码 dev.db（mcp-config.ts:14），实验期禁掉避免数据分叉。
 - harness 只用 `clearAllMocks()`，**不用 `resetAllMocks()`**（会清掉 mock impl 导致全任务 failed）。
 
