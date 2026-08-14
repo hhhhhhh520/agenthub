@@ -276,6 +276,11 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **每个实际 phase 写入都入 decisionTrace,且不双记** — P4(2026-08-12):transitionPhase 默认补记代码驱动转移(redo/0-task 补拆/QA直发 exec/自动 done,decisionPoint:'transitionPhase'),LLM 决策路径(chat-router 的 done/align_confirm/align_decompose/align_qa/execute 五 case,决策点已记)显式 `recordTrace:false` 抑制。决策点 append 失败时 `decisionRecorded=false` → 抑制转兜底补记(不丢审计)。删补记或误抑制 → directly-follows 图断边/双记,checkConformance/流程挖掘失真
 - **decisionTrace 是内部 analytics,不回客户端** — P4(2026-08-12,T5):sessions GET/PUT/list 全部 `omit: { decisionTrace: true }`,权威 API 通道是 `/api/sessions/[id]/process` + `/api/analytics/process`(返回挖掘结果非原始条目)。新增 session 读端点必须 omit decisionTrace
 
+### P5 受控实验开关(勿改默认行为)
+
+- **`EXPERIMENT_STATE_MACHINE=off`** env 是 P5 受控实验(A方向)的状态机开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时决策点跳过 canonicalCorrect/守卫/escalate 且表外 action 保持当前态,只关 enforcement 不关 trace 记录。
+- 实验相关:`experiments/p5/`(独立 vitest config + 独立 DB,产物 gitignored);设计见下方「设计文档」P5 链接;实验代码不动 src/ 生产路径(state-machine/chat-router 的 `isExperimentOff()` 读 env,默认 false)
+
 ### Chat API Session Lock
 
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
@@ -299,6 +304,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
+- **P5 受控实验 spec/plan**:`docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md` + `docs/superpowers/plans/2026-08-13-p5-controlled-experiment.md` — A方向 C 实验(状态机 vs LLM 自由推进),harness 在 `experiments/p5/`
 - 参考资料:`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
 - **新增功能前必须先看 contract v1**(它定义了 Agent 协作的"应然"),再看 v2 设计决策(早期架构)
 
