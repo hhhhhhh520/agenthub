@@ -59,6 +59,11 @@ alignment.ts 内部透传无需改（`:69/:256/:281/:374` 的 `opts.recordTrace 
 
 **修复链路验证**（off-B 轨迹）：OFF 表外 no-op → decisionApplied=false → execute case 传 `recordExecuteTrace: true` → transitionToExecution 0-task 补拆（handleArchitectPlan 默认 recordTrace:true 补记 align_decompose）+ `:374` transitionPhase('execute', {recordTrace:true}) 补记 execute 边 → oracle ② 能看到 execute 边 ✓
 
+**trace 保真度修正**（`state-machine.ts:249`，A0 一部分）：transitionPhase 补记的 `actualTransition.applied` 当前**硬编码 `true`**。OFF 表外 action 经 handler 的 transitionPhase 补记时（如 idle 提 align_qa 表外），会记 `{from:state, to:state, applied:true}` 的 self-edge——伪 illegal_transition 污染 conformance（不影响 oracle ② 只看特定边、不影响 OFF 的 ③ 跳过，但 trace 语义脏）。修法：补记 applied 用 inTable 收窄——`applied: 'inTable' in result ? result.inTable : true`：
+- ON（bypass=false 返回无 inTable）→ `true`（写库即合法，行为不变）
+- OFF 表内（inTable:true）→ `true`（含 redo 自环 exec→exec，保持 P4 语义）
+- OFF 表外（inTable:false）→ `false`（保持当前态非真转移，不污染 conformance）
+
 **真回归守卫**（`tests/chat-router.test.ts` 新增）：
 1. OFF 表外 no-op → transitionPhase 被补记（updateMany 被调，补记条目 decisionPoint='transitionPhase'）
 2. ON 表内 → 抑制保持（updateMany 未被调，现有测试覆盖）
@@ -92,10 +97,11 @@ task C 的 description **须刻意避开代码后缀**（isCodeTask alignment.ts
 
 **代码事实**：P5 部分 run 真实耗时 245-589s，`testTimeout` 360s 标 fail（harness 伪影）；off-C-s4 超时无数据。
 
-**修法**：
-1. `experiments/p5/config.ts` testTimeout → `30*60*1000`
-2. **A0+A1 修完后**，先用真实 LLM 补跑 off-C-s4 单格**验证修复有效性**（trace 里应出现 execute 边、pass 判定变化）——这一步是修复的闭环验证，不是重跑基线
-3. 完整 off-C 格（5 seed）由 2×2 矩阵的 off+verify 格覆盖（见 §4），无需单独重跑
+**修法**（**两套独立超时都要放宽**）：
+1. `experiments/p5/vitest.config.ts:13` testTimeout `360s` → `30*60*1000`（vitest 侧，单 run 上限）
+2. `experiments/p5/config.ts:14` timeoutMs `300s` → `30*60*1000`（与 testTimeout 同值）——timeoutMs 被 `run-one.ts:62` 当 `globalDeadline = Date.now() + CONFIG.timeoutMs` 传进 orchestrator；`execution.ts:146` 对其**硬判**（`Date.now() > deadline → break` + error 事件）。harness 下 execution 全 mock 秒回**当前不触发**，但这是 mock 下的侥幸非设计保证——若未来 QA/执行非 mock，300s 会掐慢 run。放宽为防御性一致化，消除「spec 说 30min / 实际 300s」矛盾。
+3. **A0+A1 修完后**，先用真实 LLM 补跑 off-C-s4 单格**验证修复有效性**（trace 里应出现 execute 边、pass 判定变化）——修复闭环验证，非重跑基线
+4. 完整 off-C 格（5 seed）由 2×2 矩阵的 off+verify 格覆盖（见 §4），无需单独重跑
 
 ### A4 GLM_MODEL upsert 对已存在 agent 无效
 
@@ -172,7 +178,8 @@ if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {   // P6: 
 | `docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md` §2 | 模型行写 glm | 更新为实际 deepseek-v4-flash（历史事实修正） |
 | `README.md`（如 P5 实验提及） | 写 glm | 更新 |
 
-- key 从 env `GLM_API_KEY` 读，永不硬编码、永不打印
+- key 从 env `GLM_API_KEY` 读，永不硬编码、永不打印。**env 名沿用 GLM_API_KEY（历史命名），内容为当前 provider（opencode.ai/zen/go）的 key**——模型已 deepseek 而 env 名仍叫 GLM 是历史遗留，不改名（改 env 名会破坏已有 key 配置）
+- `GLM_MODEL` env 仍可覆盖默认（如切回 glm-4.7-flash）；默认改 deepseek-v4-flash 是用户已拍板（P5 实跑验证），偏离「本地用智谱」惯例已记录在案
 - A4 修好后，`CONFIG.model` 默认 deepseek-v4-flash 即生效，无需 GLM_MODEL env（除非覆盖）
 
 ## 6. 不变量（新增 1 条，其余沿用）
@@ -198,6 +205,7 @@ if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {   // P6: 
 
 - 生产改动仅 2 处（trace 修法 chat-router + verify 开关 alignment），**每次修改必须新增针对性测试**（A0 守卫 3 条、verify 开关守卫）：
   - `tests/chat-router.test.ts`：A0 守卫（OFF no-op 补记 / ON 抑制保持 / append 失败兜底）
+  - `tests/state-machine.test.ts`：transitionPhase 补记 applied 修正（OFF 表外 self-edge 记 applied:false；redo 自环 exec→exec 保持 applied:true——P4 现有测试不破）
   - `tests/alignment.test.ts`：`EXPERIMENT_VERIFY=off` 不创建 verify 任务；未设则创建
 - harness 单测：A1（三档罐头）、A2（QA '无问题' 分流）、A4（upsert update）、A5（seed 排序）
 - 全量 `npx vitest run` 基线：生产 1050 passed / 3 skipped（A0/A1 可能 +N）
@@ -216,10 +224,12 @@ if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {   // P6: 
 | 文件 | 改动 |
 |------|------|
 | `src/lib/services/chat-router.ts` | A0：5 处抑制点改 `!(decisionRecorded && decisionApplied)` + `decisionApplied` 定义 |
+| `src/lib/orchestrator/state-machine.ts` | A0：transitionPhase 补记 applied 用 inTable 收窄（:249，trace 保真度修正） |
 | `src/lib/services/alignment.ts` | verify 开关包 `:232` 创建块 |
 | `experiments/p5/run.test.ts` | A1：罐头按 task 三档；A2：PM/QA/delegate/self 语义化 |
 | `experiments/p5/setup.ts` | A4：upsert update 写 model/baseUrl/apiKey |
-| `experiments/p5/config.ts` | A3：testTimeout 30min；§5：model 默认 deepseek-v4-flash |
+| `experiments/p5/config.ts` | A3：timeoutMs 300s→30min（globalDeadline 源头）；§5：model 默认 deepseek-v4-flash |
+| `experiments/p5/vitest.config.ts` | A3：testTimeout 360s→30min（vitest 侧，与 timeoutMs 两套独立约束） |
 | `experiments/p5/report.ts` | A5：pass 按 seed 排序；§5：头部打印 model/baseUrl；4 配置分组 |
 | `experiments/p5/run-one.ts` | verify 开关透传（如 run 需带配置标记） |
 | `tests/chat-router.test.ts` | A0 守卫 3 条 |
