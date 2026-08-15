@@ -111,7 +111,7 @@ describe('P5 harness 单测', () => {
   })
   it('metrics 落盘往返', () => {
     const runId = `__harness_${Date.now()}`
-    const m: RunMetrics = { runId, config: 'off', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '' }
+    const m: RunMetrics = { runId, config: 'off+no-verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '' }
     appendMetrics(m)
     expect(loadMetrics().some(x => x.runId === runId)).toBe(true)
     // 清理：runId 唯一，按行删除，不污染实验 metrics.jsonl
@@ -218,13 +218,16 @@ describe('P5 stats', () => {
 describe('P5 report', () => {
   it('generateReport 覆盖关键 section + M3 trace 说明（不假装 trace 文件存在）', () => {
     const fixtures: RunMetrics[] = [
-      { runId: 'r1', config: 'off', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 2, totalTransitions: 3, latencyMs: 10, tracePath: '' },
-      { runId: 'r2', config: 'on', taskId: 'A', seed: 0, pass: false, failureMode: 'stuck', rounds: CONFIG.maxRounds, escalateCount: 1, correctionCount: 1, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 12, tracePath: '' },
+      { runId: 'r1', config: 'off+verify', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 2, totalTransitions: 3, latencyMs: 10, tracePath: '' },
+      { runId: 'r2', config: 'on+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'stuck', rounds: CONFIG.maxRounds, escalateCount: 1, correctionCount: 1, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 12, tracePath: '' },
     ]
     const report = generateReport(fixtures)
     expect(report).toContain('# P5 Pilot Report')
     expect(report).toContain('## 逐格 pass 数组')
     expect(report).toContain('## 配对 McNemar')
+    expect(report).toContain('### 状态机主效应')   // P6 T8：verify 固定时 ON vs OFF 配对
+    expect(report).toContain('### verify 主效应')  // P6 T8：状态机固定时 verify vs no-verify 配对
+    expect(report).toContain('## 交互 2×2 列联表') // P6 T8：行=状态机 列=verify 格=pass 率
     expect(report).toContain('## seed noise')
     expect(report).toContain('## 失效模式分布')
     expect(report).toContain('## OFF 非法尝试率 vs ON correctionCount')
@@ -233,24 +236,89 @@ describe('P5 report', () => {
     expect(report).toContain('session.decisionTrace') // M3
     expect(report).toContain('罐头消息') // I1: spec §6 报告写明固定罐头消息
     expect(report).toContain(JSON.stringify(CONFIG.cannedReplies))
-    expect(report).toContain('| off | A | 1 | 1/1 |')
+    expect(report).toContain('| off+verify | A | 1 | 1/1 |')
   })
   it('A5: pass 数组按 seed 升序（乱序 metrics seed 3,1,2 → 0/1/1，不随插入序漂移）', () => {
-    const seed3: RunMetrics = { runId: 'r-s3', config: 'on', taskId: 'A', seed: 3, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '' }
-    const seed1: RunMetrics = { runId: 'r-s1', config: 'on', taskId: 'A', seed: 1, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 9, tracePath: '' }
-    const seed2: RunMetrics = { runId: 'r-s2', config: 'on', taskId: 'A', seed: 2, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 11, tracePath: '' }
+    const seed3: RunMetrics = { runId: 'r-s3', config: 'on+verify', taskId: 'A', seed: 3, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '' }
+    const seed1: RunMetrics = { runId: 'r-s1', config: 'on+verify', taskId: 'A', seed: 1, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 9, tracePath: '' }
+    const seed2: RunMetrics = { runId: 'r-s2', config: 'on+verify', taskId: 'A', seed: 2, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 11, tracePath: '' }
     const shuffled: RunMetrics[] = [seed3, seed1, seed2] // 插入序 3,1,2
     const report = generateReport(shuffled)
     // seed 升序 1,2,3 → pass 数组 false/true/true → "0/1/1"（修复前按插入序输出 "1/0/1"）
-    expect(report).toContain('| on | A | 0/1/1 |')
+    expect(report).toContain('| on+verify | A | 0/1/1 |')
     // sort 在 filter 拷贝上，generateReport 不得改动入参顺序
     expect(shuffled.map(m => m.seed)).toEqual([3, 1, 2])
   })
 })
 
-// —— 30 次 run（Spec §3.3：3任务×2配置×5次；5 固定 seed 同 seed 配对 ON/OFF）——
+// —— P6 T8: 2×2 配置矩阵（configs 扩 4 + envForConfig 透传 + report 主效应/交互）——
+describe('P6 T8: 2×2 配置矩阵', () => {
+  it('CONFIG.configs 扩为 4 配置 + envForConfig 映射正确', () => {
+    expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify'])
+    expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined })
+    expect(CONFIG.envForConfig('on+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: 'off' })
+    expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined })
+    expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off' })
+  })
+
+  it('generateReport: 4 配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
+    // 已知 pass 数据（seed 0..4）：
+    //   on+verify / off+no-verify 全过；off+verify 全败；on+no-verify 仅 seed 4 败
+    const passBy: Record<string, boolean[]> = {
+      'on+verify': [true, true, true, true, true],
+      'off+no-verify': [true, true, true, true, true],
+      'off+verify': [false, false, false, false, false],
+      'on+no-verify': [true, true, true, true, false],
+    }
+    const row = (config: (typeof CONFIG.configs)[number], taskId: 'A' | 'B' | 'C', seed: number, pass: boolean): RunMetrics => ({
+      runId: `${config}-${taskId}-s${seed}`, config, taskId, seed, pass,
+      failureMode: pass ? 'pass' : 'no-pass', rounds: 5, escalateCount: 0,
+      correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '',
+    })
+    // 乱序插入（verify 配置组先插、每配置 seed 倒序），验证同 seed 配对不依赖插入序
+    const metrics: RunMetrics[] = []
+    for (const config of CONFIG.configs) {
+      for (const taskId of ['A', 'B', 'C'] as const) {
+        for (let seed = 4; seed >= 0; seed--) metrics.push(row(config, taskId, seed, passBy[config][seed]))
+      }
+    }
+    const report = generateReport(metrics)
+
+    // 状态机主效应（verify 固定）：ON+verify 5/5 vs OFF+verify 0/5 → b=0 c=5（每 task 各一组，共 6 组）
+    for (const tid of ['A', 'B', 'C']) {
+      expect(report).toContain(`- ${tid} (verify): ON+verify 5/5 vs OFF+verify 0/5 | b=0 c=5`)
+      // 状态机主效应（no-verify）：ON+no-verify 4/5 vs OFF+no-verify 5/5 → b=1 c=0（seed 4：OFF 过 ON 败）
+      expect(report).toContain(`- ${tid} (no-verify): ON+no-verify 4/5 vs OFF+no-verify 5/5 | b=1 c=0`)
+    }
+    // verify 主效应（状态机固定）：on+verify 5/5 vs on+no-verify 4/5 → b=0 c=1
+    expect(report).toContain('- A (on): on+verify 5/5 vs on+no-verify 4/5 | b=0 c=1')
+    // verify 主效应（off）：off+verify 0/5 vs off+no-verify 5/5 → b=5 c=0
+    expect(report).toContain('- A (off): off+verify 0/5 vs off+no-verify 5/5 | b=5 c=0')
+    // 交互 2×2 列联表：表头 + A 行 Δ 值
+    expect(report).toContain('| task | verify | ON 率 | OFF 率 | Δ(ON-OFF) |')
+    expect(report).toContain('| A | verify | 5/5 | 0/5 | 1.00 |')
+    expect(report).toContain('| A | no-verify | 4/5 | 5/5 | -0.20 |')
+    // 逐格 pass 数组按 seed 升序（乱序输入 → 序列仍正确）
+    expect(report).toContain('| on+no-verify | A | 1/1/1/1/0 |')
+    expect(report).toContain('| off+verify | A | 0/0/0/0/0 |')
+  })
+
+  it('非法尝试率段 4 配置通用：OFF 前缀用 illegalProposalCount、ON 前缀用 correctionCount', () => {
+    const metrics: RunMetrics[] = [
+      { runId: 'o1', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 9, illegalProposalCount: 4, totalTransitions: 2, latencyMs: 10, tracePath: '' },
+      { runId: 'o2', config: 'off+no-verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 7, illegalProposalCount: 6, totalTransitions: 2, latencyMs: 10, tracePath: '' },
+      { runId: 'n1', config: 'on+verify', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 3, illegalProposalCount: 99, totalTransitions: 3, latencyMs: 10, tracePath: '' },
+    ]
+    const report = generateReport(metrics)
+    expect(report).toContain('- off+verify: 4（1 runs，avg 4.00）')   // illegalProposalCount
+    expect(report).toContain('- off+no-verify: 6（1 runs，avg 6.00）') // illegalProposalCount
+    expect(report).toContain('- on+verify: 3（1 runs，avg 3.00）')     // correctionCount（忽略 illegalProposalCount=99）
+  })
+})
+
+// —— 60 次 run（Spec §3.3：3任务×4配置×5次；P6 T8 扩 2×2 矩阵；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
-describe('P5 pilot: 30 次受控实验', () => {
+describe('P5 pilot: 60 次受控实验（4 配置 2×2 矩阵）', () => {
   // setupExperiment 仅 30-run 需要（建库 + 实验 agents + preflight 真 LLM 调用）。
   // harness 纯函数单测不调它——preflight 需要真实 GLM key，无 key 时只跑单测 describe
   beforeAll(async () => {
