@@ -312,6 +312,39 @@ describe('ISSUE-008 — 自动创建验证任务', () => {
     expect(verifyCall).toBeDefined()
     expect(verifyCall![0].data.assignedAgentId).toBeNull()
   })
+
+  // P6 T7: verify 维度实验开关——EXPERIMENT_VERIFY=off 只关 alignment 自动创建(实验 harness),
+  // 生产默认未设 env = 零影响。prevEnv 保存/恢复模式参照 tests/chat-router.test.ts:412。
+  it('P6: EXPERIMENT_VERIFY=off 不自动创建 verify 任务', async () => {
+    const prev = process.env.EXPERIMENT_VERIFY
+    process.env.EXPERIMENT_VERIFY = 'off'
+    try {
+      mocks.mockDecomposeTasks.mockResolvedValue([codeTask])
+      await handleArchitectPlan('拆解', 'sess1', agents, mocks.mockSendEvent)
+      // 含代码任务但开关 OFF → 无 verify- 前缀 task.create(代码任务本身仍建)
+      expect(mocks.mockTaskCreate).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ id: expect.stringMatching(/^verify-/) }) })
+      )
+    } finally {
+      if (prev === undefined) delete process.env.EXPERIMENT_VERIFY
+      else process.env.EXPERIMENT_VERIFY = prev
+    }
+  })
+
+  it('P6: 未设 EXPERIMENT_VERIFY → 默认创建 verify 任务', async () => {
+    const prev = process.env.EXPERIMENT_VERIFY
+    delete process.env.EXPERIMENT_VERIFY
+    try {
+      mocks.mockDecomposeTasks.mockResolvedValue([codeTask])
+      await handleArchitectPlan('拆解', 'sess1', agents, mocks.mockSendEvent)
+      expect(mocks.mockTaskCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ id: expect.stringMatching(/^verify-/) }) })
+      )
+    } finally {
+      if (prev === undefined) delete process.env.EXPERIMENT_VERIFY
+      else process.env.EXPERIMENT_VERIFY = prev
+    }
+  })
 })
 
 describe('ISSUE-008 — isCodeTask / buildVerifyDescription', () => {
