@@ -1,11 +1,11 @@
 # P5 受控实验 harness
 
-验证"状态机比 LLM 自由推进更可靠"。决策走真实 LLM（glm-4.7-flash），执行 mock。
+验证"状态机比 LLM 自由推进更可靠"。决策走真实 LLM（deepseek-v4-flash，P5 实际运行），执行 mock。
 Spec: docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md
 
 ## 运行
 ```bash
-export GLM_API_KEY=...   # 智谱 key（永不硬编码）
+export GLM_API_KEY=...   # 实验 LLM key（env 名沿用 GLM_API_KEY 历史命名，端点见 setup.ts 默认 opencode.ai/zen/go；永不硬编码）
 npx vitest run --config experiments/p5/vitest.config.ts
 ```
 

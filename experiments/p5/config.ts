@@ -1,7 +1,7 @@
 /** P5 实验配置（Spec §2/§4/§6 固化参数，报告需回显 model+config 供复现）
  *  model/baseUrl 支持 env 覆盖：GLM_MODEL / GLM_BASE_URL（用户可换 provider/模型，报告按实际值回显） */
 export const CONFIG = {
-  model: process.env.GLM_MODEL || 'glm-4.7-flash',
+  model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
   configs: ['on', 'off'] as const,
   runsPerCell: 5,
