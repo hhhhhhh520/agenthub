@@ -229,6 +229,7 @@ describe('P5 report', () => {
     expect(report).toContain('## 失效模式分布')
     expect(report).toContain('## OFF 非法尝试率 vs ON correctionCount')
     expect(report).toContain('方向性差异当传闻看')
+    expect(report).toContain('baseUrl:') // P6 A4：报告回显实际生效 baseUrl（模型钉死 + 端点错配修正）
     expect(report).toContain('session.decisionTrace') // M3
     expect(report).toContain('罐头消息') // I1: spec §6 报告写明固定罐头消息
     expect(report).toContain(JSON.stringify(CONFIG.cannedReplies))

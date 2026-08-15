@@ -22,7 +22,7 @@ pilot（本 spec）的目的：
 | 自由推进定义 | **完整绕过**（真自由）：决策层校验全跳 + transitionPhase fail-closed 跳 |
 | 执行层保真 | **决策真实 + 执行 mock**（vi.mock 注入，见 §5.2） |
 | 开关形式 | env 全局开关 `EXPERIMENT_STATE_MACHINE=off`，默认 on，生产零影响 |
-| 模型 | 智谱 glm-4.7-flash（本地诊断惯例 + 便宜）；报告固化 model+config 供复现 |
+| 模型 | deepseek-v4-flash（P5 实际运行——原选型智谱 glm-4.7-flash 系本地诊断惯例，P6 模型钉死后历史事实修正）；报告固化 model+config 供复现 |
 
 ## 3. 实验定义
 

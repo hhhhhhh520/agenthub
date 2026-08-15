@@ -6,7 +6,7 @@ import { CONFIG } from './config'
 export function generateReport(metrics: RunMetrics[]): string {
   const lines: string[] = []
   lines.push('# P5 Pilot Report', '')
-  lines.push(`> model: ${CONFIG.model} | runsPerCell: ${CONFIG.runsPerCell} | escalateLimit: ${CONFIG.escalateLimit} | maxRounds: ${CONFIG.maxRounds}`)
+  lines.push(`> model: ${CONFIG.model} | baseUrl: ${process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go'} | runsPerCell: ${CONFIG.runsPerCell} | escalateLimit: ${CONFIG.escalateLimit} | maxRounds: ${CONFIG.maxRounds}`)
   lines.push(`> 执行 mock（executeTaskBatch + monitoring 恒不纠正）| 决策真实 LLM`)
   // Spec §6：混淆变量必须固定，报告写明罐头消息
   lines.push(`> 罐头消息: ${JSON.stringify(CONFIG.cannedReplies)}`)

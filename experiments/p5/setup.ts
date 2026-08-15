@@ -21,17 +21,17 @@ export function initP5Db(): void {
   })
 }
 
-/** 实验 agents（决策/PM/架构师走真实 LLM——glm-4.7-flash，经 claude-code adapter + ANTHROPIC 兼容路径） */
+/** 实验 agents（决策/PM/架构师走真实 LLM——deepseek-v4-flash，经 claude-code adapter + ANTHROPIC 兼容路径） */
 export async function ensureExperimentAgents(): Promise<void> {
   const key = process.env.GLM_API_KEY
   if (!key || !key.trim()) {
-    throw new Error('GLM_API_KEY env 未设置——pilot 需要智谱 key（本地诊断惯例，永不硬编码）')
+    throw new Error('GLM_API_KEY env 未设置——pilot 需要实验 LLM key（env 名沿用 GLM_API_KEY，端点 opencode.ai/zen/go，永不硬编码）')
   }
   const { prisma } = await import('@/lib/db')
   const common = {
     platform: 'claude-code',
     model: CONFIG.model,
-    baseUrl: process.env.GLM_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4',
+    baseUrl: process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go',
     apiKey: key,
     accentColor: '#6366f1',
   }
@@ -44,13 +44,14 @@ export async function ensureExperimentAgents(): Promise<void> {
   for (const a of agents) {
     await prisma.agent.upsert({
       where: { name: a.name },
-      update: {},
+      // P6 A4：二次运行刷新 model/baseUrl/apiKey（update:{} 空子句会保留旧 model/baseUrl 导致错配/漏换 key）
+      update: { model: CONFIG.model, baseUrl: process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go', apiKey: key },
       create: a,
     })
   }
 }
 
-/** preflight：1 次真实决策调用验证 CLI + glm provider 可用，失败快速失败不烧 30 次（Spec §7.2） */
+/** preflight：1 次真实决策调用验证 CLI + provider 可用（默认 opencode.ai/zen/go + deepseek-v4-flash），失败快速失败不烧 30 次（Spec §7.2） */
 export async function preflightDecision(): Promise<void> {
   const { prisma } = await import('@/lib/db')
   const orch = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
