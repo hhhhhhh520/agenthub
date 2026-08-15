@@ -249,6 +249,17 @@ describe('P5 report', () => {
     // sort 在 filter 拷贝上，generateReport 不得改动入参顺序
     expect(shuffled.map(m => m.seed)).toEqual([3, 1, 2])
   })
+  it('P6 T9: 报告口径说明（spec §7）——task B QA mock 口径 + task C 不触发 verify', () => {
+    // 口径行是静态文案，任意 fixture 即可；沿用乱序 metrics → 断言输出行 的现有写法
+    const fixtures: RunMetrics[] = [
+      { runId: 'r1', config: 'on+verify', taskId: 'B', seed: 0, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '' },
+      { runId: 'r2', config: 'on+verify', taskId: 'C', seed: 1, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 11, tracePath: '' },
+    ]
+    const report = generateReport(fixtures)
+    expect(report).toContain('报告口径')
+    expect(report).toContain('mock 口径')
+    expect(report).toContain('不触发 verify')
+  })
 })
 
 // —— P6 T8: 2×2 配置矩阵（configs 扩 4 + envForConfig 透传 + report 主效应/交互）——
