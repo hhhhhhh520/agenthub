@@ -18,6 +18,9 @@ export function generateReport(metrics: RunMetrics[]): string {
   lines.push(`> 罐头消息: ${JSON.stringify(CONFIG.cannedReplies)}`)
   // M3：trace 只在 DB session.decisionTrace，runOne 不写 trace-*.json 文件；不假装文件存在
   lines.push('> trace 存于 DB session.decisionTrace（runOne 不落 trace-*.json 文件，RunMetrics.tracePath 仅占位不指向真实文件）', '')
+  // P6 T9：spec §7 报告口径——防误读（task B QA 是 mock 口径非 QA 能力；task C verify 不作用）
+  lines.push('> 报告口径: task B 的 QA 维度是 mock 口径(测 orchestrator 会不会主动提 align_qa,不是会不会问出好问题;非 QA 能力)')
+  lines.push('> 报告口径: task C 非代码任务不触发 verify(verify 主效应由 A/B 贡献,C 格测捷径任务在各组合下是否稳定)')
 
   // —— 逐格 pass 数组（4 配置 × 3 任务自动扩）——
   lines.push('## 逐格 pass 数组')
