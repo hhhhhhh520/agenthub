@@ -246,7 +246,7 @@ export async function transitionPhase(
           llmProposal: { action, reason: '代码驱动转移（不经决策点）' },
           corrections: [],
           validation: { passed: true, validator: 'transitionPhase' },
-          actualTransition: { from: state, to: result.nextState, action, applied: true, escalated: false },
+          actualTransition: { from: state, to: result.nextState, action, applied: 'inTable' in result ? result.inTable : true, escalated: false },
         }
         // 审查整改(生命周期⚠️Q3): append 整体再包一层 try/catch 双保险——即使 append 内部抛错
         // （如重试路径读库异常）也不把"phase 已写成功"误报为失败(redo 会据此 500)

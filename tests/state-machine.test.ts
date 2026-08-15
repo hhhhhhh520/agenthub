@@ -351,4 +351,18 @@ describe('P5: applyTransitionWithOverride（状态机 off 开关）', () => {
       else process.env.EXPERIMENT_STATE_MACHINE = prev
     }
   })
+  it('P6 A0: transitionPhase 补记 OFF 表外 self-edge 记 applied:false', async () => {
+    const prev = process.env.EXPERIMENT_STATE_MACHINE
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    try {
+      // 隔离本用例的 updateMany 调用历史：全文件跑时前面测试（代码驱动转移 applied:true）也写过 trace,
+      // find 会命中旧调用导致误判——mockClear 后只剩本用例自生的调用
+      mockSessionUpdateMany.mockClear()
+      mockSessionFindUnique.mockResolvedValue({ id: 's1', phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+      await transitionPhase('s1', 'align_qa')  // idle→align_qa 表外
+      const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+      const entry = JSON.parse(traceCall![0].data.decisionTrace)
+      expect(entry[0].actualTransition.applied).toBe(false)
+    } finally { if (prev === undefined) delete process.env.EXPERIMENT_STATE_MACHINE; else process.env.EXPERIMENT_STATE_MACHINE = prev }
+  })
 })
