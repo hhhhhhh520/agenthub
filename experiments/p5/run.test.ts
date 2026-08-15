@@ -14,22 +14,29 @@ import { generateReport } from './report'
 // 判定分支用 agent.systemPrompt（ORCHESTRATOR_DECISION_PROMPT 硬编码模板，LLM 不可污染）作安全网——
 // 若未来重构让决策路由到 mock 仍放行真实；不用 prompt 判定（LLM 可能在 reason/message 回显 prompt 造成误判）。
 // 执行全 mock（冒烟诊断：delegate/discuss/self 走真实 CLI 编码会 hang；且 provider 慢，对齐 PM/QA/decompose 也 mock 以控时长）。
-// decompose 需有效任务 JSON 才能建任务推进流程（alignment.ts:171 parseJSON(['tasks'])）；
-// 非 decompose 消费者（PM/QA/delegate/self）只展示/转发 result，拿任务 JSON 字符串无害。
+// 罐头按 task 差异化（P6 A1）——A/B 代码任务（declared_files 代码后缀 → 触发 verify），C 非代码任务（isCodeTask 不命中）。
+// 按消费者分流（P6 A2）——架构师 decompose 需有效任务 JSON（alignment.ts:171 parseJSON(['tasks'])）；
+// 测试工程师 QA 回 '无问题'（alignment.ts:330 判 !='无问题' 即提问），PM 语义句（handlePMConfirm 不 JSON.parse），delegate/self 语义句。
 // discuss 走 runDiscussion（adapter 直连，不经 executeSingleAgent）→ 单独 mock 防真实 CLI。
 // preflight 固定 prompt '只回复两个字：就绪' → 放行真实（provider 快速失败闸门，Spec §7.2，审查 ❌B）。
 // 常量放 vi.hoisted（vi.mock factory 被 hoisted，引用模块级 const 会 TDZ）。
 const mocks = vi.hoisted(() => {
   const preflightPromptMarker = '只回复两个字：就绪'
-  const cannedTasksJson = JSON.stringify({
-    tasks: [{ id: 1, description: '实现核心功能并自测', assignedAgent: '后端工程师', dependencies: [], declared_files: ['src/index.ts'] }],
-  })
+  // P6 A1: 罐头按 task 三档——A/B 代码任务(declared_files 有代码后缀,触发 verify)；C 非代码任务
+  // （declared_files:[] + description 无 .ts/.js 后缀,isCodeTask 不命中,双保险）
+  const cannedTasksByTask: Record<string, string> = {
+    A: JSON.stringify({ tasks: [{ id: 1, description: '实现 add(a,b) 函数并放在 src/utils/math.ts', assignedAgent: '后端工程师', dependencies: [], declared_files: ['src/utils/math.ts'] }] }),
+    B: JSON.stringify({ tasks: [{ id: 1, description: '实现登录接口，路由 /api/login，放在 src/api/login.ts', assignedAgent: '后端工程师', dependencies: [], declared_files: ['src/api/login.ts'] }] }),
+    C: JSON.stringify({ tasks: [{ id: 1, description: '修改项目根目录 .env.example 的端口配置为 8080', assignedAgent: '后端工程师', dependencies: [], declared_files: [] }] }),
+  }
+  // vi.mock factory 被 hoisted,读不到 run 循环局部变量 → 可变对象暴露 currentTaskId,30-run driver 每 it 设置
+  const state = { currentTaskId: 'A' as 'A' | 'B' | 'C' }
   const mockExecuteTaskBatch = vi.fn(async (tasks: any[]) => {
     const results = new Map<string, { result: string; sessionId?: string }>()
     for (const t of tasks) results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
     return { results, preloadedIds: [], failedTaskIds: [], failedTaskReasons: {} }
   })
-  return { mockExecuteTaskBatch, preflightPromptMarker, cannedTasksJson }
+  return { mockExecuteTaskBatch, preflightPromptMarker, cannedTasksByTask, state }
 })
 
 vi.mock('@/lib/orchestrator', async (importOriginal) => {
@@ -50,8 +57,16 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       if (agent?.systemPrompt?.includes('代码审查专家')) {
         return { result: JSON.stringify({ needsCorrection: false }) }
       }
-      // 3. 其余执行（decompose/PM/QA/delegate/self）→ 有效任务 JSON（decompose 可解析建任务，其余展示无害）
-      return { result: mocks.cannedTasksJson }
+      // 3. 其余执行（decompose/PM/QA/delegate/self）→ 按消费者分流（P6 A1+A2）。
+      //    判定用 agent.systemPrompt（硬编码模板,LLM 不可污染,复用 systemPrompt 安全网原则;不用 prompt 判定）。
+      //    架构师(decompose) → 按 task 罐头任务 JSON（alignment.ts:171 parseJSON 可解析建任务）；
+      //    测试工程师(QA) → '无问题'（alignment.ts:330 判 !='无问题' 即提问,不再耗 JSON 提问轮）；
+      //    产品经理(PM) → 语义句（handlePMConfirm 不 JSON.parse）；其余(delegate/self) → 语义句。
+      const sp = agent?.systemPrompt ?? ''
+      if (sp.includes('架构师')) return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
+      if (sp.includes('测试工程师')) return { result: '无问题' }
+      if (sp.includes('产品经理')) return { result: '已确认需求，请架构师拆解。' }
+      return { result: '任务已完成。' }
     }),
     // discuss 路径：runMultiAgentDiscussion → runDiscussion（adapter 直连，不经 executeSingleAgent）→ mock 防真实 CLI hang（审查 ❌A）
     runDiscussion: vi.fn(async () => ['罐头讨论意见（agent A 认为应澄清需求）', '罐头讨论意见（agent B 同意推进）']),
@@ -96,6 +111,57 @@ describe('P5 harness 单测', () => {
     const rest = loadMetrics().filter(x => x.runId !== runId)
     if (rest.length === 0) rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
     else writeFileSync(join(CONFIG.resultsDir, 'metrics.jsonl'), rest.map(x => JSON.stringify(x)).join('\n') + '\n', 'utf8')
+  })
+})
+
+// —— P6 A1+A2 罐头差异化 + 语义化（纯单测：直调 mock executeSingleAgent，不触发 30-run / 真实 LLM）——
+describe('P6 A1+A2 罐头差异化 + 语义化', () => {
+  it('task C 罐头 declared_files:[] + isCodeTask false（非代码任务不触发 verify）', async () => {
+    const { isCodeTask } = await import('@/lib/services/alignment')
+    const parsed = JSON.parse(mocks.cannedTasksByTask['C'])
+    const t = parsed.tasks[0]
+    expect(t.declared_files).toEqual([])
+    expect(isCodeTask({ description: t.description, declaredFiles: t.declared_files })).toBe(false)
+  })
+  it('task A/B 罐头 isCodeTask true（代码任务触发 verify）', async () => {
+    const { isCodeTask } = await import('@/lib/services/alignment')
+    for (const id of ['A', 'B'] as const) {
+      const parsed = JSON.parse(mocks.cannedTasksByTask[id])
+      expect(isCodeTask({ description: parsed.tasks[0].description, declaredFiles: parsed.tasks[0].declared_files })).toBe(true)
+    }
+  })
+  it('架构师分流按 currentTaskId 返回可解析任务 JSON（decompose 建任务）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    mocks.state.currentTaskId = 'C'
+    const rC = await (executeSingleAgent as any)(
+      { name: '架构师', systemPrompt: '你是架构师，负责把需求拆解为可执行任务。' }, '任务描述：X', '', () => {})
+    const parsedC = JSON.parse(rC.result)
+    expect(parsedC.tasks).toHaveLength(1)
+    expect(parsedC.tasks[0].declared_files).toEqual([])
+    // 切回 A：同一 mock 消费方 → 返回代码任务 JSON
+    mocks.state.currentTaskId = 'A'
+    const rA = await (executeSingleAgent as any)(
+      { name: '架构师', systemPrompt: '你是架构师，负责把需求拆解为可执行任务。' }, '任务描述：X', '', () => {})
+    expect(JSON.parse(rA.result).tasks[0].declared_files).toEqual(['src/utils/math.ts'])
+  })
+  it('测试工程师 QA 回 无问题（alignment.ts:330 判 !=无问题 即提问）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: '测试工程师', systemPrompt: '你是测试工程师，负责编写测试并验证实现。' }, 'prompt', '', () => {})
+    expect(r.result.trim()).toBe('无问题')
+  })
+  it('产品经理 PM 语义句（handlePMConfirm 不 JSON.parse，杜绝落库 JSON 噪音）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: '产品经理', systemPrompt: '你是产品经理，负责需求分析与澄清，可向用户提问确认需求。' }, 'prompt', '', () => {})
+    expect(r.result).toBe('已确认需求，请架构师拆解。')
+    expect(() => JSON.parse(r.result)).toThrow()
+  })
+  it('其余(delegate/self)语义句', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: '后端工程师', systemPrompt: '你是后端工程师，负责实现 API 与业务逻辑。' }, 'prompt', '', () => {})
+    expect(r.result).toBe('任务已完成。')
   })
 })
 
@@ -162,6 +228,8 @@ describe('P5 pilot: 30 次受控实验', () => {
     for (const config of CONFIG.configs) {
       for (const seed of SEEDS) {
         it(`${config} ${task.id} seed=${seed}`, async () => {
+          // P6 A1: mock factory 按 currentTaskId 取 task 罐头（架构师 decompose 消费）
+          mocks.state.currentTaskId = task.id
           const m = await runOne({ config, taskId: task.id, seed })
           // M2：断言 m 结构完整（原 includes(m.failureMode) 对 5 值联合类型恒真，是重言式）
           expect(m.runId).toBeTruthy()
