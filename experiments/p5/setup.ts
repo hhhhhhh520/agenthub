@@ -69,6 +69,14 @@ export async function preflightDecision(): Promise<void> {
 
 /** 主入口：pilot beforeAll 调 */
 export async function setupExperiment(): Promise<void> {
+  // P6 T9: 纯单测 import @/lib/orchestrator → @/lib/db 会让 prisma libsql 连接把 p5.db 切进 WAL 模式，
+  // 且 vitest 模块运行器下 @libsql/client close() 不释放文件(EBUSY)——migrate deploy 子进程拿不到 p5.db 写锁(SQLite database error)。
+  // 用同一连接把 journal_mode 切回 DELETE：触发 checkpoint 并删掉 wal/shm，连接转空闲 DELETE 模式，migrate 子进程即可写入。
+  try {
+    const { prisma } = await import('@/lib/db')
+    await prisma.$executeRawUnsafe('PRAGMA journal_mode=DELETE')
+    await prisma.$disconnect()
+  } catch { /* 无 prisma 实例/未连接,lazy 下安全 */ }
   resetPrismaSingleton()
   initP5Db()
   await ensureExperimentAgents()
