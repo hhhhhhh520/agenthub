@@ -229,7 +229,9 @@ export async function handleArchitectPlan(
   // verify- 前缀 id 用于识别,多轮对齐时避免重复创建;redo 路径不新建——若 verify 因依赖
   // 失败被 blocked,execution.ts 的"blocked 依赖补齐自动复活"机制会在 redo 后重新执行它。
   const codeTasks = scheduledTasks.filter(t => isCodeTask(t) && !t.id.startsWith('verify-'))
-  if (codeTasks.length > 0) {
+  // P6 T7: verify 维度实验开关——EXPERIMENT_VERIFY=off 只关自动创建(实验 harness),生产默认未设零影响。
+  // done 守卫(chat-router.ts:127)天然正交:OFF 下已跳过,ON+no-verify 无 verify 可查。
+  if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {
     const existingVerify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } } })
     if (!existingVerify) {
       const verifyAgent = agents.find(a => a.name.includes('测试'))
