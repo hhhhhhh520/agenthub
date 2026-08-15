@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 export interface RunMetrics {
   runId: string
-  config: 'on' | 'off'
+  config: (typeof CONFIG.configs)[number] // P6 T8: 4 配置 2×2 矩阵字符串（on+verify 等）
   taskId: 'A' | 'B' | 'C'
   seed: number
   pass: boolean
@@ -13,7 +13,7 @@ export interface RunMetrics {
   rounds: number
   escalateCount: number
   correctionCount: number
-  illegalProposalCount: number   // OFF: 表外提议数（applied:false&&escalated:false）；ON: 恒 0（ON 用 escalateCount/correctionCount 表达）
+  illegalProposalCount: number   // off 前缀配置: 表外提议数（applied:false&&escalated:false）；on 前缀配置: 恒 0（用 escalateCount/correctionCount 表达）
   totalTransitions: number
   latencyMs: number
   tracePath: string
@@ -68,7 +68,7 @@ export function resolveFailureMode(
 }
 
 export async function collectMetrics(
-  runId: string, sessionId: string, config: 'on'|'off', taskId: 'A'|'B'|'C', seed: number,
+  runId: string, sessionId: string, config: (typeof CONFIG.configs)[number], taskId: 'A'|'B'|'C', seed: number,
   rounds: number, escalateCount: number, latencyMs: number,
   error?: boolean
 ): Promise<RunMetrics> {
@@ -82,9 +82,9 @@ export async function collectMetrics(
 
   const done = session?.phase === 'done'
   const requiredEdgesOk = hasRequiredEdges(entries, task)
-  // ③ 仅 ON：零 illegal_transition / escalate_but_legal（用 checkConformance）
+  // ③ 仅 on 前缀配置：零 illegal_transition / escalate_but_legal（用 checkConformance）
   let onConformanceOk = true
-  if (config === 'on' && entries.length > 0) {
+  if (config.startsWith('on') && entries.length > 0) {
     const { checkConformance } = await import('../../src/lib/orchestrator/decision-trace')
     const c = checkConformance(entries as any)
     // 字段核对（brief 假设 c.illegalTransitions/escalateButLegal）：实际 ConformanceResult 只有 violations 数组，
@@ -94,11 +94,11 @@ export async function collectMetrics(
     onConformanceOk = illegalTransitions === 0 && escalateButLegal === 0
   }
 
-  const pass = error ? false : (done && requiredEdgesOk && (config === 'off' ? true : onConformanceOk))
+  const pass = error ? false : (done && requiredEdgesOk && (config.startsWith('off') ? true : onConformanceOk))
   const failureMode = resolveFailureMode(pass, escalateCount, rounds, error)
 
   const correctionCount = entries.reduce((n, e) => n + (e.corrections?.length ?? 0), 0)
-  const illegalProposalCount = countIllegalProposals(entries, config === 'off')
+  const illegalProposalCount = countIllegalProposals(entries, config.startsWith('off'))
 
   return {
     runId, config, taskId, seed, pass, failureMode, rounds, escalateCount,

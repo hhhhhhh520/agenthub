@@ -7,7 +7,7 @@ import { simulateUserReply } from './user-simulator'
 import { collectMetrics, appendMetrics, type RunMetrics } from './metrics'
 import type { AgentConfig } from '../../src/lib/adapter/types'
 
-export interface RunInput { config: 'on'|'off'; taskId: 'A'|'B'|'C'; seed: number }
+export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: 'A'|'B'|'C'; seed: number }
 
 /**
  * 单次 run：建 session → 循环决策/回复 → done / escalate-exhausted / no-progress / maxRounds 撞顶 / 异常 → metrics 落盘。
@@ -19,9 +19,13 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
   const { prisma } = await import('@/lib/db')
   const { handleOrchestratorDecision } = await import('@/lib/services/chat-router')
 
-  // OFF 开关按 run 隔离（fileParallelism:false 串行，无并发串扰）
-  if (config === 'off') process.env.EXPERIMENT_STATE_MACHINE = 'off'
+  // 开关按 run 隔离（fileParallelism:false 串行，无并发串扰）
+  // P6 T8: 2 配置 → 4 配置 2×2 透传——OFF 前缀关状态机，no-verify 前缀关 verify，否则 delete（未设=默认 on）
+  const env = CONFIG.envForConfig(config)
+  if (env.EXPERIMENT_STATE_MACHINE === 'off') process.env.EXPERIMENT_STATE_MACHINE = 'off'
   else delete process.env.EXPERIMENT_STATE_MACHINE
+  if (env.EXPERIMENT_VERIFY === 'off') process.env.EXPERIMENT_VERIFY = 'off'
+  else delete process.env.EXPERIMENT_VERIFY
 
   const start = Date.now()
   let sessionId: string | undefined
