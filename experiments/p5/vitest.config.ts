@@ -10,8 +10,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['**/run.test.ts'],
-    testTimeout: 6 * 60 * 1000,       // 单 run 上限（含决策/补拆/执行 mock）
-    hookTimeout: 2 * 60 * 1000,
+    testTimeout: 30 * 60 * 1000,      // 单 run 上限（含决策/补拆/执行 mock）
+    hookTimeout: 30 * 60 * 1000,      // beforeAll setup 跑真实 preflight，与 testTimeout 同值
     fileParallelism: false,
     env: {
       DATABASE_URL: 'file:D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db', // 绝对路径，消除 cwd 歧义

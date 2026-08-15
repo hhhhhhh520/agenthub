@@ -11,7 +11,8 @@ export const CONFIG = {
   dbPath: 'file:D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db',
   workDir: 'D:/ai全栈挑战赛/agenthub/experiments/p5/work',
   resultsDir: 'D:/ai全栈挑战赛/agenthub/experiments/p5/results',
-  timeoutMs: 5 * 60 * 1000,
+  // 与 vitest testTimeout 同值（30min），globalDeadline 源头：run-one.ts → globalDeadline → execution.ts 硬判
+  timeoutMs: 30 * 60 * 1000,
   // 暂停点罐头消息（Spec §6：混淆变量必须固定，报告写明）
   cannedReplies: {
     escalate: '请按流程继续',
