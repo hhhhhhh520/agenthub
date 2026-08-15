@@ -2,6 +2,7 @@
 
 验证"状态机比 LLM 自由推进更可靠"。决策走真实 LLM（deepseek-v4-flash，P5 实际运行），执行 mock。
 Spec: docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md
+P6 扩展为 2×2 全矩阵（状态机 on/off × verify 有/无 = 4 配置 × 3 任务 × 5 seed = 60 run）：docs/superpowers/specs/2026-08-15-p6-full-matrix-design.md
 
 ## 运行
 ```bash

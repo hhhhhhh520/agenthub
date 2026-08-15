@@ -3,7 +3,7 @@ import path from 'path'
 
 // P5 实验独立 vitest config：
 // - test.env 设 DATABASE_URL 指向独立 p5.db（prisma 是模块加载期单例，必须在 @/lib/db 首次求值前生效）
-// - testTimeout 设到小时级（30 次真实 LLM run 串行）
+// - testTimeout 设到小时级（60 次（4 配置 × 3 任务 × 5 seed）真实 LLM run 串行）
 // - fileParallelism:false（串行，避免 on/off env 串扰 + DB 竞争）
 export default defineConfig({
   test: {

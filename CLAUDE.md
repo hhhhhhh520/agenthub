@@ -279,7 +279,8 @@ Orchestrator 自主决定流程，支持 9 种 action：
 ### P5 受控实验开关(勿改默认行为)
 
 - **`EXPERIMENT_STATE_MACHINE=off`** env 是 P5 受控实验(A方向)的状态机开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时决策点跳过 canonicalCorrect/守卫/escalate 且表外 action 保持当前态,只关 enforcement 不关 trace 记录。
-- 实验相关:`experiments/p5/`(独立 vitest config + 独立 DB,产物 gitignored);设计见下方「设计文档」P5 链接;实验代码不动 src/ 生产路径(state-machine/chat-router 的 `isExperimentOff()` 读 env,默认 false)
+- **`EXPERIMENT_VERIFY=off`** env 是 P6 受控实验(2×2 矩阵 verify 维度)的开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时只跳过 alignment.ts verify 自动创建块,不关状态机强制/done 守卫(chat-router 在 OFF 下已跳过、ON+no-verify 无 verify 可查,天然正交)。
+- 实验相关:`experiments/p5/`(独立 vitest config + 独立 DB,产物 gitignored);设计见下方「设计文档」P5/P6 链接;实验代码不动 src/ 生产路径(state-machine/chat-router 的 `isExperimentOff()` 读 env,默认 false)
 
 ### Chat API Session Lock
 
@@ -305,6 +306,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
 - **P5 受控实验 spec/plan**:`docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md` + `docs/superpowers/plans/2026-08-13-p5-controlled-experiment.md` — A方向 C 实验(状态机 vs LLM 自由推进),harness 在 `experiments/p5/`
+- **P6 全矩阵 spec**:`docs/superpowers/specs/2026-08-15-p6-full-matrix-design.md` — P5 残留 6 项修复 + 2×2 矩阵(状态机 × verify),60 run
 - 参考资料:`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
 - **新增功能前必须先看 contract v1**(它定义了 Agent 协作的"应然"),再看 v2 设计决策(早期架构)
 
