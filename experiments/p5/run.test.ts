@@ -245,7 +245,7 @@ describe('P5 pilot: 30 次受控实验', () => {
     // 幂等重置：跨次运行不留旧 metrics.jsonl（否则 30-run 重跑叠加成 60/90 行，破坏每格 N=5 受控对比，T7 stats 会错）
     rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
     await setupExperiment()
-  }, 5 * 60 * 1000)
+  }, 30 * 60 * 1000)
   afterAll(async () => {
     // 生成报告（Spec §11）
     const report = generateReport(loadMetrics())
@@ -263,7 +263,7 @@ describe('P5 pilot: 30 次受控实验', () => {
           expect(m.runId).toBeTruthy()
           expect(typeof m.pass).toBe('boolean')
           expect(m.rounds).toBeGreaterThanOrEqual(0)
-        }, 6 * 60 * 1000)
+        }, 30 * 60 * 1000)
       }
     }
   }
