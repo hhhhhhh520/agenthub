@@ -15,13 +15,16 @@ import { generateReport } from './report'
 // 若未来重构让决策路由到 mock 仍放行真实；不用 prompt 判定（LLM 可能在 reason/message 回显 prompt 造成误判）。
 // 执行全 mock（冒烟诊断：delegate/discuss/self 走真实 CLI 编码会 hang；且 provider 慢，对齐 PM/QA/decompose 也 mock 以控时长）。
 // 罐头按 task 差异化（P6 A1）——A/B 代码任务（declared_files 代码后缀 → 触发 verify），C 非代码任务（isCodeTask 不命中）。
-// 按消费者分流（P6 A2）——架构师 decompose 需有效任务 JSON（alignment.ts:171 parseJSON(['tasks'])）；
-// 测试工程师 QA 回 '无问题'（alignment.ts:330 判 !='无问题' 即提问），PM 语义句（handlePMConfirm 不 JSON.parse），delegate/self 语义句。
+// 按消费者分流（P6 A2）——QA 调用（handleAgentQA 对全部成员发问, prompt 为 buildAgentQuestionPrompt 固定模板）
+// 经 qaPromptMarker 分支全回 '无问题'（alignment.ts:330 判 !='无问题' 即提问）→ 无疑问直发 exec；
+// 架构师 decompose 需有效任务 JSON（alignment.ts:171 parseJSON(['tasks'])）；PM 语义句（handlePMConfirm 不 JSON.parse）；delegate/self 语义句。
 // discuss 走 runDiscussion（adapter 直连，不经 executeSingleAgent）→ 单独 mock 防真实 CLI。
 // preflight 固定 prompt '只回复两个字：就绪' → 放行真实（provider 快速失败闸门，Spec §7.2，审查 ❌B）。
 // 常量放 vi.hoisted（vi.mock factory 被 hoisted，引用模块级 const 会 TDZ）。
 const mocks = vi.hoisted(() => {
   const preflightPromptMarker = '只回复两个字：就绪'
+  // P6 A2: QA 调用 marker（buildAgentQuestionPrompt 固定模板,handleAgentQA 对全部成员发问 → 全回 '无问题' 直发 exec）
+  const qaPromptMarker = '请检查方案中是否有需要澄清的问题'
   // P6 A1: 罐头按 task 三档——A/B 代码任务(declared_files 有代码后缀,触发 verify)；C 非代码任务
   // （declared_files:[] + description 无 .ts/.js 后缀,isCodeTask 不命中,双保险）
   const cannedTasksByTask: Record<string, string> = {
@@ -36,7 +39,7 @@ const mocks = vi.hoisted(() => {
     for (const t of tasks) results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
     return { results, preloadedIds: [], failedTaskIds: [], failedTaskReasons: {} }
   })
-  return { mockExecuteTaskBatch, preflightPromptMarker, cannedTasksByTask, state }
+  return { mockExecuteTaskBatch, preflightPromptMarker, qaPromptMarker, cannedTasksByTask, state }
 })
 
 vi.mock('@/lib/orchestrator', async (importOriginal) => {
@@ -57,11 +60,15 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       if (agent?.systemPrompt?.includes('代码审查专家')) {
         return { result: JSON.stringify({ needsCorrection: false }) }
       }
-      // 3. 其余执行（decompose/PM/QA/delegate/self）→ 按消费者分流（P6 A1+A2）。
+      // P6 A2: QA 调用（handleAgentQA 对全部 session member 发问, prompt 是 buildAgentQuestionPrompt 固定模板
+      // 非 LLM 可污染,复用 preflight prompt-marker 先例）→ 全回 '无问题' → alignment.ts:342 无疑问直发 exec
+      if (typeof prompt === 'string' && prompt.includes(mocks.qaPromptMarker)) {
+        return { result: '无问题' }
+      }
+      // 3. 其余执行（decompose/delegate/self;QA 已由上方 marker 分支接管）→ 按消费者分流（P6 A1+A2）。
       //    判定用 agent.systemPrompt（硬编码模板,LLM 不可污染,复用 systemPrompt 安全网原则;不用 prompt 判定）。
       //    架构师(decompose) → 按 task 罐头任务 JSON（alignment.ts:171 parseJSON 可解析建任务）；
-      //    测试工程师(QA) → '无问题'（alignment.ts:330 判 !='无问题' 即提问,不再耗 JSON 提问轮）；
-      //    产品经理(PM) → 语义句（handlePMConfirm 不 JSON.parse）；其余(delegate/self) → 语义句。
+      //    测试工程师(非 QA 兜底) → '无问题'；产品经理(PM) → 语义句（handlePMConfirm 不 JSON.parse）；其余(delegate/self) → 语义句。
       const sp = agent?.systemPrompt ?? ''
       if (sp.includes('架构师')) return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
       if (sp.includes('测试工程师')) return { result: '无问题' }
@@ -146,9 +153,30 @@ describe('P6 A1+A2 罐头差异化 + 语义化', () => {
   })
   it('测试工程师 QA 回 无问题（alignment.ts:330 判 !=无问题 即提问）', async () => {
     const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const { buildAgentQuestionPrompt } = await import('@/lib/orchestrator/prompts')
     const r = await (executeSingleAgent as any)(
-      { name: '测试工程师', systemPrompt: '你是测试工程师，负责编写测试并验证实现。' }, 'prompt', '', () => {})
+      { name: '测试工程师', systemPrompt: '你是测试工程师，负责编写测试并验证实现。' },
+      buildAgentQuestionPrompt('测试工程师', '测试编写与验证', '需求', '方案'), '', () => {})
     expect(r.result.trim()).toBe('无问题')
+  })
+  it('QA 调用 4 成员全回 无问题 → 0 questions → 直发 exec 路径可达（A2 marker 分支真实生效）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const { buildAgentQuestionPrompt } = await import('@/lib/orchestrator/prompts')
+    const members = [
+      { name: '架构师', expertise: '系统设计与任务拆解', systemPrompt: '你是架构师，负责把需求拆解为可执行任务。' },
+      { name: '测试工程师', expertise: '测试编写与验证', systemPrompt: '你是测试工程师，负责编写测试并验证实现。' },
+      { name: '产品经理', expertise: '需求分析与澄清', systemPrompt: '你是产品经理，负责需求分析与澄清，可向用户提问确认需求。' },
+      { name: '后端工程师', expertise: '后端与脚本开发', systemPrompt: '你是后端工程师，负责实现 API 与业务逻辑。' },
+    ]
+    const questions: string[] = []
+    for (const a of members) {
+      const r = await (executeSingleAgent as any)(
+        { name: a.name, systemPrompt: a.systemPrompt },
+        buildAgentQuestionPrompt(a.name, a.expertise, '需求', '方案'), '', () => {})
+      expect(r.result.trim()).toBe('无问题')
+      if (r.result.trim() !== '无问题') questions.push(r.result) // alignment.ts:330 判据
+    }
+    expect(questions.length).toBe(0) // alignment.ts:342-346 无疑问 → 直发 exec
   })
   it('产品经理 PM 语义句（handlePMConfirm 不 JSON.parse，杜绝落库 JSON 噪音）', async () => {
     const { executeSingleAgent } = await import('@/lib/orchestrator')
