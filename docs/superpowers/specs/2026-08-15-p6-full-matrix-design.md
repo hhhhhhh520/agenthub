@@ -100,8 +100,9 @@ task C 的 description **须刻意避开代码后缀**（isCodeTask alignment.ts
 **修法**（**两套独立超时都要放宽**）：
 1. `experiments/p5/vitest.config.ts:13` testTimeout `360s` → `30*60*1000`（vitest 侧，单 run 上限）
 2. `experiments/p5/config.ts:14` timeoutMs `300s` → `30*60*1000`（与 testTimeout 同值）——timeoutMs 被 `run-one.ts:62` 当 `globalDeadline = Date.now() + CONFIG.timeoutMs` 传进 orchestrator；`execution.ts:146` 对其**硬判**（`Date.now() > deadline → break` + error 事件）。harness 下 execution 全 mock 秒回**当前不触发**，但这是 mock 下的侥幸非设计保证——若未来 QA/执行非 mock，300s 会掐慢 run。放宽为防御性一致化，消除「spec 说 30min / 实际 300s」矛盾。
-3. **A0+A1 修完后**，先用真实 LLM 补跑 off-C-s4 单格**验证修复有效性**（trace 里应出现 execute 边、pass 判定变化）——修复闭环验证，非重跑基线
-4. 完整 off-C 格（5 seed）由 2×2 矩阵的 off+verify 格覆盖（见 §4），无需单独重跑
+3. **`experiments/p5/run.test.ts` 显式 timeout 参数也放宽**（vitest 中 it/beforeAll 显式 timeout 优先于全局 testTimeout/hookTimeout——`:248` beforeAll 5min、`:266` it 6min，需全部改 30min；实测 T4 时发现：只改 vitest.config.ts 全局值对 30-run driver 不生效）
+4. **A0+A1 修完后**，先用真实 LLM 补跑 off-C-s4 单格**验证修复有效性**（trace 里应出现 execute 边、pass 判定变化）——修复闭环验证，非重跑基线
+5. 完整 off-C 格（5 seed）由 2×2 矩阵的 off+verify 格覆盖（见 §4），无需单独重跑
 
 ### A4 GLM_MODEL upsert 对已存在 agent 无效
 
