@@ -174,6 +174,7 @@ if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {   // P6: 
 | 位置 | 现值 | 改值 |
 |------|------|------|
 | `experiments/p5/config.ts` | `model: process.env.GLM_MODEL \|\| 'glm-4.7-flash'` | `model: process.env.GLM_MODEL \|\| 'deepseek-v4-flash'` |
+| `experiments/p5/setup.ts:34` | baseUrl 默认 `'https://open.bigmodel.cn/api/paas/v4'`（智谱端点） | `'https://opencode.ai/zen/go'`（**模型钉死后的错配修正**——不设 GLM_BASE_URL 时 deepseek 模型打智谱端点会失败） |
 | `experiments/p5/report.ts` | 头部打印罐头消息 | **加 model/baseUrl 打印**（实际生效的，三处以「实际生效」为准） |
 | `docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md` §2 | 模型行写 glm | 更新为实际 deepseek-v4-flash（历史事实修正） |
 | `README.md`（如 P5 实验提及） | 写 glm | 更新 |
