@@ -9,6 +9,24 @@ import type { AgentConfig } from '../../src/lib/adapter/types'
 
 export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: 'A'|'B'|'C'; seed: number }
 
+export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined }
+
+/** P6 T9: 保存 runOne 改写的两个实验开关 env 原值（finally 恢复用；undefined=未设=默认 on） */
+export function saveRunEnv(): RunEnvSnapshot {
+  return {
+    EXPERIMENT_STATE_MACHINE: process.env.EXPERIMENT_STATE_MACHINE,
+    EXPERIMENT_VERIFY: process.env.EXPERIMENT_VERIFY,
+  }
+}
+
+/** P6 T9: 恢复 runOne 改写的两个实验开关 env——原值 undefined → delete，否则回写（保持 未设=默认on 语义，防残留污染进程内后续 run） */
+export function restoreRunEnv(prev: RunEnvSnapshot): void {
+  if (prev.EXPERIMENT_STATE_MACHINE === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
+  else process.env.EXPERIMENT_STATE_MACHINE = prev.EXPERIMENT_STATE_MACHINE
+  if (prev.EXPERIMENT_VERIFY === undefined) delete process.env.EXPERIMENT_VERIFY
+  else process.env.EXPERIMENT_VERIFY = prev.EXPERIMENT_VERIFY
+}
+
 /**
  * 单次 run：建 session → 循环决策/回复 → done / escalate-exhausted / no-progress / maxRounds 撞顶 / 异常 → metrics 落盘。
  * review I1：主体包 try/catch，异常落 failureMode:'error' 行再返回——防止格子 N 从 5 变 4 破坏同 seed 配对 McNemar。
@@ -18,6 +36,10 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
   const runId = `${config}-${taskId}-s${seed}-${randomUUID().slice(0, 8)}`
   const { prisma } = await import('@/lib/db')
   const { handleOrchestratorDecision } = await import('@/lib/services/chat-router')
+
+  // P6 T9: 保存两开关原值，finally 恢复——harness 并入根 vitest 配置/进程内跑时不再残留最后 run 的 'off'
+  // （当前靠 vitest per-file fork + fileParallelism:false 隔离，取消即静默禁用生产开关）
+  const prevRunEnv = saveRunEnv()
 
   // 开关按 run 隔离（fileParallelism:false 串行，无并发串扰）
   // P6 T8: 2 配置 → 4 配置 2×2 透传——OFF 前缀关状态机，no-verify 前缀关 verify，否则 delete（未设=默认 on）
@@ -129,5 +151,8 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
     }
     try { appendMetrics(m) } catch (err3) { console.warn(`[run-one] run ${runId} appendMetrics failed: ${err3 instanceof Error ? err3.message : String(err3)}`) }
     return m
+  } finally {
+    // P6 T9: 恢复两开关原值——runOne 永不泄漏实验 env 到进程（成功/失败路径都走这里）
+    restoreRunEnv(prevRunEnv)
   }
 }

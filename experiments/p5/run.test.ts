@@ -1,10 +1,10 @@
-import { describe, it, beforeAll, afterAll, expect, vi } from 'vitest'
+import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
 import { writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
-import { runOne } from './run-one'
+import { runOne, saveRunEnv, restoreRunEnv } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, type RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
@@ -313,6 +313,43 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     expect(report).toContain('- off+verify: 4（1 runs，avg 4.00）')   // illegalProposalCount
     expect(report).toContain('- off+no-verify: 6（1 runs，avg 6.00）') // illegalProposalCount
     expect(report).toContain('- on+verify: 3（1 runs，avg 3.00）')     // correctionCount（忽略 illegalProposalCount=99）
+  })
+})
+
+// —— P6 T9: runOne env 残留修复——saveRunEnv/restoreRunEnv 纯函数（runOne 主体 finally 调 restore；
+//    直接测函数不触发 30-run driver；runOne 内部依赖 DB/LLM 复杂，抽纯函数最小可测）——
+describe('P6 T9: runOne env 恢复（finally 还原 EXPERIMENT_STATE_MACHINE/VERIFY，防残留污染进程内后续 run）', () => {
+  afterEach(() => {
+    delete process.env.EXPERIMENT_STATE_MACHINE
+    delete process.env.EXPERIMENT_VERIFY
+  })
+  it('原值已设(off/off) → restore 回写为 off（不被 run 期间改写残留）', () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    process.env.EXPERIMENT_VERIFY = 'off'
+    const prev = saveRunEnv()
+    // 模拟 runOne 主体改写：状态机设 foo、verify 被 delete（config 依赖）
+    process.env.EXPERIMENT_STATE_MACHINE = 'foo'
+    delete process.env.EXPERIMENT_VERIFY
+    restoreRunEnv(prev)
+    expect(process.env.EXPERIMENT_STATE_MACHINE).toBe('off')
+    expect(process.env.EXPERIMENT_VERIFY).toBe('off')
+  })
+  it('原值未设(undefined) → restore delete 回 undefined（保持 未设=默认on 语义）', () => {
+    delete process.env.EXPERIMENT_STATE_MACHINE
+    delete process.env.EXPERIMENT_VERIFY
+    const prev = saveRunEnv()
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    process.env.EXPERIMENT_VERIFY = 'off'
+    restoreRunEnv(prev)
+    expect(process.env.EXPERIMENT_STATE_MACHINE).toBeUndefined()
+    expect(process.env.EXPERIMENT_VERIFY).toBeUndefined()
+  })
+  it('saveRunEnv 捕获当前两开关原值', () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    delete process.env.EXPERIMENT_VERIFY
+    const prev = saveRunEnv()
+    expect(prev.EXPERIMENT_STATE_MACHINE).toBe('off')
+    expect(prev.EXPERIMENT_VERIFY).toBeUndefined()
   })
 })
 
