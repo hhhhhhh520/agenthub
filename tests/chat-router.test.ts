@@ -497,6 +497,31 @@ describe('P5: OFF 开关（EXPERIMENT_STATE_MACHINE=off）', () => {
     const parsed = JSON.parse(traceCall![0].data.decisionTrace)
     expect(parsed[0].actualTransition).toMatchObject({ action: 'toString', applied: false, escalated: false })
   })
+
+  it('P6 A0: OFF 表外 no-op → 不抑制 handler 补记（recordExecuteTrace 传 true）', async () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    // align_pm 提 execute = 表外（TRANSITIONS.align_pm 无 execute，state-machine.ts:62-65）→ 决策点记 applied:false no-op
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'execute', target: null, targets: null, message: '直接执行', reason: '直接执行' },
+      sessionId: 'cli-1',
+    })
+    await handleOrchestratorDecision('执行', 's1', agents, sendEvent, { phase: 'alignment', phaseStep: 'pm_confirm', decisionTrace: '[]' })
+    // OFF 表外决策点没记真实推进(applied:false) → handler 的 transitionPhase 必须补记(recordExecuteTrace:true),
+    // 否则该次实际 phase 写入无 trace,oracle ② 判 no-pass（执行成功被判失败）——回归 P4「每个实际 phase 写入都入 trace」
+    expect(mockTransitionToExecution).toHaveBeenCalledWith('s1', agents, sendEvent, '执行', 'cli-1', undefined, expect.objectContaining({ recordExecuteTrace: true }))
+  })
+
+  it('P6 A0: OFF 表内合法转移 → 决策点已记 applied:true → 仍抑制补记', async () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'off'
+    // align_arch 提 align_qa = 表内（TRANSITIONS.align_arch 含 align_qa，state-machine.ts:67）→ applied:true → 决策点已记真实转移
+    mockGetOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'align_qa', target: null, targets: null, message: '需要澄清', reason: '需要澄清' },
+      sessionId: 'cli-1',
+    })
+    await handleOrchestratorDecision('澄清', 's1', agents, sendEvent, { phase: 'alignment', phaseStep: 'architect_plan', decisionTrace: '[]' })
+    // 表内 applied:true → 决策点已记,handler 补记必须被抑制(recordTrace:false)防双记
+    expect(mockHandleAgentQA).toHaveBeenCalledWith('澄清', 's1', agents, sendEvent, undefined, expect.objectContaining({ recordTrace: false }))
+  })
 })
 
 describe('handleOrchestratorChat', () => {
