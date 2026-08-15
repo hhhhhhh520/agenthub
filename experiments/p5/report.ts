@@ -19,7 +19,7 @@ export function generateReport(metrics: RunMetrics[]): string {
     for (const taskId of CONFIG.taskIds) {
       const cell = metrics.filter(m => m.config === config && m.taskId === taskId)
       if (cell.length === 0) continue
-      const passes = cell.map(m => m.pass)
+      const passes = cell.sort((a, b) => a.seed - b.seed).map(m => m.pass) // A5：按 seed 升序，消除插入序漂移
       const ci = bootstrapCI(passes)
       lines.push(`| ${config} | ${taskId} | ${passes.map(p => (p ? '1' : '0')).join('/')} | ${passes.filter(Boolean).length}/${passes.length} | ${ci.low.toFixed(2)}-${ci.high.toFixed(2)} |`)
     }

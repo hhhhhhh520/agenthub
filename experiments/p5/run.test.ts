@@ -235,6 +235,17 @@ describe('P5 report', () => {
     expect(report).toContain(JSON.stringify(CONFIG.cannedReplies))
     expect(report).toContain('| off | A | 1 | 1/1 |')
   })
+  it('A5: pass 数组按 seed 升序（乱序 metrics seed 3,1,2 → 0/1/1，不随插入序漂移）', () => {
+    const seed3: RunMetrics = { runId: 'r-s3', config: 'on', taskId: 'A', seed: 3, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '' }
+    const seed1: RunMetrics = { runId: 'r-s1', config: 'on', taskId: 'A', seed: 1, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 9, tracePath: '' }
+    const seed2: RunMetrics = { runId: 'r-s2', config: 'on', taskId: 'A', seed: 2, pass: true, failureMode: 'pass', rounds: 5, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 11, tracePath: '' }
+    const shuffled: RunMetrics[] = [seed3, seed1, seed2] // 插入序 3,1,2
+    const report = generateReport(shuffled)
+    // seed 升序 1,2,3 → pass 数组 false/true/true → "0/1/1"（修复前按插入序输出 "1/0/1"）
+    expect(report).toContain('| on | A | 0/1/1 |')
+    // sort 在 filter 拷贝上，generateReport 不得改动入参顺序
+    expect(shuffled.map(m => m.seed)).toEqual([3, 1, 2])
+  })
 })
 
 // —— 30 次 run（Spec §3.3：3任务×2配置×5次；5 固定 seed 同 seed 配对 ON/OFF）——
