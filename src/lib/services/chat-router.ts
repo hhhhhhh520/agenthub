@@ -197,20 +197,20 @@ export async function handleOrchestratorDecision(
       }
       break
     case 'align_confirm':
-      // P4 T1: recordTrace 传 !decisionRecorded——决策点已记则抑制,append 失败则不抑制兜底
+      // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则抑制,no-op 或 append 失败则不抑制兜底补记
       await handlePMConfirm(message, sessionId, agents, sendEvent, { recordTrace: !(decisionRecorded && decisionApplied) })
       break
     case 'align_decompose':
       // P2 待办④: 0 任务/超时 handleArchitectPlan 返回 false(已发 error+replan),显式中止,与 transitionToExecution 契约一致
-      // P4 T1: recordTrace:false——决策点已记 align_decompose,防 handleArchitectPlan 内部 transitionPhase 双记
+      // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则抑制,no-op 或 append 失败则不抑制兜底补记;防 handleArchitectPlan 内部 transitionPhase 双记
       if (!(await handleArchitectPlan(message, sessionId, agents, sendEvent, { recordTrace: !(decisionRecorded && decisionApplied) }))) return
       break
     case 'align_qa':
-      // P4 T1: recordTrace 传 !decisionRecorded;内部 QA直发exec 恒 recordExecuteTrace:true(代码驱动)
+      // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied);内部 QA直发exec 恒 recordExecuteTrace:true(代码驱动)
       await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline, { recordTrace: !(decisionRecorded && decisionApplied) })
       break
     case 'execute':
-      // P4 T1: recordExecuteTrace 传 !decisionRecorded——决策点已记 execute 则抑制,append 失败则不抑制兜底
+      // P4 T1: recordExecuteTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则抑制,no-op 或 append 失败则不抑制兜底补记
       await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline, { recordExecuteTrace: !(decisionRecorded && decisionApplied) })
       break
     case 'verify':
@@ -224,7 +224,7 @@ export async function handleOrchestratorDecision(
       }
       break
     case 'done':
-      // P4 T1: recordTrace 传 !decisionRecorded——决策点已记 done 则只写库不双记,append 失败则兜底补记
+      // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则只写库不双记,no-op 或 append 失败则兜底补记
       await transitionPhase(sessionId, 'done', { recordTrace: !(decisionRecorded && decisionApplied) })
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
       sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })

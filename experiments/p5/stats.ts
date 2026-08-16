@@ -38,6 +38,7 @@ function chi2Survival1(chi: number): number {
  * chi=3 → p≈0.083（满足测试），chi=3.841 → p≈0.050（对齐注释）。
  */
 export function pairedMcNemar(offRes: boolean[], onRes: boolean[]): { b: number; c: number; pValue: number } {
+  if (offRes.length !== onRes.length) console.warn(`[stats] pairedMcNemar 长度不等: off=${offRes.length} on=${onRes.length}（配对错位风险）`)
   let b = 0, c = 0
   for (let i = 0; i < Math.min(offRes.length, onRes.length); i++) {
     if (offRes[i] && !onRes[i]) b++

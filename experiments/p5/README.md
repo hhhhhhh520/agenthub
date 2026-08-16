@@ -7,6 +7,7 @@ P6 扩展为 2×2 全矩阵（状态机 on/off × verify 有/无 = 4 配置 × 3
 ## 运行
 ```bash
 export GLM_API_KEY=...   # 实验 LLM key（env 名沿用 GLM_API_KEY 历史命名，端点见 setup.ts 默认 opencode.ai/zen/go；永不硬编码）
+⚠️ 不要填智谱 key——该 key 会被发往 opencode.ai/zen/go，必须是该 provider（opencode.ai/zen/go）的 key
 npx vitest run --config experiments/p5/vitest.config.ts
 ```
 
