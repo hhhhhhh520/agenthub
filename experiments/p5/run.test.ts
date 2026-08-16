@@ -366,7 +366,7 @@ describe('P6 T9: runOne env 恢复（finally 还原 EXPERIMENT_STATE_MACHINE/VER
 
 // —— 60 次 run（Spec §3.3：3任务×4配置×5次；P6 T8 扩 2×2 矩阵；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
-describe('P5 pilot: 60 次受控实验（4 配置 2×2 矩阵）', () => {
+describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 60 次受控实验（4 配置 2×2 矩阵）', () => {
   // setupExperiment 仅 30-run 需要（建库 + 实验 agents + preflight 真 LLM 调用）。
   // harness 纯函数单测不调它——preflight 需要真实 GLM key，无 key 时只跑单测 describe
   beforeAll(async () => {

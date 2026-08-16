@@ -56,7 +56,7 @@ export async function preflightDecision(): Promise<void> {
   const { prisma } = await import('@/lib/db')
   const orch = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
   if (!orch) throw new Error('preflight: 无 orchestrator agent')
-  // 走 executeSingleAgent 一次真实调用（glm），验证 spawn CLI + provider 配好
+  // 走 executeSingleAgent 一次真实调用（deepseek-v4-flash），验证 spawn CLI + provider 配好
   const { executeSingleAgent } = await import('@/lib/orchestrator')
   const { result } = await executeSingleAgent(
     { name: orch.name, systemPrompt: orch.systemPrompt, platform: orch.platform, model: orch.model, baseUrl: orch.baseUrl, apiKey: orch.apiKey },
