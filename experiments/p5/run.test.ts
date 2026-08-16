@@ -73,7 +73,7 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       if (sp.includes('架构师')) return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
       if (sp.includes('测试工程师')) return { result: '无问题' }
       if (sp.includes('产品经理')) return { result: '已确认需求，请架构师拆解。' }
-      return { result: '收到任务，正在处理中。' } // delegate/self（P6 修复:不暗示完成,防诱导 done 捷径）
+      return { result: '委派任务已受理并拆解为可执行任务，请安排执行。' } // delegate/self（P6 修复:模拟委派后任务就绪,引导 execute 而非卡等待）
     }),
     // discuss 路径：runMultiAgentDiscussion → runDiscussion（adapter 直连，不经 executeSingleAgent）→ mock 防真实 CLI hang（审查 ❌A）
     runDiscussion: vi.fn(async () => ['罐头讨论意见（agent A 认为应澄清需求）', '罐头讨论意见（agent B 同意推进）']),
@@ -185,11 +185,11 @@ describe('P6 A1+A2 罐头差异化 + 语义化', () => {
     expect(r.result).toBe('已确认需求，请架构师拆解。')
     expect(() => JSON.parse(r.result)).toThrow()
   })
-  it('其余(delegate/self)中性语义句——不暗示完成（P6:防诱导 done 捷径）', async () => {
+  it('其余(delegate/self)语义句——模拟委派后任务就绪,引导 execute 而非卡等待（P6 修复）', async () => {
     const { executeSingleAgent } = await import('@/lib/orchestrator')
     const r = await (executeSingleAgent as any)(
       { name: '后端工程师', systemPrompt: '你是后端工程师，负责实现 API 与业务逻辑。' }, 'prompt', '', () => {})
-    expect(r.result).toBe('收到任务，正在处理中。')
+    expect(r.result).toBe('委派任务已受理并拆解为可执行任务，请安排执行。')
   })
 })
 
