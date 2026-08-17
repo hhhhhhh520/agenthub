@@ -3,6 +3,8 @@ import { TASKS, type P5Task } from './tasks'
 import { appendFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+export type FailKind = 'skipped-spec-edge' | 'done-but-conformance' | 'defect'
+
 export interface RunMetrics {
   runId: string
   config: (typeof CONFIG.configs)[number] // P6 T8: 4 配置 2×2 矩阵字符串（on+verify 等）
@@ -10,6 +12,7 @@ export interface RunMetrics {
   seed: number
   pass: boolean
   failureMode: 'pass' | 'escalate-exhausted' | 'stuck' | 'error' | 'no-pass'
+  failKind?: FailKind // P7-A: no-pass 归因（'skipped-spec-edge'|'done-but-conformance'|'defect'），OFF/ON 分列诊断
   rounds: number
   escalateCount: number
   correctionCount: number
@@ -67,6 +70,26 @@ export function resolveFailureMode(
   return 'no-pass'
 }
 
+/** P7-A failKind：no-pass 归因（F2 穷尽 5 failureMode / F4 total 绝不 throw / F5 用 defect 非 stuck 避歧义）。
+ * error→defect(harness缺陷)；未done→defect；done但缺规范边→skipped-spec-edge(状态机价值，以 OFF 为主要来源——
+ * CONFIG.on 实际到不了 missing-edges-no-pass: done⟹曾在 exec⟹必有 execute 边，故 on 不产生此义，但实现不强制)；
+ * done但conformance违规→done-but-conformance(状态机价值,on)；其余兜底 defect。
+ * 注: _config 当前未用于分支（判定位次已隐含可区分），保留参数仅为接口稳定。 */
+export function classifyFailKind(
+  failureMode: string,
+  done: boolean,
+  requiredEdgesOk: boolean,
+  onConformanceOk: boolean,
+  _config: string,
+): FailKind | undefined {
+  if (failureMode === 'pass') return undefined
+  if (failureMode === 'error') return 'defect'
+  if (!done) return 'defect'
+  if (!requiredEdgesOk) return 'skipped-spec-edge'
+  if (!onConformanceOk) return 'done-but-conformance'
+  return 'defect' // escalate-exhausted / no-pass 兜底 → harness 缺陷
+}
+
 export async function collectMetrics(
   runId: string, sessionId: string, config: (typeof CONFIG.configs)[number], taskId: 'A'|'B'|'C', seed: number,
   rounds: number, escalateCount: number, latencyMs: number,
@@ -96,12 +119,13 @@ export async function collectMetrics(
 
   const pass = error ? false : (done && requiredEdgesOk && (config.startsWith('off') ? true : onConformanceOk))
   const failureMode = resolveFailureMode(pass, escalateCount, rounds, error)
+  const failKind = classifyFailKind(failureMode, done, requiredEdgesOk, onConformanceOk, config)
 
   const correctionCount = entries.reduce((n, e) => n + (e.corrections?.length ?? 0), 0)
   const illegalProposalCount = countIllegalProposals(entries, config.startsWith('off'))
 
   return {
-    runId, config, taskId, seed, pass, failureMode, rounds, escalateCount,
+    runId, config, taskId, seed, pass, failureMode, failKind, rounds, escalateCount,
     correctionCount, illegalProposalCount, totalTransitions, latencyMs,
     tracePath: `${CONFIG.resultsDir}/trace-${runId}.json`,
   }

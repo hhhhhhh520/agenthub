@@ -5,7 +5,7 @@ import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne, saveRunEnv, restoreRunEnv } from './run-one'
-import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, type RunMetrics } from './metrics'
+import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
 
@@ -131,6 +131,23 @@ describe('P5 harness 单测', () => {
     const rest = loadMetrics().filter(x => x.runId !== runId)
     if (rest.length === 0) rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
     else writeFileSync(join(CONFIG.resultsDir, 'metrics.jsonl'), rest.map(x => JSON.stringify(x)).join('\n') + '\n', 'utf8')
+  })
+  it('P7-A failKind: 穷尽 + 按 off/on 分列（F2/F4/F5）', () => {
+    // 仅供逻辑验证——collectMetrics 本身查 DB，这里测纯的 failKind 归类 seed 需 mock prisma；
+    // 为不依赖 DB，用可注入的判定函数（classifyFailKind）。
+    const cases: Array<{ failureMode: string; done: boolean; requiredEdgesOk: boolean; onConformanceOk: boolean; config: string; expect: FailKind | undefined }> = [
+      { failureMode: 'pass', done: true, requiredEdgesOk: true, onConformanceOk: true, config: 'on+verify', expect: undefined },
+      { failureMode: 'error', done: true, requiredEdgesOk: true, onConformanceOk: true, config: 'on+verify', expect: 'defect' }, // 异常→defect(F2)
+      { failureMode: 'stuck', done: false, requiredEdgesOk: true, onConformanceOk: true, config: 'off+verify', expect: 'defect' }, // 未done→defect
+      { failureMode: 'no-pass', done: true, requiredEdgesOk: false, onConformanceOk: true, config: 'off+verify', expect: 'skipped-spec-edge' }, // OFF缺规范边→状态机价值
+      { failureMode: 'no-pass', done: true, requiredEdgesOk: true, onConformanceOk: false, config: 'on+verify', expect: 'done-but-conformance' }, // ON违规→状态机价值
+      { failureMode: 'no-pass', done: false, requiredEdgesOk: false, onConformanceOk: true, config: 'off+verify', expect: 'defect' }, // 未done优先于缺边
+    ]
+    for (const c of cases) {
+      expect(classifyFailKind(c.failureMode, c.done, c.requiredEdgesOk, c.onConformanceOk, c.config)).toBe(c.expect)
+    }
+    // total：畸形输入不 throw（F4）
+    expect(() => classifyFailKind('no-pass', true, false, true, 'off+no-verify')).not.toThrow()
   })
 })
 
