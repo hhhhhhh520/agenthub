@@ -136,7 +136,7 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
     // 双故障兜底：若原异常本身是 DB 故障，collectMetrics 再查 DB 会二次抛错——包一层 try/catch，
     // 回退最小 error 行（不碰 DB 只写 JSONL），保证 runOne 永不 throw、该格仍有 error 行，N 不塌
     const minimalErrorRow = (): RunMetrics => ({
-      runId, config, taskId, seed, pass: false, failureMode: 'error', rounds, escalateCount,
+      runId, config, taskId, seed, pass: false, failureMode: 'error', failKind: 'defect' as const, rounds, escalateCount,
       correctionCount: 0, illegalProposalCount: 0, totalTransitions: 0, latencyMs,
       tracePath: `${CONFIG.resultsDir}/trace-${runId}.json`,
     })
