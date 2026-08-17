@@ -33,13 +33,17 @@ const mocks = vi.hoisted(() => {
     C: JSON.stringify({ tasks: [{ id: 1, description: '修改项目根目录 .env.example 的端口配置为 8080', assignedAgent: '后端工程师', dependencies: [], declared_files: [] }] }),
   }
   // vi.mock factory 被 hoisted,读不到 run 循环局部变量 → 可变对象暴露 currentTaskId,30-run driver 每 it 设置
+  // P7-A: delegate 中性抽象 JSON（F1 无引导根；委派后端工程师等消费端不 JSON.parse 亦可安全显示）
+  const DELEGATE_NEUTRAL_JSON = JSON.stringify({
+    tasks: [{ id: 1, description: '拆解得出的子任务', assignedAgent: '后端工程师', dependencies: [], declared_files: [] }],
+  })
   const state = { currentTaskId: 'A' as 'A' | 'B' | 'C' }
   const mockExecuteTaskBatch = vi.fn(async (tasks: any[]) => {
     const results = new Map<string, { result: string; sessionId?: string }>()
     for (const t of tasks) results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
     return { results, preloadedIds: [], failedTaskIds: [], failedTaskReasons: {} }
   })
-  return { mockExecuteTaskBatch, preflightPromptMarker, qaPromptMarker, cannedTasksByTask, state }
+  return { mockExecuteTaskBatch, preflightPromptMarker, qaPromptMarker, cannedTasksByTask, state, DELEGATE_NEUTRAL_JSON }
 })
 
 vi.mock('@/lib/orchestrator', async (importOriginal) => {
@@ -73,7 +77,16 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       if (sp.includes('架构师')) return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
       if (sp.includes('测试工程师')) return { result: '无问题' }
       if (sp.includes('产品经理')) return { result: '已确认需求，请架构师拆解。' }
-      return { result: '委派任务已受理并拆解为可执行任务，请安排执行。' } // delegate/self（P6 修复:模拟委派后任务就绪,引导 execute 而非卡等待）
+      // P7-A: delegate/self 拆开（旧唯一 return 语义句引导 execute 抹平 ON/OFF 对比）。
+      // self = orchestrator 自执行（handleOrchestratorChat 恒传 name:'Orchestrator'，chat-router.ts:271）
+      //       → 中性文本，不可解析（F3 shape 契约）。
+      // delegate = 委派目标 agent（delegateToAgent 传真实名如 后端工程师，review.ts:143）
+      //       → 中性抽象 JSON（F1 无引导根）。判别用 name 精确相等，非模糊子串。
+      // ⚠️ 边界（计划 Task 1 注）：sp.includes('架构师') 在 name 判别前 → 若委派目标是架构师，
+      //       会命中上方架构师分支返回三档罐头 JSON 而非中性 delegate JSON。当前 3 任务委派目标
+      //       均为后端工程师（不触发），故不阻塞；未来若加「委派给架构师」的任务需重排分支优先级。
+      if (agent?.name === 'Orchestrator') return { result: '我已处理，结果如下。' } // self
+      return { result: mocks.DELEGATE_NEUTRAL_JSON } // delegate
     }),
     // discuss 路径：runMultiAgentDiscussion → runDiscussion（adapter 直连，不经 executeSingleAgent）→ mock 防真实 CLI hang（审查 ❌A）
     runDiscussion: vi.fn(async () => ['罐头讨论意见（agent A 认为应澄清需求）', '罐头讨论意见（agent B 同意推进）']),
@@ -185,11 +198,24 @@ describe('P6 A1+A2 罐头差异化 + 语义化', () => {
     expect(r.result).toBe('已确认需求，请架构师拆解。')
     expect(() => JSON.parse(r.result)).toThrow()
   })
-  it('其余(delegate/self)语义句——模拟委派后任务就绪,引导 execute 而非卡等待（P6 修复）', async () => {
+  it('delegate（名≠Orchestrator）返回中性抽象 JSON：可解析、description 无引导根、非旧引导句', async () => {
     const { executeSingleAgent } = await import('@/lib/orchestrator')
     const r = await (executeSingleAgent as any)(
       { name: '后端工程师', systemPrompt: '你是后端工程师，负责实现 API 与业务逻辑。' }, 'prompt', '', () => {})
-    expect(r.result).toBe('委派任务已受理并拆解为可执行任务，请安排执行。')
+    const parsed = JSON.parse(r.result) // 必须可解析（shape 契约 F3）
+    expect(parsed.tasks).toHaveLength(1)
+    expect(parsed.tasks[0].description).toBe('拆解得出的子任务')
+    expect(parsed.tasks[0].declared_files).toEqual([])
+    // 反引导红线(F1)：不返回旧引导句，description 不含 执行/实现/就绪/继续 根
+    expect(r.result).not.toBe('委派任务已受理并拆解为可执行任务，请安排执行。')
+    for (const banned of ['执行', '实现', '就绪', '继续']) expect(parsed.tasks[0].description).not.toContain(banned)
+  })
+  it('self（名=Orchestrator）返回中性文本：不可解析（与 delegate shape 区分，F3）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: 'Orchestrator', systemPrompt: '你是 Orchestrator' }, 'prompt', '', () => {})
+    expect(r.result).toBe('我已处理，结果如下。')
+    expect(() => JSON.parse(r.result)).toThrow()
   })
 })
 
