@@ -89,6 +89,23 @@ export function generateReport(metrics: RunMetrics[]): string {
   for (const m of metrics) fm.set(m.failureMode, (fm.get(m.failureMode) ?? 0) + 1)
   lines.push('- ' + Array.from(fm.entries()).map(([k, v]) => `${k}: ${v}`).join(' | '))
 
+  // —— P7-A: failKind 诊断（no-pass 分解，状态机价值 vs harness 缺陷）——
+  lines.push('', '## failKind 诊断（no-pass 分解）')
+  lines.push('| config | task | 状态机价值 | harness 缺陷 | defect(by failureMode) |')
+  lines.push('|---|---|---|---|---|')
+  const cellFail = (config: string, taskId: string): RunMetrics[] => metrics.filter(m => m.config === config && m.taskId === taskId && m.pass === false)
+  for (const config of CONFIG.configs) for (const taskId of CONFIG.taskIds) {
+    const noPass = cellFail(config, taskId)
+    if (noPass.length === 0) continue
+    const value = noPass.filter(m => m.failKind === 'skipped-spec-edge' || m.failKind === 'done-but-conformance').length
+    const defect = noPass.filter(m => m.failKind === 'defect' || m.failKind === undefined).length // undefined=旧resume行防 (F6)
+    const fm = new Map<string, number>()
+    for (const m of noPass.filter(x => x.failKind === 'defect')) fm.set(m.failureMode, (fm.get(m.failureMode) ?? 0) + 1)
+    const fmLine = fm.size ? Array.from(fm.entries()).map(([k, v]) => `${k}:${v}`).join(' ') : '—'
+    lines.push(`| ${config} | ${taskId} | ${value} | ${defect} | ${fmLine} |`)
+  }
+  lines.push('', '> 归因: 状态机价值=skipped-spec-edge(off 捷径被拦)+done-but-conformance(on 违规)；harness 缺陷=defect(stuck/error/escalate-exhausted/no-pass)')
+
   // —— 非法尝试率（P6 T8：4 配置通用——OFF 前缀用 illegalProposalCount，ON 前缀用 correctionCount）——
   lines.push('', '## OFF 非法尝试率 vs ON correctionCount（4 配置）')
   for (const config of CONFIG.configs) {
