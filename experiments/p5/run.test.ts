@@ -368,6 +368,19 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     expect(report).toContain('- off+no-verify: 6（1 runs，avg 6.00）') // illegalProposalCount
     expect(report).toContain('- on+verify: 3（1 runs，avg 3.00）')     // correctionCount（忽略 illegalProposalCount=99）
   })
+  it('P7-A: report 含 failKind 诊断段（no-pass 分解，value vs defect 两列）', () => {
+    const metrics: RunMetrics[] = [
+      { runId: 'v1', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '', failKind: 'skipped-spec-edge' },
+      { runId: 'e1', config: 'on+verify', taskId: 'A', seed: 1, pass: false, failureMode: 'error', rounds: 2, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 0, latencyMs: 8, tracePath: '', failKind: 'defect' },
+    ]
+    const report = generateReport(metrics)
+    expect(report).toContain('## failKind 诊断（no-pass 分解）')
+    // 表格式输出（与实现的行一致，勿用人类格式子串）：
+    // v1=skipped-spec-edge(价值格,s1) → value=1 defect=0, fmLine 只统计 defect→ '—'
+    // e1=failKind defect + failureMode error → value=0 defect=1, fmLine='error:1'
+    expect(report).toContain('| off+verify | A | 1 | 0 | — |')
+    expect(report).toContain('| on+verify | A | 0 | 1 | error:1 |')
+  })
 })
 
 // —— P6 T9: runOne env 残留修复——saveRunEnv/restoreRunEnv 纯函数（runOne 主体 finally 调 restore；
@@ -423,9 +436,11 @@ describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 60 次受控实验（4 配�
     console.log('\n===== P5 PILOT REPORT =====\n' + report)
   }, 60 * 1000)
 
+  const P7_GATE = process.env.P7_GATE === '1' ? { config: 'off+verify', taskId: 'A' } : null
   for (const task of TASKS) {
     for (const config of CONFIG.configs) {
       for (const seed of SEEDS) {
+        if (P7_GATE && (config !== P7_GATE.config || task.id !== P7_GATE.taskId)) continue
         it(`${config} ${task.id} seed=${seed}`, async () => {
           // P6 A1: mock factory 按 currentTaskId 取 task 罐头（架构师 decompose 消费）
           mocks.state.currentTaskId = task.id
