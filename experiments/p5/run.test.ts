@@ -70,21 +70,23 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
         return { result: '无问题' }
       }
       // 3. 其余执行（decompose/delegate/self;QA 已由上方 marker 分支接管）→ 按消费者分流（P6 A1+A2）。
-      //    判定用 agent.systemPrompt（硬编码模板,LLM 不可污染,复用 systemPrompt 安全网原则;不用 prompt 判定）。
+      //    判定用 agent.name 精确相等（P8 收窄）：成员调用点均传真实名（alignment.ts:88/162/305），
+      //    handleOrchestratorChat 恒传 name:'Orchestrator'（chat-router.ts:271）。不用 systemPrompt 子串——
+      //    Orchestrator 的 prompt 含「当前会话中的 Agent：- 架构师…」名单（chat-router.ts:249-253），
+      //    旧 sp.includes('架构师') 曾误命中致 60-run 8 条 off-C defect 伪影（p5.db 实证）。
       //    架构师(decompose) → 按 task 罐头任务 JSON（alignment.ts:171 parseJSON 可解析建任务）；
       //    测试工程师(非 QA 兜底) → '无问题'；产品经理(PM) → 语义句（handlePMConfirm 不 JSON.parse）；其余(delegate/self) → 语义句。
-      const sp = agent?.systemPrompt ?? ''
-      if (sp.includes('架构师')) return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
-      if (sp.includes('测试工程师')) return { result: '无问题' }
-      if (sp.includes('产品经理')) return { result: '已确认需求，请架构师拆解。' }
+      if (agent?.name === '架构师') return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
+      if (agent?.name === '测试工程师') return { result: '无问题' }
+      if (agent?.name === '产品经理') return { result: '已确认需求，请架构师拆解。' }
       // P7-A: delegate/self 拆开（旧唯一 return 语义句引导 execute 抹平 ON/OFF 对比）。
       // self = orchestrator 自执行（handleOrchestratorChat 恒传 name:'Orchestrator'，chat-router.ts:271）
       //       → 中性文本，不可解析（F3 shape 契约）。
       // delegate = 委派目标 agent（delegateToAgent 传真实名如 后端工程师，review.ts:143）
-      //       → 中性抽象 JSON（F1 无引导根）。判别用 name 精确相等，非模糊子串。
-      // ⚠️ 边界（计划 Task 1 注）：sp.includes('架构师') 在 name 判别前 → 若委派目标是架构师，
-      //       会命中上方架构师分支返回三档罐头 JSON 而非中性 delegate JSON。当前 3 任务委派目标
-      //       均为后端工程师（不触发），故不阻塞；未来若加「委派给架构师」的任务需重排分支优先级。
+      //       → 中性抽象 JSON（F1 无引导根）。
+      // ⚠️ 边界：成员 name 判别在前 → 若委派目标是架构师/测试工程师/产品经理，
+      //       会命中对应成员分支返回其罐头而非中性 delegate JSON。当前 3 任务委派目标
+      //       均为后端工程师（不触发），故不阻塞；未来若加「委派给这三类成员」的任务需重排分支优先级。
       if (agent?.name === 'Orchestrator') return { result: '我已处理，结果如下。' } // self
       return { result: mocks.DELEGATE_NEUTRAL_JSON } // delegate
     }),
@@ -233,6 +235,45 @@ describe('P6 A1+A2 罐头差异化 + 语义化', () => {
       { name: 'Orchestrator', systemPrompt: '你是 Orchestrator' }, 'prompt', '', () => {})
     expect(r.result).toBe('我已处理，结果如下。')
     expect(() => JSON.parse(r.result)).toThrow()
+  })
+})
+
+// —— P8 mock 判定按 name 收窄：Orchestrator 成员名单污染 systemPrompt 不得误入成员罐头分支 ——
+// 根因（60-run 8 条 off-C defect，p5.db 实证）：handleOrchestratorChat 的 systemPrompt 含
+// 「当前会话中的 Agent：\n- 架构师（…）」名单（chat-router.ts:249-253），旧 sp.includes('架构师')
+// 先于 self/delegate 判别命中 → mock 误返 C 罐头 JSON → 下轮同上下文同决策 → no-progress break。
+describe('P8 mock 判定按 name 收窄（成员名单污染防护）', () => {
+  // 复刻 chat-router.ts:250-253 真实形态：agentList 把全部成员名拼进 Orchestrator systemPrompt
+  const orchestratorSpWithRoster = [
+    '你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。',
+    '',
+    '当前会话中的 Agent：',
+    '- 架构师（系统设计与任务拆解，平台：test）',
+    '- 测试工程师（测试编写与验证，平台：test）',
+    '- 产品经理（需求分析与澄清，平台：test）',
+  ].join('\n')
+
+  it('self（name=Orchestrator，systemPrompt 含成员名单）不误入架构师罐头 → 中性文本', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: 'Orchestrator', systemPrompt: orchestratorSpWithRoster }, 'prompt', '', () => {})
+    expect(r.result).toBe('我已处理，结果如下。') // 修复前：sp.includes('架构师') 命中返回罐头任务 JSON
+    expect(() => JSON.parse(r.result)).toThrow() // 且保持 self shape 契约（不可解析）
+  })
+
+  it('self（name=Orchestrator，systemPrompt 含测试工程师/产品经理名单）不误入对应分支', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const sp = '你是 Orchestrator。\n当前会话中的 Agent：\n- 测试工程师（测试编写与验证，平台：test）\n- 产品经理（需求分析与澄清，平台：test）'
+    const r = await (executeSingleAgent as any)(
+      { name: 'Orchestrator', systemPrompt: sp }, 'prompt', '', () => {})
+    expect(r.result).toBe('我已处理，结果如下。') // 修复前：sp.includes('测试工程师') 命中返回 '无问题'
+  })
+
+  it('回归守卫：非 QA 调用（prompt 无 qa marker）的测试工程师仍回 无问题（收窄后按 name 命中）', async () => {
+    const { executeSingleAgent } = await import('@/lib/orchestrator')
+    const r = await (executeSingleAgent as any)(
+      { name: '测试工程师', systemPrompt: '你是测试工程师，负责编写测试并验证实现。' }, 'prompt', '', () => {})
+    expect(r.result).toBe('无问题')
   })
 })
 
