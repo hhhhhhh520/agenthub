@@ -66,3 +66,26 @@ export function aggregateFingerprints(rows: NormRow[]): Map<string, CellFingerpr
   }
   return m
 }
+
+export interface ContaminationResult {
+  contaminated: boolean; avgTrans: number; defectRatio: number; roundsFullRatio: number
+}
+
+/** 批次污染检测（spec §4.1-5；校准样本=metrics.p8-attempt1-quota-dead 阳性 / p8-final 阴性）。
+ *  签名=LLM 死亡后空转：零转移 + rounds 打满 + defect 灌满。三条件 AND 防误伤。 */
+export function detectBatchContamination(rows: NormRow[], opts?: {
+  avgTransMax?: number; defectRatioMin?: number; roundsFullRatioMin?: number; roundsFullFloor?: number
+}): ContaminationResult {
+  const avgTransMax = opts?.avgTransMax ?? 1.0
+  const defectRatioMin = opts?.defectRatioMin ?? 0.8
+  const roundsFullRatioMin = opts?.roundsFullRatioMin ?? 0.5
+  const roundsFullFloor = opts?.roundsFullFloor ?? 6
+  const n = rows.length || 1
+  const avgTrans = rows.reduce((s, r) => s + r.totalTransitions, 0) / n
+  const defectRatio = rows.filter(r => r.failKind === 'defect').length / n
+  const roundsFullRatio = rows.filter(r => r.rounds >= roundsFullFloor).length / n
+  return {
+    contaminated: avgTrans < avgTransMax && defectRatio > defectRatioMin && roundsFullRatio > roundsFullRatioMin,
+    avgTrans, defectRatio, roundsFullRatio,
+  }
+}
