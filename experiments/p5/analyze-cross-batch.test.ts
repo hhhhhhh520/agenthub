@@ -87,3 +87,41 @@ describe.skipIf(!existsSync(pDead))('detectBatchContamination（真实批双向�
     expect(detectBatchContamination(loadBatchRows('P8', p8).rows).contaminated).toBe(false)
   })
 })
+
+import { classifyCorrections, findMissingEdges } from './analyze-cross-batch'
+
+describe('classifyCorrections（结构化定源，镜像 chat-router 顺序）', () => {
+  it('idle 直发 execute 被 gate 重定向', () => {
+    expect(classifyCorrections({ inputState: { state: 'idle' }, llmProposal: { action: 'execute' }, corrections: [{ from: 'execute', to: 'align_decompose' }] })).toEqual(['gate'])
+  })
+  it('align_pm 提议 done → 规则1 canonical', () => {
+    expect(classifyCorrections({ inputState: { state: 'align_pm' }, llmProposal: { action: 'done' }, corrections: [{ from: 'done', to: 'align_decompose' }] })).toEqual(['canonical'])
+  })
+  it('align_arch 提议 done→execute 归 canonical（状态区分于 done-guard）', () => {
+    expect(classifyCorrections({ inputState: { state: 'align_arch' }, llmProposal: { action: 'done' }, corrections: [{ from: 'done', to: 'execute' }] })).toEqual(['canonical'])
+  })
+  it('exec 态提议 done 且被守卫拦 → done-guard', () => {
+    expect(classifyCorrections({ inputState: { state: 'exec' }, llmProposal: { action: 'done' }, corrections: [{ from: 'done', to: 'execute' }] })).toEqual(['done-guard'])
+  })
+  it('exec 态提议 align_qa → 规则2 canonical', () => {
+    expect(classifyCorrections({ inputState: { state: 'exec' }, llmProposal: { action: 'align_qa' }, corrections: [{ from: 'align_qa', to: 'execute' }] })).toEqual(['canonical'])
+  })
+})
+
+describe('findMissingEdges（通配 from 匹配 + done 边钉 exec）', () => {
+  it('缺 execute 且 done 从非 exec 发出不满足', () => {
+    const req = [
+      { action: 'align_decompose', from: '*', to: 'align_arch' },
+      { action: 'execute', from: '*', to: 'exec' },
+      { action: 'done', from: 'exec', to: 'done' },
+    ]
+    const applied = [
+      { action: 'align_decompose', from: 'idle', to: 'align_arch' },
+      { action: 'done', from: 'align_arch', to: 'done' },
+    ]
+    expect(findMissingEdges(applied, req)).toEqual([
+      { action: 'execute', from: '*', to: 'exec' },
+      { action: 'done', from: 'exec', to: 'done' },
+    ])
+  })
+})
