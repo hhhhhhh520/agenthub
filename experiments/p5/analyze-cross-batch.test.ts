@@ -58,3 +58,32 @@ describe.skipIf(!existsSync(p8))('aggregateFingerprints（真实数据快照，�
     expect(onCorr).toBe(6); expect(offIll).toBe(6)
   })
 })
+
+import { detectBatchContamination } from './analyze-cross-batch'
+
+type Row = Parameters<typeof detectBatchContamination>[0][number]
+const mkRow = (over: Partial<Row> = {}): Row =>
+  ({ batch: 'P8', runId: 'x', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', failKind: 'defect', rounds: 6, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 0, latencyMs: 1, ...over })
+
+describe('detectBatchContamination（quota-dead 校准签名）', () => {
+  it('污染形态：trans≈0 + rounds 打满 + defect 灌满 → true', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => mkRow({ runId: `d${i}` }))
+    expect(detectBatchContamination(rows).contaminated).toBe(true)
+  })
+  it('有效形态（混合 pass/skip，正常 trans）→ false', () => {
+    const rows = [
+      mkRow({ runId: 'p1', pass: true, failureMode: 'pass', failKind: null, rounds: 4, totalTransitions: 5 }),
+      mkRow({ runId: 'p2', failKind: 'skipped-spec-edge', rounds: 3, totalTransitions: 3 }),
+      mkRow({ runId: 'p3', failKind: 'skipped-spec-edge', rounds: 5, totalTransitions: 4 }),
+    ]
+    expect(detectBatchContamination(rows).contaminated).toBe(false)
+  })
+})
+
+const pDead = join(resultsDir, 'metrics.p8-attempt1-quota-dead-20260822.jsonl')
+describe.skipIf(!existsSync(pDead))('detectBatchContamination（真实批双向断言）', () => {
+  it('quota-dead 阳性 / p8-final 阴性', () => {
+    expect(detectBatchContamination(loadBatchRows('P8', pDead).rows).contaminated).toBe(true)
+    expect(detectBatchContamination(loadBatchRows('P8', p8).rows).contaminated).toBe(false)
+  })
+})
