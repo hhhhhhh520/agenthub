@@ -42,3 +42,27 @@ export function loadBatchRows(batch: BatchId, filePath: string): { rows: NormRow
   }
   return { rows, badLines }
 }
+
+export interface CellFingerprint {
+  n: number; pass: number; skip: number; defect: number; failKindOther: number; failKindNA: number
+  corrSum: number; illSum: number; escSum: number
+  sumRounds: number; sumTrans: number
+}
+export function fingerprintKey(config: string, taskId: string): string { return `${config}|${taskId}` }
+
+export function aggregateFingerprints(rows: NormRow[]): Map<string, CellFingerprint> {
+  const m = new Map<string, CellFingerprint>()
+  for (const r of rows) {
+    const k = fingerprintKey(r.config, r.taskId)
+    const c = m.get(k) ?? { n: 0, pass: 0, skip: 0, defect: 0, failKindOther: 0, failKindNA: 0, corrSum: 0, illSum: 0, escSum: 0, sumRounds: 0, sumTrans: 0 }
+    c.n++; if (r.pass) c.pass++
+    if (r.failKind === 'skipped-spec-edge') c.skip++
+    else if (r.failKind === 'defect') c.defect++
+    else if (r.failKind === null) c.failKindNA++
+    else c.failKindOther++
+    c.corrSum += r.correctionCount; c.illSum += r.illegalProposalCount; c.escSum += r.escalateCount
+    c.sumRounds += r.rounds; c.sumTrans += r.totalTransitions
+    m.set(k, c)
+  }
+  return m
+}
