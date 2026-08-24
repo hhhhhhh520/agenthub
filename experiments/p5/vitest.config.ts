@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['**/run.test.ts', '**/setup.test.ts'],
+    include: ['**/run.test.ts', '**/setup.test.ts', '**/analyze-cross-batch.test.ts'],
     testTimeout: 30 * 60 * 1000,      // 单 run 上限（含决策/补拆/执行 mock）
     hookTimeout: 30 * 60 * 1000,      // beforeAll setup 跑真实 preflight，与 testTimeout 同值
     fileParallelism: false,
