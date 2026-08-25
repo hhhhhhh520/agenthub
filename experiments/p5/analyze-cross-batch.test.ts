@@ -25,6 +25,16 @@ describe('loadBatchRows', () => {
     expect(rows[0].failKind).toBe('defect')
     unlinkSync(tmp)
   })
+
+  it('非对象 JSON 行（数字/字符串）计入 badLines 不产生幻影行', () => {
+    const tmp = join(import.meta.dirname, '.__fixture-t1c.jsonl')
+    writeFileSync(tmp, '123\n"x"\n{"runId":"r3","config":"on+verify","taskId":"A","seed":2,"pass":true,"failureMode":"pass","rounds":1,"escalateCount":0,"correctionCount":0,"illegalProposalCount":0,"totalTransitions":1,"latencyMs":10}\n')
+    const { rows, badLines } = loadBatchRows('P6', tmp)
+    expect(badLines).toBe(2)   // JSON.parse('123')/'"x"' 合法但不产行，按坏行计
+    expect(rows).toHaveLength(1)
+    expect(rows[0].runId).toBe('r3')
+    unlinkSync(tmp)
+  })
 })
 
 describe('aggregateFingerprints（inline fixture）', () => {
@@ -130,7 +140,7 @@ describe('findMissingEdges（通配 from 匹配 + done 边钉 exec）', () => {
   })
 })
 
-import { renderCrossBatchReport, sanitizeIdentifier } from './analyze-cross-batch'
+import { renderCrossBatchReport, sanitizeIdentifier, type MissingEdgeFinding } from './analyze-cross-batch'
 
 describe('sanitizeIdentifier', () => {
   it('消毒路径穿越与特殊字符', () => {
@@ -176,6 +186,46 @@ describe('renderCrossBatchReport', () => {
     expect(md).toContain('- on+verify-A：jsonl 指纹缺格（权威 5/5）')
     expect(md).toContain('- off+no-verify-B：权威 5/5 vs jsonl 4/5')
     expect(md).not.toContain('两源逐格一致')
+  })
+})
+
+describe('renderCrossBatchReport（终审修复波 F1/F2/F3 文案）', () => {
+  const mkFinding = (id: string, appliedN: number): MissingEdgeFinding => ({
+    sessionId: id, title: `p5-on+verify-A-s0-${id}`, dayGroup: '2026-08-22',
+    appliedEdges: Array.from({ length: appliedN }, () => ({ action: 'execute', from: 'idle', to: 'exec' })),
+    missingRequired: [{ action: 'align_decompose', from: '*', to: 'align_arch' }, { action: 'done', from: 'exec', to: 'done' }],
+    doneEdgeAppliedFromExec: false,
+    correctionSources: { canonical: 0, gate: 1, 'done-guard': 0 },
+  })
+  it('F2：缺边类型学含口径 caveat + 推进/未推进两行分段 + 时区脚注', () => {
+    const md = renderCrossBatchReport({
+      fingerprints: new Map(),
+      contamination: {
+        P6: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P7: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P8: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+      },
+      findings: [mkFinding('a', 1), mkFinding('b', 0)],
+      badLineCounts: { P6: 0, P7: 0, P8: 0 }, sessionDayGroups: [],
+    })
+    expect(md).toContain('不能直接当作跳过行为读')
+    expect(md).toContain('- 曾实际推进（appliedEdges>0）：共 1 session，缺边 1 —— [1] 缺 align_decompose:*→align_arch ; done:exec→done')
+    expect(md).toContain('- 从未推进（appliedEdges=0）：共 1 session，缺边 1 —— [1] 缺 align_decompose:*→align_arch ; done:exec→done')
+    expect(md).toContain('> 时区脚注：dayGroup 取 createdAt 前 10 字符即 UTC 日期；P8 实际于北京时间 2026-08-23 凌晨执行，其会话 UTC 落在 08-22 桶。')
+  })
+  it('F1：污染阳性分支如实声明「须人工剔除」，不再声称「不进入解读」；F3：组级差异静态脚注', () => {
+    const md = renderCrossBatchReport({
+      fingerprints: new Map(),
+      contamination: {
+        P6: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P7: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P8: { contaminated: true, avgTrans: 0.8, defectRatio: 0.9, roundsFullRatio: 0.8 },
+      },
+      findings: [], badLineCounts: { P6: 0, P7: 0, P8: 0 }, sessionDayGroups: [],
+    })
+    expect(md).toContain('P8 命中污染签名：若 detectBatchContamination 判阳性，其指纹在解读时须人工剔除')
+    expect(md).not.toContain('不进入解读')
+    expect(md).toContain('> 组级差异脚注：corr 权威 17 vs jsonl 18、ill 权威 2 vs jsonl 1（来源 spec §1 注1）；逐格自动化点名需扩权威数据结构，留独立后续项。')
   })
 })
 
