@@ -8,6 +8,7 @@
 
 - **v2 关键更正（前提推翻）**：实验决策流直通生产代码（`run-one.ts:86` 调 `handleOrchestratorDecision`），ON 格从来都是 canonicalCorrect + `idleExecuteGate`（state-machine.ts:163）+ 转移表三件捆绑——v1「第三臂=把生产闸门接进实验」不成立。且闸门已是局部补缺失机制（拦 idle 直发 execute→强制补 decompose，chat-router.ts:109-113），只覆盖「缺拆解」一类。`correctionCount` 为混合口径（canonicalCorrect/闸门/done 守卫三类重定向共写一个 corrections 数组，push 点 ：100/:111/:121/:129）。由此结论精化：现有干预族对非法类错误覆盖完整、对缺失类错误仅覆盖「缺拆解」子集。
 - **v3 安全审查并入**：双视角独立审查（声明-vs-实现 14 条逐项核实全属实；Security Engineer F1-F8 无 High/Critical，APPROVE_WITH_MINOR_CHANGES），findings 全部落进 §4/§5/§6/§8。
+- **v3.1 靶点裁定（2026-08-26 探针，tmp 脚本已清）**：77 个「曾推进且缺边」会话逐条解剖——**66/77 为同一家族：bypass 循环（self/delegate/verify）后从 idle 直接提议 done 收尾，且 66/66 taskCount=0**；提议谱：done=72（idle 发出 66）、align_decompose 仅 8、execute 仅 9；ON 臂 42 缺边会话现有干预族仅触发 3 次。关键机制：idle+done 是转移表内容错边（state-machine.ts:60），每条单边都合法，「缺失」在序列层而非单边层——canonicalCorrect 规则1 只覆盖 align 态 done、done 守卫只覆盖 exec 态 done，idle 态过早 done 是干预空白。**seqgate 靶点据此定为「idle 过早 done 闸门」：state=idle ∧ action=done ∧ taskCount=0 → redirect align_decompose（表内合法目标）**。确定性信号用 taskCount（不可让 LLM 自证，沿 §10.2 精神）；取占比最高类做最小扩展（§6 风险表既定规则），余类（缺 execute:*→exec 等 11 会话）入 P10。
 
 ## 1. 问题
 
@@ -77,7 +78,7 @@ P8 在 DeepSeek-V4-Flash-0731 上测得状态机 ON/OFF 无显著差（12/30 vs 
 
 ### 4.2 乙 harness：第三臂「ON + 序列闸门扩展」
 
-- **语义契约**：把确定性闸门家族（现状：execute 直发需任务数据背书）扩展到对齐序列完整性——具体拦截靶点由丙的缺边类型学确定。约束沿规划 §10.2 精神：**跳步合法性由代码看任务数据判定，不可让 LLM 自证**；命中 → redirect 补走缺失路径（不改 TRANSITIONS 表）+ escalate 兜底出口。
+- **语义契约（v3.1 靶点已裁定）**：seqgate = **idle 过早 done 闸门**——`state=idle ∧ action=done ∧ taskCount=0` 时 redirect `align_decompose`。判定信号是 taskCount（代码查库，非 LLM 自证）；redirect 目标 align_decompose 在 idle 态 TRANSITIONS 表内合法；escalate 兜底出口保留（taskCount 查询异常等 fail-closed 路径）。约束沿规划 §10.2 精神：**跳步合法性由代码看任务数据判定，不可让 LLM 自证**。
 - **实现纪律（含审查强制项）**：
   - 零新增 LLM call，纯确定性代码；
   - **第三开关显式命名 `EXPERIMENT_SEQGATE`，严格相等语义**（如 `process.env.EXPERIMENT_SEQGATE === 'on'`，禁止真值判断防残留值激活）（审查 F4-Medium 必办①）；
