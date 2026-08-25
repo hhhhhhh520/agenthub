@@ -28,6 +28,7 @@ export function loadBatchRows(batch: BatchId, filePath: string): { rows: NormRow
     if (!t) continue
     try {
       const r = JSON.parse(t) as Record<string, unknown>
+      if (typeof r !== 'object' || r === null || Array.isArray(r)) { badLines++; continue } // 非对象 JSON 行（数字/字符串/数组）按坏行计，不产幻影行
       rows.push({
         batch,
         runId: String(r.runId ?? ''), config: String(r.config ?? ''),
@@ -72,7 +73,8 @@ export interface ContaminationResult {
 }
 
 /** 批次污染检测（spec §4.1-5；校准样本=metrics.p8-attempt1-quota-dead 阳性 / p8-final 阴性）。
- *  签名=LLM 死亡后空转：零转移 + rounds 打满 + defect 灌满。三条件 AND 防误伤。 */
+ *  签名=LLM 死亡后空转：零转移 + rounds 打满 + defect 灌满。三条件 AND 防误伤。
+ *  实测校准点（quota-dead 阳性批）：defectRatio≈0.817（49/60），距阈值 0.8 仅一线余量。 */
 export function detectBatchContamination(rows: NormRow[], opts?: {
   avgTransMax?: number; defectRatioMin?: number; roundsFullRatioMin?: number; roundsFullFloor?: number
 }): ContaminationResult {
@@ -195,7 +197,8 @@ export async function analyzeSessionTrace(db: ReadonlyDb, ref: SessionRef): Prom
 
 // ---- 报告渲染器（P9-丙 T5：六章 markdown + P6 溯源对照；模板字符串拼接，无外部模板引擎） ----
 
-/** 标识/文件名消毒（spec §8 F5b）：白名单 [A-Za-z0-9._+-]，其余字符折叠为 '_' */
+/** 标识/文件名消毒（spec §8 F5b）：白名单 [A-Za-z0-9._+-]，其余字符折叠为 '_'。
+ *  保留给乙阶段动态文件名使用；当前输出路径常量派生故未接线。 */
 export function sanitizeIdentifier(s: string): string {
   return s.replace(/[^A-Za-z0-9._+-]/g, '_')
 }
@@ -266,20 +269,34 @@ export function renderCrossBatchReport(input: CrossBatchInput): string {
 
   // 四、缺边类型学
   out.push('\n## 缺边类型学\n')
+  const missingSigDist = (fs: MissingEdgeFinding[]): Array<[string, number]> => {
+    const t = new Map<string, number>()
+    for (const f of fs) {
+      const sig = f.missingRequired.map(e => `${e.action}:${e.from}→${e.to}`).sort().join(' ; ')
+      t.set(sig, (t.get(sig) ?? 0) + 1)
+    }
+    return [...t].sort((a, b) => b[1] - a[1])
+  }
   const missing = input.findings.filter(f => f.missingRequired.length > 0)
   if (missing.length === 0) {
     out.push('无缺边 session（回放范围内全部必需边已走通）。')
   } else {
-    const types = new Map<string, number>()
-    for (const f of missing) {
-      const sig = f.missingRequired.map(e => `${e.action}:${e.from}→${e.to}`).sort().join(' ; ')
-      types.set(sig, (types.get(sig) ?? 0) + 1)
-    }
-    for (const [sig, cnt] of [...types].sort((a, b) => b[1] - a[1])) {
+    for (const [sig, cnt] of missingSigDist(missing)) {
       out.push(`- [${cnt} session] 缺 ${sig}`)
     }
   }
+  // F2 口径 caveat：总体=全部 p5-% 会话（含未启动），大桶不能直接当跳过行为读；按是否实际推进分段
+  out.push('> 口径注：回放总体为全部 p5-% 会话（含从未推进的死会话/罐头期 avgTrans=0 格），「缺全部三边」类大桶不能直接当作跳过行为读，下方按是否实际推进分列。')
+  const segLine = (label: string, pred: (f: MissingEdgeFinding) => boolean): string => {
+    const sub = input.findings.filter(pred)
+    const subMissing = sub.filter(f => f.missingRequired.length > 0)
+    const dist = missingSigDist(subMissing).map(([sig, cnt]) => `[${cnt}] 缺 ${sig}`).join(' ; ')
+    return `- ${label}：共 ${sub.length} session，缺边 ${subMissing.length}${dist ? ` —— ${dist}` : '（无）'}`
+  }
+  out.push(segLine('曾实际推进（appliedEdges>0）', f => f.appliedEdges.length > 0))
+  out.push(segLine('从未推进（appliedEdges=0）', f => f.appliedEdges.length === 0))
   out.push(`done 边从 exec 发出的 session 数（捷径收尾信号）：${input.findings.filter(f => f.doneEdgeAppliedFromExec).length}`)
+  out.push('\n> 时区脚注：dayGroup 取 createdAt 前 10 字符即 UTC 日期；P8 实际于北京时间 2026-08-23 凌晨执行，其会话 UTC 落在 08-22 桶。')
 
   // 五、H1′ 作用面结论
   let skipTotal = 0
@@ -291,7 +308,7 @@ export function renderCrossBatchReport(input: CrossBatchInput): string {
   out.push('\n## H1′ 作用面结论\n')
   out.push(`- 错误类产出（跨批指纹合计）：skipped-spec-edge=${skipTotal}，defect=${defectTotal}`)
   out.push(`- 干预触发面（DB 回放）：gate=${srcTotals.gate} 次，done-guard=${srcTotals['done-guard']} 次`)
-  out.push(`- 批次健康：${contaminated.length > 0 ? `${contaminated.join('/')} 命中污染签名，其指纹不进入解读` : '三批均无污染签名'}；坏行合计 ${badLineTotal}`)
+  out.push(`- 批次健康：${contaminated.length > 0 ? `${contaminated.join('/')} 命中污染签名：若 detectBatchContamination 判阳性，其指纹在解读时须人工剔除` : '三批均无污染签名'}；坏行合计 ${badLineTotal}`)
   out.push(errTotal > 0
     ? `- H1′ 判读：主导错误类产出率 > 0（合计 ${errTotal}），干预效应具备可测作用面`
     : '- H1′ 判读：错误类产出率 ≈ 0，干预效应按 H1′ 不可测——作用面与错误形态错位')
@@ -299,6 +316,8 @@ export function renderCrossBatchReport(input: CrossBatchInput): string {
   // 六、P6 溯源对照
   out.push('\n## P6 溯源对照\n')
   out.push('> 权威=report.p6-20260816.md:13-24 逐格数组（内部自洽）；jsonl 含事后重跑行仅作实数对照。\n')
+  // F3 静态脚注：组级差异双源口径（spec §1 注1）；逐格自动化点名留独立后续项
+  out.push('> 组级差异脚注：corr 权威 17 vs jsonl 18、ill 权威 2 vs jsonl 1（来源 spec §1 注1）；逐格自动化点名需扩权威数据结构，留独立后续项。\n')
   out.push('| config | task | 权威 pass 数组 | 权威 pass | jsonl pass/n | jsonl corr/ill | 对照判定 |')
   out.push('|---|---|---|---|---|---|---|')
   const diffs: string[] = []
