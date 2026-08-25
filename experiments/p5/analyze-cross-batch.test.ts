@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { writeFileSync, unlinkSync, existsSync } from 'node:fs'
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadBatchRows, aggregateFingerprints, fingerprintKey, BATCH_FILES, type CellFingerprint } from './analyze-cross-batch'
 
@@ -106,6 +106,10 @@ describe('classifyCorrections（结构化定源，镜像 chat-router 顺序）',
   it('exec 态提议 align_qa → 规则2 canonical', () => {
     expect(classifyCorrections({ inputState: { state: 'exec' }, llmProposal: { action: 'align_qa' }, corrections: [{ from: 'align_qa', to: 'execute' }] })).toEqual(['canonical'])
   })
+  it('缺 corrections 键的 entry 不崩且返回空数组（schema 漂移防御）', () => {
+    expect(classifyCorrections({ inputState: { state: 'exec' }, llmProposal: { action: 'done' } })).toEqual([])
+    expect(classifyCorrections({})).toEqual([])
+  })
 })
 
 describe('findMissingEdges（通配 from 匹配 + done 边钉 exec）', () => {
@@ -156,8 +160,8 @@ describe('renderCrossBatchReport', () => {
       ({ n, pass, skip: 0, defect: 0, failKindOther: 0, failKindNA: n - pass, corrSum: 1, illSum: 2, escSum: 0, sumRounds: 3 * n, sumTrans: 4 * n })
     const md = renderCrossBatchReport({
       fingerprints: new Map([
-        [fingerprintKey('on+verify', 'C'), fp(2)],
-        [fingerprintKey('off+no-verify', 'B'), fp(4)],
+        [`P6|${fingerprintKey('on+verify', 'C')}`, fp(2)],
+        [`P6|${fingerprintKey('off+no-verify', 'B')}`, fp(4)],
       ]),
       contamination: {
         P6: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
@@ -172,5 +176,37 @@ describe('renderCrossBatchReport', () => {
     expect(md).toContain('- on+verify-A：jsonl 指纹缺格（权威 5/5）')
     expect(md).toContain('- off+no-verify-B：权威 5/5 vs jsonl 4/5')
     expect(md).not.toContain('两源逐格一致')
+  })
+})
+
+const p5dbPath = 'D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db'
+describe.skipIf(!existsSync(p5dbPath))('main() 集成冒烟（真实 p5.db 全量跑）', () => {
+  it('产出报告且标题章节齐全', async () => {
+    const { main } = await import('./analyze-cross-batch')
+    const out = await main()
+    expect(existsSync(out)).toBe(true)
+    const md = readFileSync(out, 'utf-8')
+    expect(md).toContain('# 跨批分析报告（P9-丙）')   // 渲染器实际 H1（brief 示例标题与 T5 实现不符，以实现为准）
+    for (const h of ['批次健康检查', '统一指纹表', 'corrections 成分分解', '缺边类型学', 'H1′ 作用面结论', 'P6 溯源对照']) {
+      expect(md).toContain(h)
+    }
+    expect(md).toContain('回放 session 数：')
+  })
+
+  it('三批指纹键带批次前缀，同 config|task 不互相覆盖', async () => {
+    const mod = await import('./analyze-cross-batch')
+    const rows = [
+      { batch: 'P6' as const, runId: 'a', config: 'on+verify', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', failKind: null, rounds: 3, escalateCount: 0, correctionCount: 1, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 1 },
+      { batch: 'P7' as const, runId: 'b', config: 'on+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', failKind: 'defect' as const, rounds: 6, escalateCount: 0, correctionCount: 0, illegalProposalCount: 2, totalTransitions: 0, latencyMs: 1 },
+    ]
+    // 直接验证聚合器输入输出契约：main() 按批聚合后以 `${batch}|${config}|${task}` 合入
+    const m6 = mod.aggregateFingerprints(rows.filter(r => r.batch === 'P6'))
+    const m7 = mod.aggregateFingerprints(rows.filter(r => r.batch === 'P7'))
+    const merged = new Map<string, CellFingerprint>()
+    for (const [k, v] of m6) merged.set(`P6|${k}`, v)
+    for (const [k, v] of m7) merged.set(`P7|${k}`, v)
+    expect(merged.size).toBe(2)
+    expect(merged.get('P6|on+verify|A')).toMatchObject({ n: 1, pass: 1 })
+    expect(merged.get('P7|on+verify|A')).toMatchObject({ n: 1, defect: 1 })
   })
 })

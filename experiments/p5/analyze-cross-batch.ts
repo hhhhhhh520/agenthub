@@ -119,19 +119,20 @@ export async function probeExperimentSessions(db: ReadonlyDb): Promise<SessionRe
 
 export type CorrectionSource = 'canonical' | 'gate' | 'done-guard'
 export interface TraceEntryLite {
-  inputState: { state?: string }
-  llmProposal: { action?: string }
-  corrections: Array<{ from?: string; to?: string }>
+  inputState?: { state?: string }
+  llmProposal?: { action?: string }
+  corrections?: Array<{ from?: string; to?: string }>
 }
 
 /** 结构化定源（spec §8 F7）：不用 reason 子串。逐条模拟 chat-router 决策点顺序，
  *  按 (from,to)+状态定源：execute→align_decompose 唯一来源是闸门；
- *  done→execute 在 exec 态是 done 守卫、在 align_* 态是规则1。分类后 sim=corr.to 继续 redirect 链。 */
+ *  done→execute 在 exec 态是 done 守卫、在 align_* 态是规则1。分类后 sim=corr.to 继续 redirect 链。
+ *  T6 硬化：三字段全部可选链/默认空（decisionTrace 含 LLM 输出，schema 漂移单条不崩全局）。 */
 export function classifyCorrections(entry: TraceEntryLite): CorrectionSource[] {
   const out: CorrectionSource[] = []
-  let sim = entry.llmProposal.action ?? ''
-  const st = entry.inputState.state ?? ''
-  for (const c of entry.corrections) {
+  let sim = entry.llmProposal?.action ?? ''
+  const st = entry.inputState?.state ?? ''
+  for (const c of entry.corrections ?? []) {
     const from = c.from ?? ''; const to = c.to ?? ''
     if (from !== sim) continue // 非 redirect 链上的注记条目（如 delegate 补 reason）不计
     if (from === 'execute' && to === 'align_decompose') out.push('gate')
@@ -303,7 +304,7 @@ export function renderCrossBatchReport(input: CrossBatchInput): string {
   const diffs: string[] = []
   for (const a of P6_AUTHORITATIVE) {
     const authSum = a.passes.reduce((s, x) => s + x, 0)
-    const fp = input.fingerprints.get(fingerprintKey(a.config, a.task))
+    const fp = input.fingerprints.get(`P6|${fingerprintKey(a.config, a.task)}`) // T6：指纹键带批次前缀，对照节同步按 P6 前缀查
     if (!fp) {
       diffs.push(`${a.config}-${a.task}：jsonl 指纹缺格（权威 ${authSum}/5）`)
       out.push(`| ${a.config} | ${a.task} | ${a.passes.join('/')} | ${authSum}/5 | n/a | n/a | jsonl 缺格 |`)
@@ -321,4 +322,43 @@ export function renderCrossBatchReport(input: CrossBatchInput): string {
   out.push('\n> 注：罐头引导期，不作 provider 对照。')
 
   return out.join('\n')
+}
+
+// ---- P9-丙 T6：main() 接线（串接五段 → 落盘 results/report-cross-batch.md；路径常量派生自 CONFIG） ----
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { CONFIG } from './config'
+
+export async function main(): Promise<string> {
+  // ① 加载 + 按批聚合（rows.filter 按批过滤后分别聚合，前缀键合入——三批同 config|task 不静默覆盖）
+  const fingerprints = new Map<string, CellFingerprint>()
+  const contamination = {} as Record<BatchId, ContaminationResult>
+  const badLineCounts = {} as Record<BatchId, number>
+  for (const b of BATCH_ORDER) {
+    const { rows, badLines } = loadBatchRows(b, join(CONFIG.resultsDir, BATCH_FILES[b]))
+    badLineCounts[b] = badLines
+    contamination[b] = detectBatchContamination(rows)
+    for (const [k, v] of aggregateFingerprints(rows.filter(r => r.batch === b))) {
+      fingerprints.set(`${b}|${k}`, v)
+    }
+  }
+
+  // ② DB 回放（只读包装；会话 for...of await 串行防 SQLite 锁）
+  const db = createReadonlyDb(CONFIG.dbPath)
+  const sessions = await probeExperimentSessions(db)
+  const findings: MissingEdgeFinding[] = []
+  for (const s of sessions) {
+    const f = await analyzeSessionTrace(db, s)
+    if (f) findings.push(f)
+  }
+  const dg = new Map<string, number>()
+  for (const s of sessions) dg.set(s.dayGroup, (dg.get(s.dayGroup) ?? 0) + 1)
+  const sessionDayGroups = [...dg].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([day, count]) => ({ day, count }))
+
+  // ③ 渲染 + 落盘（返回输出绝对路径）
+  const md = renderCrossBatchReport({ fingerprints, contamination, findings, badLineCounts, sessionDayGroups })
+  const outPath = join(CONFIG.resultsDir, 'report-cross-batch.md')
+  writeFileSync(outPath, md, 'utf-8')
+  return outPath
 }
