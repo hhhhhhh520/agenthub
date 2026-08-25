@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { writeFileSync, unlinkSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { loadBatchRows, aggregateFingerprints, fingerprintKey, BATCH_FILES } from './analyze-cross-batch'
+import { loadBatchRows, aggregateFingerprints, fingerprintKey, BATCH_FILES, type CellFingerprint } from './analyze-cross-batch'
 
 describe('loadBatchRows', () => {
   it('解析标准行（无 failKind 键 → null，与 P6 整批同型）', () => {
@@ -123,5 +123,54 @@ describe('findMissingEdges（通配 from 匹配 + done 边钉 exec）', () => {
       { action: 'execute', from: '*', to: 'exec' },
       { action: 'done', from: 'exec', to: 'done' },
     ])
+  })
+})
+
+import { renderCrossBatchReport, sanitizeIdentifier } from './analyze-cross-batch'
+
+describe('sanitizeIdentifier', () => {
+  it('消毒路径穿越与特殊字符', () => {
+    expect(sanitizeIdentifier('../../etc')).not.toContain('/')
+    expect(sanitizeIdentifier('on+verify|A')).toBe('on+verify_A')
+  })
+})
+
+describe('renderCrossBatchReport', () => {
+  it('包含六个必备章节与固定脚注', () => {
+    const md = renderCrossBatchReport({
+      fingerprints: new Map(),
+      contamination: {
+        P6: { contaminated: false, avgTrans: 2.7, defectRatio: 0, roundsFullRatio: 0 },
+        P7: { contaminated: false, avgTrans: 2.3, defectRatio: 0.15, roundsFullRatio: 0 },
+        P8: { contaminated: false, avgTrans: 3.7, defectRatio: 0.25, roundsFullRatio: 0.08 },
+      },
+      findings: [], badLineCounts: { P6: 0, P7: 0, P8: 0 }, sessionDayGroups: [],
+    })
+    for (const h of ['批次健康检查', '统一指纹表', 'corrections 成分分解', '缺边类型学', 'H1′ 作用面结论', 'P6 溯源对照']) expect(md).toContain(h)
+    expect(md).toContain('罐头引导期，不作 provider 对照')
+    expect(md).toContain('500')
+  })
+
+  it('P6 对照节：硬编码权威数组与 jsonl 实数并列并点名差异', () => {
+    const fp = (pass: number, n = 5): CellFingerprint =>
+      ({ n, pass, skip: 0, defect: 0, failKindOther: 0, failKindNA: n - pass, corrSum: 1, illSum: 2, escSum: 0, sumRounds: 3 * n, sumTrans: 4 * n })
+    const md = renderCrossBatchReport({
+      fingerprints: new Map([
+        [fingerprintKey('on+verify', 'C'), fp(2)],
+        [fingerprintKey('off+no-verify', 'B'), fp(4)],
+      ]),
+      contamination: {
+        P6: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P7: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+        P8: { contaminated: false, avgTrans: 1, defectRatio: 0, roundsFullRatio: 0 },
+      },
+      findings: [], badLineCounts: { P6: 0, P7: 0, P8: 0 }, sessionDayGroups: [],
+    })
+    expect(md).toContain('| on+verify | C | 1/0/1/0/0 | 2/5 | 2/5 |')   // 一致格
+    expect(md).toContain('| off+no-verify | B | 1/1/1/1/1 | 5/5 | 4/5 |') // 不一致格
+    expect(md).toContain('jsonl 缺格')                                    // 其余 10 格点名
+    expect(md).toContain('- on+verify-A：jsonl 指纹缺格（权威 5/5）')
+    expect(md).toContain('- off+no-verify-B：权威 5/5 vs jsonl 4/5')
+    expect(md).not.toContain('两源逐格一致')
   })
 })
