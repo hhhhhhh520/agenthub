@@ -223,6 +223,7 @@
 | 任务 | 状态 |
 |------|------|
 | P8 收尾推送确认 | 8 个本地 commit 未推（P7 三 feat + 存档基线 e88c859 + 0ed1f2c + d6e91f1 + ad54b61 + e577a1c）；两把实验 key 待轮换 |
+| P9-丙 跨批分析（2026-08-24 完成） | `analyze-cross-batch.ts`+19 测试（SDD 六 task 全过评审+终审）；产出 `results/report-cross-batch.md`：三批统一指纹表、缺边类型学 4 签名、corrections 成分分解（**gate 占 corr≈98.6%**——状态机捆绑件的实际工作成分是确定性补缺失而非纠非法，P9 作用面错位假说的直接证据）；spec `docs/superpowers/specs/2026-08-23-p9-surface-matrix-design.md`，ledger `.superpowers/sdd/2026-08-24-p9-cross-batch-analysis/`；乙计划待缺边分布+弱模型 pilot 后启动 |
 
 ### 📋 待办（2026-06-25 更新）
 
