@@ -191,3 +191,134 @@ export async function analyzeSessionTrace(db: ReadonlyDb, ref: SessionRef): Prom
     correctionSources: sources,
   }
 }
+
+// ---- 报告渲染器（P9-丙 T5：六章 markdown + P6 溯源对照；模板字符串拼接，无外部模板引擎） ----
+
+/** 标识/文件名消毒（spec §8 F5b）：白名单 [A-Za-z0-9._+-]，其余字符折叠为 '_' */
+export function sanitizeIdentifier(s: string): string {
+  return s.replace(/[^A-Za-z0-9._+-]/g, '_')
+}
+
+export interface CrossBatchInput {
+  fingerprints: Map<string, CellFingerprint>
+  contamination: Record<BatchId, ContaminationResult>
+  findings: MissingEdgeFinding[]
+  badLineCounts: Record<BatchId, number>
+  sessionDayGroups: Array<{ day: string; count: number }>
+}
+
+/** report.p6 权威逐格 pass 数组——硬编码抄录自 results/report.p6-20260816.md:13-24。
+ *  spec §4.1-6：以 report.p6 为权威（内部自洽，pass 合计 42）；jsonl 含事后重跑行（43）仅作实数对照。 */
+const P6_AUTHORITATIVE: ReadonlyArray<{ config: string; task: string; passes: readonly number[] }> = [
+  { config: 'on+verify', task: 'A', passes: [1, 1, 1, 1, 1] },
+  { config: 'on+verify', task: 'B', passes: [1, 1, 1, 1, 1] },
+  { config: 'on+verify', task: 'C', passes: [1, 0, 1, 0, 0] },
+  { config: 'on+no-verify', task: 'A', passes: [1, 1, 1, 1, 1] },
+  { config: 'on+no-verify', task: 'B', passes: [1, 1, 1, 1, 1] },
+  { config: 'on+no-verify', task: 'C', passes: [0, 0, 0, 0, 0] },
+  { config: 'off+verify', task: 'A', passes: [1, 1, 1, 1, 1] },
+  { config: 'off+verify', task: 'B', passes: [1, 1, 1, 1, 1] },
+  { config: 'off+verify', task: 'C', passes: [0, 0, 0, 0, 0] },
+  { config: 'off+no-verify', task: 'A', passes: [1, 1, 1, 1, 1] },
+  { config: 'off+no-verify', task: 'B', passes: [1, 1, 1, 1, 1] },
+  { config: 'off+no-verify', task: 'C', passes: [0, 0, 0, 0, 0] },
+]
+
+const BATCH_ORDER: readonly BatchId[] = ['P6', 'P7', 'P8']
+const CORRECTION_SOURCES: readonly CorrectionSource[] = ['canonical', 'gate', 'done-guard']
+const pct1 = (x: number): string => `${(x * 100).toFixed(1)}%`
+const div2 = (sum: number, n: number): string => (n > 0 ? (sum / n).toFixed(2) : 'n/a')
+
+export function renderCrossBatchReport(input: CrossBatchInput): string {
+  const out: string[] = []
+  out.push('# 跨批分析报告（P9-丙）\n')
+
+  // 一、批次健康检查
+  out.push('## 批次健康检查\n')
+  out.push('| 批次 | 坏行 | avgTrans | defect率 | rounds打满率 | 污染判定 |')
+  out.push('|---|---|---|---|---|---|')
+  for (const b of BATCH_ORDER) {
+    const c = input.contamination[b]
+    out.push(`| ${b} | ${input.badLineCounts[b] ?? 0} | ${c ? c.avgTrans.toFixed(2) : 'n/a'} | ${c ? pct1(c.defectRatio) : 'n/a'} | ${c ? pct1(c.roundsFullRatio) : 'n/a'} | ${c?.contaminated ? '**污染**' : '正常'} |`)
+  }
+  out.push('\n### 会话日分组\n')
+  if (input.sessionDayGroups.length === 0) out.push('（无会话留存）')
+  else for (const g of input.sessionDayGroups) out.push(`- ${g.day}：${g.count} 会话`)
+
+  // 二、统一指纹表
+  out.push('\n## 统一指纹表\n')
+  out.push('> 口径 OFF=ill ON=corr：OFF 配置读 ill 列（非法尝试数），ON 配置读 corr 列（纠正次数）；P6 行 failKind 无记录记 n/a。\n')
+  out.push('| 格 | n | pass | skip | defect | other | n/a | corr | ill | esc | avgRounds | avgTrans |')
+  out.push('|---|---|---|---|---|---|---|---|---|---|---|---|')
+  for (const [k, v] of [...input.fingerprints].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+    out.push(`| ${k.replace(/\|/g, '/')} | ${v.n} | ${v.pass} | ${v.skip} | ${v.defect} | ${v.failKindOther} | ${v.failKindNA} | ${v.corrSum} | ${v.illSum} | ${v.escSum} | ${div2(v.sumRounds, v.n)} | ${div2(v.sumTrans, v.n)} |`)
+  }
+  if (input.fingerprints.size === 0) out.push('（指纹表为空）')
+
+  // 三、corrections 成分分解
+  const srcTotals: Record<CorrectionSource, number> = { canonical: 0, gate: 0, 'done-guard': 0 }
+  for (const f of input.findings) for (const s of CORRECTION_SOURCES) srcTotals[s] += f.correctionSources[s] ?? 0
+  out.push('\n## corrections 成分分解\n')
+  out.push(`回放 session 数：${input.findings.length}`)
+  for (const s of CORRECTION_SOURCES) out.push(`- ${s}：${srcTotals[s]} 次`)
+  out.push('\n> 注：decisionTrace 每 session 封顶 500 条（decision-trace.ts:57），成分计数为截断后下界。')
+
+  // 四、缺边类型学
+  out.push('\n## 缺边类型学\n')
+  const missing = input.findings.filter(f => f.missingRequired.length > 0)
+  if (missing.length === 0) {
+    out.push('无缺边 session（回放范围内全部必需边已走通）。')
+  } else {
+    const types = new Map<string, number>()
+    for (const f of missing) {
+      const sig = f.missingRequired.map(e => `${e.action}:${e.from}→${e.to}`).sort().join(' ; ')
+      types.set(sig, (types.get(sig) ?? 0) + 1)
+    }
+    for (const [sig, cnt] of [...types].sort((a, b) => b[1] - a[1])) {
+      out.push(`- [${cnt} session] 缺 ${sig}`)
+    }
+  }
+  out.push(`done 边从 exec 发出的 session 数（捷径收尾信号）：${input.findings.filter(f => f.doneEdgeAppliedFromExec).length}`)
+
+  // 五、H1′ 作用面结论
+  let skipTotal = 0
+  let defectTotal = 0
+  for (const [, v] of input.fingerprints) { skipTotal += v.skip; defectTotal += v.defect }
+  const contaminated = BATCH_ORDER.filter(b => input.contamination[b]?.contaminated === true)
+  const badLineTotal = BATCH_ORDER.reduce((s, b) => s + (input.badLineCounts[b] ?? 0), 0)
+  const errTotal = skipTotal + defectTotal
+  out.push('\n## H1′ 作用面结论\n')
+  out.push(`- 错误类产出（跨批指纹合计）：skipped-spec-edge=${skipTotal}，defect=${defectTotal}`)
+  out.push(`- 干预触发面（DB 回放）：gate=${srcTotals.gate} 次，done-guard=${srcTotals['done-guard']} 次`)
+  out.push(`- 批次健康：${contaminated.length > 0 ? `${contaminated.join('/')} 命中污染签名，其指纹不进入解读` : '三批均无污染签名'}；坏行合计 ${badLineTotal}`)
+  out.push(errTotal > 0
+    ? `- H1′ 判读：主导错误类产出率 > 0（合计 ${errTotal}），干预效应具备可测作用面`
+    : '- H1′ 判读：错误类产出率 ≈ 0，干预效应按 H1′ 不可测——作用面与错误形态错位')
+
+  // 六、P6 溯源对照
+  out.push('\n## P6 溯源对照\n')
+  out.push('> 权威=report.p6-20260816.md:13-24 逐格数组（内部自洽）；jsonl 含事后重跑行仅作实数对照。\n')
+  out.push('| config | task | 权威 pass 数组 | 权威 pass | jsonl pass/n | jsonl corr/ill | 对照判定 |')
+  out.push('|---|---|---|---|---|---|---|')
+  const diffs: string[] = []
+  for (const a of P6_AUTHORITATIVE) {
+    const authSum = a.passes.reduce((s, x) => s + x, 0)
+    const fp = input.fingerprints.get(fingerprintKey(a.config, a.task))
+    if (!fp) {
+      diffs.push(`${a.config}-${a.task}：jsonl 指纹缺格（权威 ${authSum}/5）`)
+      out.push(`| ${a.config} | ${a.task} | ${a.passes.join('/')} | ${authSum}/5 | n/a | n/a | jsonl 缺格 |`)
+    } else if (fp.pass !== authSum) {
+      diffs.push(`${a.config}-${a.task}：权威 ${authSum}/5 vs jsonl ${fp.pass}/${fp.n}`)
+      out.push(`| ${a.config} | ${a.task} | ${a.passes.join('/')} | ${authSum}/5 | ${fp.pass}/${fp.n} | ${fp.corrSum}/${fp.illSum} | **不一致** |`)
+    } else {
+      out.push(`| ${a.config} | ${a.task} | ${a.passes.join('/')} | ${authSum}/5 | ${fp.pass}/${fp.n} | ${fp.corrSum}/${fp.illSum} | 一致 |`)
+    }
+  }
+  out.push('')
+  out.push(diffs.length > 0
+    ? `差异点名（${diffs.length} 处）：\n${diffs.map(d => `- ${d}`).join('\n')}`
+    : '两源逐格一致，无差异条目。')
+  out.push('\n> 注：罐头引导期，不作 provider 对照。')
+
+  return out.join('\n')
+}
