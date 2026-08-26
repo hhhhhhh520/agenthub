@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // --- Mocks ---
 // P4 T1: transitionPhase 补记代码驱动转移 -> appendDecisionTrace 用 session.updateMany,加 mock
@@ -22,6 +22,8 @@ import {
   idleExecuteGate,
   applyTransitionWithOverride,
   isExperimentOff,
+  isSeqgateOn,
+  idlePrematureDoneGate,
   STATE_PHASE,
   type State,
 } from '@/lib/orchestrator/state-machine'
@@ -364,5 +366,42 @@ describe('P5: applyTransitionWithOverride（状态机 off 开关）', () => {
       const entry = JSON.parse(traceCall![0].data.decisionTrace)
       expect(entry[0].actualTransition.applied).toBe(false)
     } finally { if (prev === undefined) delete process.env.EXPERIMENT_STATE_MACHINE; else process.env.EXPERIMENT_STATE_MACHINE = prev }
+  })
+})
+
+describe('P9-乙 idlePrematureDoneGate', () => {
+  afterEach(() => { delete process.env.EXPERIMENT_SEQGATE })
+
+  it('idle+done+零任务 → 拦截', () => {
+    expect(idlePrematureDoneGate('idle', 'done', 0)).toBe(true)
+  })
+  it('idle+done+有任务 → 放行（合法性交还转移表）', () => {
+    expect(idlePrematureDoneGate('idle', 'done', 2)).toBe(false)
+  })
+  it('非 idle 态的 done → 放行', () => {
+    expect(idlePrematureDoneGate('exec', 'done', 0)).toBe(false)
+    expect(idlePrematureDoneGate('align_pm', 'done', 0)).toBe(false)
+  })
+  it('idle 态非 done action → 放行', () => {
+    expect(idlePrematureDoneGate('idle', 'execute', 0)).toBe(false)
+    expect(idlePrematureDoneGate('idle', 'self', 0)).toBe(false)
+  })
+})
+
+describe('P9-乙 EXPERIMENT_SEQGATE 严格相等语义（F4）', () => {
+  afterEach(() => { delete process.env.EXPERIMENT_SEQGATE })
+  it("仅 'on' 激活", () => {
+    process.env.EXPERIMENT_SEQGATE = 'on'
+    expect(isSeqgateOn()).toBe(true)
+  })
+  it("真值字符串 '1'/'true'/'ON'/空串 均不激活（防残留值 fail-unsafe）", () => {
+    for (const v of ['1', 'true', 'ON', '']) {
+      process.env.EXPERIMENT_SEQGATE = v
+      expect(isSeqgateOn()).toBe(false)
+    }
+  })
+  it('未设 → 不激活（生产行为不变）', () => {
+    delete process.env.EXPERIMENT_SEQGATE
+    expect(isSeqgateOn()).toBe(false)
   })
 })
