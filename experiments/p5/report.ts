@@ -37,7 +37,8 @@ export function generateReport(metrics: RunMetrics[]): string {
 
   // —— 主效应配对 McNemar（同 seed 配对）——
   lines.push('', '## 配对 McNemar（主效应，同 seed）')
-  // 状态机主效应（verify 固定）：同 seed 下 ON+verify vs OFF+verify、ON+no-verify vs OFF+no-verify 各一组
+  // 状态机主效应（verify 固定）：同 seed 下 ON+verify vs OFF+verify、ON+no-verify vs OFF+no-verify 各一组；
+  // P9-乙 T3 加第三组：on-seqgate+verify vs off+verify（OFF vs ON-seqgate 配对，前缀约定天然落 ON 口径）
   lines.push('### 状态机主效应（verify 固定，OFF vs ON）')
   for (const verify of ['verify', 'no-verify'] as const) {
     for (const taskId of CONFIG.taskIds) {
@@ -45,6 +46,32 @@ export function generateReport(metrics: RunMetrics[]): string {
       const off = bySeed(metrics, `off+${verify}`, taskId)
       const m = pairedMcNemar(off, on) // b=OFF 过 ON 败；c=OFF 败 ON 过
       lines.push(`- ${taskId} (${verify}): ON+${verify} ${on.filter(Boolean).length}/${on.length} vs OFF+${verify} ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+    }
+  }
+  // P9-乙 T3: seqgate 臂配对（OFF vs ON-seqgate，verify 固定）
+  for (const taskId of CONFIG.taskIds) {
+    const onSeqgate = bySeed(metrics, 'on-seqgate+verify', taskId)
+    if (onSeqgate.length === 0) continue
+    const off = bySeed(metrics, 'off+verify', taskId)
+    const m = pairedMcNemar(off, onSeqgate) // b=OFF 过 ON-seqgate 败；c=OFF 败 ON-seqgate 过
+    lines.push(`- ${taskId} (seqgate): ON-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} vs OFF+verify ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+  }
+  // —— P9-乙 T3: seqgate 臂增量小节（ON vs ON-seqgate 同臂配对 + seqgate 触发合计）——
+  lines.push('', '## seqgate 臂增量（ON vs ON-seqgate）')
+  for (const taskId of CONFIG.taskIds) {
+    const onSeqgate = bySeed(metrics, 'on-seqgate+verify', taskId)
+    if (onSeqgate.length === 0) continue
+    const on = bySeed(metrics, 'on+verify', taskId)
+    const m = pairedMcNemar(on, onSeqgate) // b=ON 过 ON-seqgate 败；c=ON 败 ON-seqgate 过
+    lines.push(`- ${taskId}: on+verify ${on.filter(Boolean).length}/${on.length} vs on-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+  }
+  {
+    // 合计行：optional 字段 ?? 0 合并旧行（P6/P7 批 JSONL 无该字段，防 NaN）
+    const sgCell = metrics.filter(m => m.config === 'on-seqgate+verify')
+    const gateSum = sgCell.reduce((n, m) => n + (m.gateInterventionCount ?? 0), 0)
+    if (sgCell.length > 0) {
+      lines.push(`- seqgate 触发合计: ${gateSum}（${sgCell.length} runs，avg ${(gateSum / sgCell.length).toFixed(2)}）`)
+      lines.push('> 归桶口径: 丙批 classifyCorrections 将出现第四类 seqgate（idle, done→align_decompose）；乙批数据跨批分析时按同签名归入该类，不计 canonical/gate(execute)/done-guard')
     }
   }
   // verify 主效应（状态机固定）：同 seed 下 on+verify vs on+no-verify、off+verify vs off+no-verify 各一组
@@ -115,6 +142,7 @@ export function generateReport(metrics: RunMetrics[]): string {
       : cell.reduce((n, m) => n + m.correctionCount, 0)
     lines.push(`- ${config}: ${sum}（${cell.length} runs，avg ${(sum / Math.max(cell.length, 1)).toFixed(2)}）`)
   }
+
   lines.push('', '> 结论：方向性差异当传闻看（Spec §11），管道有效性 + seed noise 是 pilot 成功标准')
   return lines.join('\n')
 }

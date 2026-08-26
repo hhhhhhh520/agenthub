@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
-import { runOne, saveRunEnv, restoreRunEnv } from './run-one'
+import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
@@ -349,11 +349,12 @@ describe('P5 report', () => {
 // —— P6 T8: 2×2 配置矩阵（configs 扩 4 + envForConfig 透传 + report 主效应/交互）——
 describe('P6 T8: 2×2 配置矩阵', () => {
   it('CONFIG.configs 扩为 4 配置 + envForConfig 映射正确', () => {
-    expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify'])
-    expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined })
-    expect(CONFIG.envForConfig('on+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: 'off' })
-    expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined })
-    expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off' })
+    // P9-乙 T3：扩为 5 配置（三臂矩阵 + on-seqgate+verify）；前缀约定保 startsWith('on')/('off') 口径
+    expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'])
+    expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
+    expect(CONFIG.envForConfig('on+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined })
+    expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
+    expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined })
   })
 
   it('generateReport: 4 配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
@@ -364,6 +365,7 @@ describe('P6 T8: 2×2 配置矩阵', () => {
       'off+no-verify': [true, true, true, true, true],
       'off+verify': [false, false, false, false, false],
       'on+no-verify': [true, true, true, true, false],
+      'on-seqgate+verify': [true, true, false, false, false], // P9-乙 T3 第 5 格（逐格循环天然吃）
     }
     const row = (config: (typeof CONFIG.configs)[number], taskId: 'A' | 'B' | 'C', seed: number, pass: boolean): RunMetrics => ({
       runId: `${config}-${taskId}-s${seed}`, config, taskId, seed, pass,
@@ -396,6 +398,14 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     // 逐格 pass 数组按 seed 升序（乱序输入 → 序列仍正确）
     expect(report).toContain('| on+no-verify | A | 1/1/1/1/0 |')
     expect(report).toContain('| off+verify | A | 0/0/0/0/0 |')
+    // P9-乙 T3: 第 5 格逐格行 + 状态机主效应第三组（OFF vs ON-seqgate 配对：sg 2/5 vs off 0/5 → b=0 c=2）
+    expect(report).toContain('| on-seqgate+verify | A | 1/1/0/0/0 |')
+    expect(report).toContain('- A (seqgate): ON-seqgate+verify 2/5 vs OFF+verify 0/5 | b=0 c=2')
+    // seqgate 臂增量小节（ON vs ON-seqgate 同臂配对：on 5/5 vs sg 2/5 → b=3 c=0）
+    expect(report).toContain('## seqgate 臂增量（ON vs ON-seqgate）')
+    expect(report).toContain('- A: on+verify 5/5 vs on-seqgate+verify 2/5 | b=3 c=0')
+    // 合计行：fixture 未设 gateInterventionCount → ?? 0 合并（旧行兼容），15 runs = 3 任务 × 5 seed
+    expect(report).toContain('- seqgate 触发合计: 0（15 runs，avg 0.00）')
   })
 
   it('非法尝试率段 4 配置通用：OFF 前缀用 illegalProposalCount、ON 前缀用 correctionCount', () => {
@@ -409,6 +419,18 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     expect(report).toContain('- off+no-verify: 6（1 runs，avg 6.00）') // illegalProposalCount
     expect(report).toContain('- on+verify: 3（1 runs，avg 3.00）')     // correctionCount（忽略 illegalProposalCount=99）
   })
+  it('P9-乙 T3: seqgate 触发合计行（gateInterventionCount 求值 + 旧行 ?? 0 合并）', () => {
+    const metrics: RunMetrics[] = [
+      // on-seqgate 新行带 gateInterventionCount：2 + 0（「开了没触发」也要计入 runs 分母）
+      { runId: 'sg1', config: 'on-seqgate+verify', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 4, escalateCount: 0, correctionCount: 1, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '', gateInterventionCount: 2 },
+      { runId: 'sg2', config: 'on-seqgate+verify', taskId: 'A', seed: 1, pass: false, failureMode: 'no-pass', rounds: 6, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 11, tracePath: '', gateInterventionCount: 0 },
+      // on 臂同 trace 场景字段缺省 → 不入 seqgate 合计（臂间区分「没开」）
+      { runId: 'on1', config: 'on+verify', taskId: 'A', seed: 0, pass: true, failureMode: 'pass', rounds: 4, escalateCount: 0, correctionCount: 5, illegalProposalCount: 0, totalTransitions: 3, latencyMs: 10, tracePath: '' },
+    ]
+    const report = generateReport(metrics)
+    expect(report).toContain('- seqgate 触发合计: 2（2 runs，avg 1.00）')
+  })
+
   it('P7-A: report 含 failKind 诊断段（no-pass 分解，value vs defect 两列）', () => {
     const metrics: RunMetrics[] = [
       { runId: 'v1', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '', failKind: 'skipped-spec-edge' },
@@ -458,6 +480,95 @@ describe('P6 T9: runOne env 恢复（finally 还原 EXPERIMENT_STATE_MACHINE/VER
     const prev = saveRunEnv()
     expect(prev.EXPERIMENT_STATE_MACHINE).toBe('off')
     expect(prev.EXPERIMENT_VERIFY).toBeUndefined()
+  })
+})
+
+// —— P9-乙 T3: 三臂配置矩阵（configs 扩 on-seqgate+verify + 三变量 env 快照 + applyRunEnv + gateInterventionCount）——
+describe('P9-乙 T3: 三臂配置矩阵', () => {
+  afterEach(() => {
+    delete process.env.EXPERIMENT_STATE_MACHINE
+    delete process.env.EXPERIMENT_VERIFY
+    delete process.env.EXPERIMENT_SEQGATE
+  })
+
+  it('CONFIG.configs 含 on-seqgate+verify 且 envForConfig 三开关映射正确', () => {
+    expect(CONFIG.configs).toContain('on-seqgate+verify')
+    const env = CONFIG.envForConfig('on-seqgate+verify')
+    expect(env.EXPERIMENT_SEQGATE).toBe('on')
+    expect(env.EXPERIMENT_STATE_MACHINE).toBeUndefined()   // ON 臂语义
+    expect(env.EXPERIMENT_VERIFY).toBeUndefined()
+    // 前缀约定钉死：既有消费点对新配置名落正确口径
+    expect('on-seqgate+verify'.startsWith('on')).toBe(true)   // ON 口径（corr 列）
+    expect('on-seqgate+verify'.startsWith('off')).toBe(false) // 不落 OFF 口径
+  })
+
+  it('RunEnvSnapshot 三变量 save/restore 往返（T9 同款，F4 必办②）', () => {
+    process.env.EXPERIMENT_STATE_MACHINE = 'keep-sm'
+    process.env.EXPERIMENT_VERIFY = 'keep-v'
+    process.env.EXPERIMENT_SEQGATE = 'keep-sg'
+    const prev = saveRunEnv()
+    expect(prev.EXPERIMENT_SEQGATE).toBe('keep-sg')
+    process.env.EXPERIMENT_SEQGATE = 'changed'
+    restoreRunEnv(prev)
+    expect(process.env.EXPERIMENT_SEQGATE).toBe('keep-sg')
+    // undefined→delete 语义
+    delete process.env.EXPERIMENT_SEQGATE
+    const prev2 = saveRunEnv()
+    restoreRunEnv(prev2)
+    expect(process.env.EXPERIMENT_SEQGATE).toBeUndefined()
+  })
+
+  it('applyRunEnv 三键透传（审查 D：封堵 runOne 忘写透传行的第四种静默退化）', () => {
+    applyRunEnv({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: 'on' })
+    expect(process.env.EXPERIMENT_SEQGATE).toBe('on')
+    expect(process.env.EXPERIMENT_STATE_MACHINE).toBeUndefined()
+    applyRunEnv({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
+    expect(process.env.EXPERIMENT_STATE_MACHINE).toBe('off')
+    expect(process.env.EXPERIMENT_SEQGATE).toBeUndefined()   // delete 语义
+  })
+
+  it('configs 数组遍历式断言（审查 D 升级：防拼写漂移脱钩）', () => {
+    const seqgateConfigs = CONFIG.configs.filter(c => c.startsWith('on-seqgate'))
+    expect(seqgateConfigs).toHaveLength(1)
+    expect(CONFIG.envForConfig(seqgateConfigs[0]).EXPERIMENT_SEQGATE).toBe('on')
+  })
+
+  it('collectMetrics 采 gateInterventionCount（结构化信号，非 reason 子串）', async () => {
+    // 构造 trace entries：idle 态决策点 corrections=[{from:'done',to:'align_decompose'}]
+    // （chat-router seqgate 拦截的结构化签名：(idle, done→align_decompose)，reason 子串不参与判定）
+    const seqgateEntry = {
+      decisionPoint: 'handleOrchestratorDecision',
+      inputState: { phase: 'idle', phaseStep: '', state: 'idle' },
+      llmProposal: { action: 'done', target: null, targets: null, reason: 'LLM 提议直接完成' },
+      corrections: [{ from: 'done', to: 'align_decompose', reason: '序列闸门：会话尚无任务，需先对齐拆解（当前 0 任务）' }],
+      validation: { passed: true, validator: 'applyTransition' },
+      actualTransition: { from: 'idle', to: 'align_pm', action: 'align_decompose', applied: true, escalated: false },
+    }
+    const trace = JSON.stringify([seqgateEntry])
+    vi.resetModules()
+    vi.doMock('@/lib/db', () => ({
+      prisma: { session: { findUnique: async () => ({ id: 's-fix', phase: 'align_pm', decisionTrace: trace }) } },
+    }))
+    try {
+      const { collectMetrics } = await import('./metrics')
+      const sg = await collectMetrics('r-sg', 's-fix', 'on-seqgate+verify', 'A', 0, 3, 0, 10)
+      expect(sg.gateInterventionCount).toBe(1)
+      // 同 trace 跑 on 臂 → 字段 undefined（臂间区分「没开」vs「开了没触发」）
+      const on = await collectMetrics('r-on', 's-fix', 'on+verify', 'A', 0, 3, 0, 10)
+      expect(on.gateInterventionCount).toBeUndefined()
+      // off 臂同样 undefined
+      const off = await collectMetrics('r-off', 's-fix', 'off+verify', 'A', 0, 3, 0, 10)
+      expect(off.gateInterventionCount).toBeUndefined()
+    } finally {
+      vi.doUnmock('@/lib/db')
+      vi.resetModules()
+    }
+  })
+
+  it('防呆断言（F4 核心）：SEQGATE 未设时 on-seqgate 臂不得静默等同 on 臂', () => {
+    // 若此断言失败 = 配置名拼错/漏改 envForConfig → seqgate 臂静默退化（fail-unsafe 场景）
+    expect(CONFIG.envForConfig('on-seqgate+verify').EXPERIMENT_SEQGATE).toBe('on')
+    expect(CONFIG.envForConfig('on+verify').EXPERIMENT_SEQGATE).toBeUndefined()
   })
 })
 
