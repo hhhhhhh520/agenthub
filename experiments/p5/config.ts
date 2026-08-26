@@ -1,15 +1,20 @@
 /** P5 实验配置（Spec §2/§4/§6 固化参数，报告需回显 model+config 供复现）
  *  model/baseUrl 支持 env 覆盖：GLM_MODEL / GLM_BASE_URL（用户可换 provider/模型，报告按实际值回显） */
-/** P6 T8: 配置名 → 实验 env 透传（configs 扩 2×2 矩阵：OFF 前缀关状态机，no-verify 前缀关 verify，否则未设=默认 on） */
+/** P6 T8: 配置名 → 实验 env 透传（configs 扩 2×2 矩阵：OFF 前缀关状态机，no-verify 前缀关 verify，否则未设=默认 on）
+ *  P9-乙 T3: 三臂扩展——EXPERIMENT_SEQGATE 仅 on-seqgate 前缀产出 'on'（F4 严格值透传：'1'/'true' 一律不激活，
+ *  生产 isSeqgateOn() 只认 ==='on'）；保 startsWith 前缀约定（metrics/report 的 startsWith('off')/('on') 对
+ *  'on-seqgate+verify' 天然落 ON 口径） */
 export const envForConfig = (config: string) => ({
   EXPERIMENT_STATE_MACHINE: config.startsWith('off') ? 'off' : undefined,
   EXPERIMENT_VERIFY: config.includes('no-verify') ? 'off' : undefined,
+  EXPERIMENT_SEQGATE: config.startsWith('on-seqgate') ? 'on' : undefined,
 })
 
 export const CONFIG = {
   model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
-  configs: ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify'] as const,
+  // P9-乙 T3: 三臂矩阵——on-seqgate+verify = ON 臂 + seqgate 守卫（idle 过早 done 拦截）；前缀约定保 ON 口径
+  configs: ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'] as const,
   envForConfig, // P6 T8：CONFIG.envForConfig 与独立导出同源（run-one 透传消费，同 seed 配对两两正交）
   runsPerCell: 5,
   escalateLimit: 3,

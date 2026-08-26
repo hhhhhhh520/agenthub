@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { CONFIG } from './config'
+import { CONFIG, envForConfig } from './config'
 import { TASKS } from './tasks'
 import { simulateUserReply } from './user-simulator'
 import { collectMetrics, appendMetrics, type RunMetrics } from './metrics'
@@ -9,22 +9,40 @@ import type { AgentConfig } from '../../src/lib/adapter/types'
 
 export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: 'A'|'B'|'C'; seed: number }
 
-export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined }
+/** P9-乙 T3: 三变量（F4 必办②——seqgate 臂需 EXPERIMENT_SEQGATE 隔离） */
+export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined; EXPERIMENT_SEQGATE: string | undefined }
 
-/** P6 T9: 保存 runOne 改写的两个实验开关 env 原值（finally 恢复用；undefined=未设=默认 on） */
+/** P6 T9: 保存 runOne 改写的实验开关 env 原值（finally 恢复用；undefined=未设=默认 on） */
 export function saveRunEnv(): RunEnvSnapshot {
   return {
     EXPERIMENT_STATE_MACHINE: process.env.EXPERIMENT_STATE_MACHINE,
     EXPERIMENT_VERIFY: process.env.EXPERIMENT_VERIFY,
+    EXPERIMENT_SEQGATE: process.env.EXPERIMENT_SEQGATE,
   }
 }
 
-/** P6 T9: 恢复 runOne 改写的两个实验开关 env——原值 undefined → delete，否则回写（保持 未设=默认on 语义，防残留污染进程内后续 run） */
+/** P6 T9: 恢复 runOne 改写的实验开关 env——原值 undefined → delete，否则回写（保持 未设=默认on 语义，防残留污染进程内后续 run） */
 export function restoreRunEnv(prev: RunEnvSnapshot): void {
   if (prev.EXPERIMENT_STATE_MACHINE === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
   else process.env.EXPERIMENT_STATE_MACHINE = prev.EXPERIMENT_STATE_MACHINE
   if (prev.EXPERIMENT_VERIFY === undefined) delete process.env.EXPERIMENT_VERIFY
   else process.env.EXPERIMENT_VERIFY = prev.EXPERIMENT_VERIFY
+  if (prev.EXPERIMENT_SEQGATE === undefined) delete process.env.EXPERIMENT_SEQGATE
+  else process.env.EXPERIMENT_SEQGATE = prev.EXPERIMENT_SEQGATE
+}
+
+/**
+ * P9-乙 T3（审查 D 强建议采纳）：三键透传抽成纯函数，替代 runOne 内联硬编码透传。
+ * 封堵第四种静默退化路径：envForConfig 正确产出但 runOne 忘写某键的透传行 → 单测全绿、真实 run 静默跑成别的臂。
+ * 三键各按 set/delete 处理：undefined → delete（未设=默认 on），否则原样写入（生产开关只认严格值 'off'/'on'）。
+ */
+export function applyRunEnv(env: ReturnType<typeof envForConfig>): void {
+  if (env.EXPERIMENT_STATE_MACHINE === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
+  else process.env.EXPERIMENT_STATE_MACHINE = env.EXPERIMENT_STATE_MACHINE
+  if (env.EXPERIMENT_VERIFY === undefined) delete process.env.EXPERIMENT_VERIFY
+  else process.env.EXPERIMENT_VERIFY = env.EXPERIMENT_VERIFY
+  if (env.EXPERIMENT_SEQGATE === undefined) delete process.env.EXPERIMENT_SEQGATE
+  else process.env.EXPERIMENT_SEQGATE = env.EXPERIMENT_SEQGATE
 }
 
 /**
@@ -37,17 +55,13 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
   const { prisma } = await import('@/lib/db')
   const { handleOrchestratorDecision } = await import('@/lib/services/chat-router')
 
-  // P6 T9: 保存两开关原值，finally 恢复——harness 并入根 vitest 配置/进程内跑时不再残留最后 run 的 'off'
+  // P6 T9: 保存三开关原值，finally 恢复——harness 并入根 vitest 配置/进程内跑时不再残留最后 run 的 'off'
   // （当前靠 vitest per-file fork + fileParallelism:false 隔离，取消即静默禁用生产开关）
   const prevRunEnv = saveRunEnv()
 
   // 开关按 run 隔离（fileParallelism:false 串行，无并发串扰）
-  // P6 T8: 2 配置 → 4 配置 2×2 透传——OFF 前缀关状态机，no-verify 前缀关 verify，否则 delete（未设=默认 on）
-  const env = CONFIG.envForConfig(config)
-  if (env.EXPERIMENT_STATE_MACHINE === 'off') process.env.EXPERIMENT_STATE_MACHINE = 'off'
-  else delete process.env.EXPERIMENT_STATE_MACHINE
-  if (env.EXPERIMENT_VERIFY === 'off') process.env.EXPERIMENT_VERIFY = 'off'
-  else delete process.env.EXPERIMENT_VERIFY
+  // P9-乙 T3: 透传统一走 applyRunEnv 纯函数（三键 set/delete，审查 D：防忘写某键的静默退化）
+  applyRunEnv(CONFIG.envForConfig(config))
 
   const start = Date.now()
   let sessionId: string | undefined
@@ -152,7 +166,7 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
     try { appendMetrics(m) } catch (err3) { console.warn(`[run-one] run ${runId} appendMetrics failed: ${err3 instanceof Error ? err3.message : String(err3)}`) }
     return m
   } finally {
-    // P6 T9: 恢复两开关原值——runOne 永不泄漏实验 env 到进程（成功/失败路径都走这里）
+    // P6 T9: 恢复三开关原值——runOne 永不泄漏实验 env 到进程（成功/失败路径都走这里）
     restoreRunEnv(prevRunEnv)
   }
 }

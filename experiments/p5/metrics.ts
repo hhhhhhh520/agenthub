@@ -20,6 +20,7 @@ export interface RunMetrics {
   totalTransitions: number
   latencyMs: number
   tracePath: string
+  gateInterventionCount?: number // P9-乙：seqgate 触发数（optional 保 JSONL 兼容；仅 on-seqgate 前缀写入——区分「没开」和「开了没触发」）
 }
 
 /** oracle（Spec §4.1）：② 规范序列边存在性匹配 */
@@ -124,10 +125,22 @@ export async function collectMetrics(
   const correctionCount = entries.reduce((n, e) => n + (e.corrections?.length ?? 0), 0)
   const illegalProposalCount = countIllegalProposals(entries, config.startsWith('off'))
 
+  // P9-乙 seqgate 触发数（F7 同源原则：结构化信号，不用 reason 子串）。
+  // 签名唯一性（审查 G 已核对）：(idle, done→align_decompose) 在现有 corrections.push 点中唯一命中
+  // seqgate——execute 闸门是 execute→align_decompose（from 不同），规则1 是 align_* 态（state 不同）。
+  const gateInterventionCount = entries.filter(e =>
+    e.decisionPoint === 'handleOrchestratorDecision' &&
+    e.inputState?.state === 'idle' &&
+    Array.isArray(e.corrections) &&
+    e.corrections.some((c: any) => c.from === 'done' && c.to === 'align_decompose')
+  ).length
+
   return {
     runId, config, taskId, seed, pass, failureMode, failKind, rounds, escalateCount,
     correctionCount, illegalProposalCount, totalTransitions, latencyMs,
     tracePath: `${CONFIG.resultsDir}/trace-${runId}.json`,
+    // 仅 on-seqgate 前缀配置写入该字段（其余臂字段缺省——区分「没开」和「开了没触发」）
+    ...(config.startsWith('on-seqgate') ? { gateInterventionCount } : {}),
   }
 }
 
