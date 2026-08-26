@@ -165,6 +165,20 @@ export function idleExecuteGate(taskCount: number, hasCodeTask: boolean): boolea
   return !hasCodeTask
 }
 
+/** P9-乙 seqgate 开关：严格相等语义（spec F4），'1'/'true'/残留值一律不激活 */
+export function isSeqgateOn(): boolean {
+  return process.env.EXPERIMENT_SEQGATE === 'on'
+}
+
+/**
+ * P9-乙 idle 过早 done 闸门（spec v3.1 靶点裁定）：66/77 缺边会话 = bypass 循环后
+ * 从 idle 直接 done 收尾（taskCount 全 0）。判定信号 taskCount 由代码查库，不可 LLM 自证。
+ * 拦截返回 true（调用方 redirect align_decompose，表内合法目标）；false = 放行。
+ */
+export function idlePrematureDoneGate(state: State, action: string, taskCount: number): boolean {
+  return state === 'idle' && action === 'done' && taskCount === 0
+}
+
 /**
  * Hybrid 规范化纠正（3 条，决策点对 LLM 提议用）。命中 -> {redirect}；不命中 -> null。
  *
