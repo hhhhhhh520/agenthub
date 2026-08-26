@@ -6,7 +6,7 @@ import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecut
 import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
-import { stateFromSession, applyTransitionWithOverride, canonicalCorrect, transitionPhase, idleExecuteGate, isExperimentOff } from '@/lib/orchestrator/state-machine'
+import { stateFromSession, applyTransitionWithOverride, canonicalCorrect, transitionPhase, idleExecuteGate, isExperimentOff, isSeqgateOn, idlePrematureDoneGate, applyTransition } from '@/lib/orchestrator/state-machine'
 import { appendDecisionTrace, type DecisionTraceEntry } from '@/lib/orchestrator/decision-trace'
 
 /**
@@ -109,6 +109,20 @@ export async function handleOrchestratorDecision(
       if (state === 'idle' ? !idleExecuteGate(tasks.length, hasCodeTask) : tasks.length === 0) {
         const reason = state === 'idle' ? '确定性闸门：需先对齐拆解' : '尚无任务，需架构师先拆解'
         corrections.push({ from: 'execute', to: 'align_decompose', reason })
+        decision = { ...decision, action: 'align_decompose', reason }
+      }
+    }
+
+    // P9-乙 序列闸门（spec v3.1）：idle 态过早 done 且零任务 → redirect 补走拆解。
+    // 插入约束（F6）：canonicalCorrect 之后、与 idleExecuteGate 同层；OFF 大开关下整块跳过。
+    // 【审查 A 必补】redirect 目标表内断言（F6 条款落地，防未来 TRANSITIONS 改动后静默落 escalate）：
+    if (isSeqgateOn() && decision.action === 'done' && state === 'idle') {
+      const taskCount = await prisma.task.count({ where: { sessionId } })
+      if (idlePrematureDoneGate(state, decision.action, taskCount)) {
+        // F6 断言：目标必须在当前态 TRANSITIONS 表内（表外落 escalate 属 fail-closed 但污染实验）
+        console.assert(applyTransition('idle', 'align_decompose').ok, 'seqgate redirect 目标必须表内合法')
+        const reason = `序列闸门：会话尚无任务，需先对齐拆解（当前 ${taskCount} 任务）`
+        corrections.push({ from: 'done', to: 'align_decompose', reason })
         decision = { ...decision, action: 'align_decompose', reason }
       }
     }
