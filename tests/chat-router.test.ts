@@ -64,6 +64,8 @@ vi.mock('@/lib/services/alignment', () => ({
 }))
 
 import { handleOrchestratorDecision, handleOrchestratorChat, isCreateAgentIntent, parseDeclaredFiles } from '@/lib/services/chat-router'
+import { applyTransition } from '@/lib/orchestrator/state-machine'
+import { prisma } from '@/lib/db'
 
 const sendEvent = vi.fn()
 const agents = [
@@ -540,5 +542,78 @@ describe('handleOrchestratorChat', () => {
     await handleOrchestratorChat('hello', 's1', sendEvent)
     const config = mockExecuteSingleAgent.mock.calls[0][0]
     expect(config.workDir).toBe(process.cwd())
+  })
+})
+
+// ── P9-乙 seqgate 决策点接线：idle 态过早 done 且零任务 → redirect align_decompose ──
+describe('P9-乙 seqgate 决策点接线', () => {
+  const prevSeqgate = process.env.EXPERIMENT_SEQGATE
+
+  afterEach(() => {
+    // 还原 spyOn 安装的包装（如 prisma.task.count 的 countSpy），防泄漏到后续测试
+    vi.restoreAllMocks()
+    if (prevSeqgate === undefined) delete process.env.EXPERIMENT_SEQGATE
+    else process.env.EXPERIMENT_SEQGATE = prevSeqgate
+  })
+
+  it('SEQGATE=on + idle + done + 零任务 → corrections 记 done→align_decompose，action 变 align_decompose', async () => {
+    process.env.EXPERIMENT_SEQGATE = 'on'
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '收工', reason: 'r' }, sessionId: 'orch-ses' })
+    // idle + done 不进 exec done 守卫，Task.count 由 seqgate 守卫读 → 0 任务
+    mockTaskCount.mockResolvedValueOnce(0)
+    await handleOrchestratorDecision('做完了', 's1', agents, sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    // redirect 走 handleArchitectPlan 补拆解
+    expect(mockHandleArchitectPlan).toHaveBeenCalled()
+    expect(mockTransitionToExecution).not.toHaveBeenCalled()
+    // trace: corrections 记 done→align_decompose；actualTransition.action 已变
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.corrections).toEqual([{ from: 'done', to: 'align_decompose', reason: expect.stringContaining('序列闸门') }])
+    expect(entry.actualTransition.action).toBe('align_decompose')
+    expect(entry.llmProposal).toMatchObject({ action: 'done' }) // 原始提议保留
+  })
+
+  it('SEQGATE=on + idle + done + 有任务 → 不拦（放行走 done handler）', async () => {
+    process.env.EXPERIMENT_SEQGATE = 'on'
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: 'all done', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskCount.mockResolvedValueOnce(1) // 有任务 → gate 放行
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'idle', phaseStep: '', decisionTrace: '[]' }) // transitionPhase 读态
+    await handleOrchestratorDecision('做完了', 's1', agents, sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.corrections).toEqual([]) // 未拦
+    expect(entry.actualTransition.action).toBe('done')
+    expect(mockHandleArchitectPlan).not.toHaveBeenCalled()
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } }) // done handler 正常走
+  })
+
+  it('SEQGATE 未设 + 同输入 → 行为与 HEAD 完全一致（生产行为不变对照）', async () => {
+    delete process.env.EXPERIMENT_SEQGATE
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '收工', reason: 'r' }, sessionId: 'orch-ses' })
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const countSpy = vi.spyOn(prisma.task, 'count') // 审查 C：零额外 DB 查询用测试钉死
+    await handleOrchestratorDecision('做完了', 's1', agents, sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.corrections).toEqual([]) // 现状：idle+done 表内容错边直通
+    expect(entry.actualTransition.action).toBe('done')
+    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(countSpy).not.toHaveBeenCalled() // 短路结构：未设开关不产生任何 task.count 查询
+  })
+
+  it("SEQGATE='1'（残留值形态）→ 不激活", async () => {
+    process.env.EXPERIMENT_SEQGATE = '1'
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: '收工', reason: 'r' }, sessionId: 'orch-ses' })
+    mockSessionFindUnique.mockResolvedValueOnce({ phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    await handleOrchestratorDecision('做完了', 's1', agents, sendEvent, { phase: 'idle', phaseStep: '', decisionTrace: '[]' })
+    const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+    const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+    expect(entry.corrections).toEqual([])
+    expect(entry.actualTransition.action).toBe('done')
+    expect(mockHandleArchitectPlan).not.toHaveBeenCalled()
+  })
+
+  it('表内断言（F6）：redirect 目标 idle→align_decompose 在 TRANSITIONS 表内', () => {
+    expect(applyTransition('idle', 'align_decompose')).toMatchObject({ ok: true, nextState: 'align_arch' })
   })
 })
