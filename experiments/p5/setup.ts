@@ -1,9 +1,36 @@
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { CONFIG } from './config'
 
 const REPO_ROOT = join(__dirname, '..', '..')
+
+/** P9-乙 T4（F2）：候选模型 ID 白名单——cmd.exe 元字符集 &|^<>()%!" 空格 反引号 $ CR LF \ 全排除（审查 E 核对）。
+ *  模型 ID 真实流向 GLM_MODEL→CONFIG.model→ensureExperimentAgents upsert→spawn --model，畸形 ID 即注入面 */
+export function isValidModelId(id: string): boolean {
+  return /^[A-Za-z0-9._\/:-]+$/.test(id)
+}
+
+// 【审查 F 必修】白名单包含判定：resolve 统一斜杠 + experiments/p5 前缀检查。
+// 原子串猜测方案（includes('\\.claude') && !includes('p5')）对正斜杠形态 fail-open，
+// 且 p5 子串可被用户名击穿/误伤合法目录——已废弃。
+const ALLOW_PREFIX = resolve(import.meta.dirname)   // experiments/p5
+
+/** '~' 形态先按家目录语义展开再进 resolve 判定——否则 resolve 把 '~' 当相对路径段，
+ *  cwd 恰在 experiments/p5 内时 '~/.claude' 会被误判进白名单（fail-open）。 */
+function expandTilde(dir: string): string {
+  if (dir === '~' || dir.startsWith('~/') || dir.startsWith('~\\')) return join(homedir(), dir.slice(1))
+  return dir
+}
+
+/** P9-乙 T4（F3）：CLI 子进程继承用户默认 CLAUDE_CONFIG_DIR 会启动挂死（P8 实证）——preflight 强制断言隔离目录 */
+export function assertCliConfigDir(raw: string | undefined): void {
+  const d = raw ? resolve(expandTilde(raw)) : ''
+  if (!d || !(d === ALLOW_PREFIX || d.startsWith(ALLOW_PREFIX + sep))) {
+    throw new Error('[preflight] CLAUDE_CONFIG_DIR 未隔离——CLI 子进程将继承用户默认目录导致挂死（P8 实证）。请设为实验专属目录（experiments/p5 之下）。')
+  }
+}
 
 /** 清 prisma 全局单例，确保下一次 import 用 p5.db（db.ts 模块级 globalForPrisma.prisma） */
 export function resetPrismaSingleton(): void {
@@ -26,6 +53,10 @@ export async function ensureExperimentAgents(): Promise<void> {
   const key = process.env.GLM_API_KEY
   if (!key || !key.trim()) {
     throw new Error('GLM_API_KEY env 未设置——pilot 需要实验 LLM key（env 名沿用 GLM_API_KEY，端点 opencode.ai/zen/go，永不硬编码）')
+  }
+  // P9-乙 T4（F2）：模型 ID 入口闸门——畸形 GLM_MODEL 在 upsert 进 Agent 表之前拦下（下游 spawn shell:true 即注入面）
+  if (!isValidModelId(CONFIG.model)) {
+    throw new Error(`model ID 白名单校验失败: ${JSON.stringify(CONFIG.model)}——仅允许 [A-Za-z0-9._/:-]，请检查 GLM_MODEL env`)
   }
   const { prisma } = await import('@/lib/db')
   const common = {
@@ -69,6 +100,8 @@ export async function preflightDecision(): Promise<void> {
 
 /** 主入口：pilot beforeAll 调 */
 export async function setupExperiment(): Promise<void> {
+  // P9-乙 T4（F3）：CLI 子进程继承用户默认 CLAUDE_CONFIG_DIR 会挂死（P8 实证）——preflight 第一闸门，未隔离即拒跑
+  assertCliConfigDir(process.env.CLAUDE_CONFIG_DIR)
   // P6 T9: 纯单测 import @/lib/orchestrator → @/lib/db 会让 prisma libsql 连接把 p5.db 切进 WAL 模式，
   // 且 vitest 模块运行器下 @libsql/client close() 不释放文件(EBUSY)——migrate deploy 子进程拿不到 p5.db 写锁(SQLite database error)。
   // 用同一连接把 journal_mode 切回 DELETE：触发 checkpoint 并删掉 wal/shm，连接转空闲 DELETE 模式，migrate 子进程即可写入。

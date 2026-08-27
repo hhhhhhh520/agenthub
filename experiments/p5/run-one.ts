@@ -9,6 +9,10 @@ import type { AgentConfig } from '../../src/lib/adapter/types'
 
 export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: 'A'|'B'|'C'; seed: number }
 
+/** P9-乙 T4: 本进程内 runOne 创建的精确 work 目录（run.test.ts afterAll 逐个 rmSync 清理；
+ *  路径来自 mkdtempSync 返回值本身，无通配、删除前无需再断言前缀——审查 H 放行的首选方案） */
+export const createdWorkDirs: string[] = []
+
 /** P9-乙 T3: 三变量（F4 必办②——seqgate 臂需 EXPERIMENT_SEQGATE 隔离） */
 export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined; EXPERIMENT_SEQGATE: string | undefined }
 
@@ -70,6 +74,8 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
 
   try {
     const projectDir = mkdtempSync(join(CONFIG.workDir, runId))
+    // P9-乙 T4: 注册精确路径供 afterAll teardown（mkdtemp 成功即注册，覆盖后续任何异常/中断路径）
+    createdWorkDirs.push(projectDir)
     const session = await prisma.session.create({
       data: { title: `p5-${config}-${taskId}-s${seed}`, type: 'group', projectDir },
     })

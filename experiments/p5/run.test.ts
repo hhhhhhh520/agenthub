@@ -1,10 +1,10 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
-import { writeFileSync, rmSync } from 'node:fs'
+import { writeFileSync, rmSync, mkdtempSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
-import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv } from './run-one'
+import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
@@ -95,6 +95,18 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
   }
 })
 vi.mock('@/lib/mcp-config', () => ({ buildMCPConfig: () => undefined }))
+
+// —— P9-乙 T4: work/<runId> teardown——runOne 把 mkdtempSync 返回的精确路径注册进 createdWorkDirs，
+//    这里逐个删除（无通配、路径来自 mkdtempSync 返回值本身；存量 398 泄漏另列一次性清理，不在此处）——
+afterAll(() => {
+  for (const d of createdWorkDirs) {
+    try {
+      rmSync(d, { recursive: true, force: true })
+    } catch (e) {
+      console.warn(`[teardown] rm workDir failed: ${d} — ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+})
 
 // —— harness 纯函数单测（不依赖 DB / 真实 LLM，GLM_API_KEY=test-key 即可跑；setupExperiment 只由 30-run 调）——
 describe('P5 harness 单测', () => {
@@ -346,9 +358,9 @@ describe('P5 report', () => {
   })
 })
 
-// —— P6 T8: 2×2 配置矩阵（configs 扩 4 + envForConfig 透传 + report 主效应/交互）——
-describe('P6 T8: 2×2 配置矩阵', () => {
-  it('CONFIG.configs 扩为 4 配置 + envForConfig 映射正确', () => {
+// —— P6 T8: 2×2 状态机×verify 主效应矩阵（P9-乙 T3 起 configs 扩为 5：三臂 + seqgate 增量格）——
+describe('P6 T8: 状态机×verify 主效应矩阵', () => {
+  it('CONFIG.configs 当前规模 + envForConfig 映射正确', () => {
     // P9-乙 T3：扩为 5 配置（三臂矩阵 + on-seqgate+verify）；前缀约定保 startsWith('on')/('off') 口径
     expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'])
     expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
@@ -357,7 +369,7 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined })
   })
 
-  it('generateReport: 4 配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
+  it('generateReport: 全配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
     // 已知 pass 数据（seed 0..4）：
     //   on+verify / off+no-verify 全过；off+verify 全败；on+no-verify 仅 seed 4 败
     const passBy: Record<string, boolean[]> = {
@@ -408,7 +420,7 @@ describe('P6 T8: 2×2 配置矩阵', () => {
     expect(report).toContain('- seqgate 触发合计: 0（15 runs，avg 0.00）')
   })
 
-  it('非法尝试率段 4 配置通用：OFF 前缀用 illegalProposalCount、ON 前缀用 correctionCount', () => {
+  it('非法尝试率段全配置通用：OFF 前缀用 illegalProposalCount、ON 前缀用 correctionCount', () => {
     const metrics: RunMetrics[] = [
       { runId: 'o1', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 9, illegalProposalCount: 4, totalTransitions: 2, latencyMs: 10, tracePath: '' },
       { runId: 'o2', config: 'off+no-verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 7, illegalProposalCount: 6, totalTransitions: 2, latencyMs: 10, tracePath: '' },
@@ -572,9 +584,21 @@ describe('P9-乙 T3: 三臂配置矩阵', () => {
   })
 })
 
-// —— 60 次 run（Spec §3.3：3任务×4配置×5次；P6 T8 扩 2×2 矩阵；5 固定 seed 同 seed 配对主效应）——
+// —— P9-乙 T4: work/<runId> teardown 接线——runOne 注册精确路径进 createdWorkDirs，文件级 afterAll 逐个删。
+//    本 describe 注册一个 mkdtemp 目录验证数组接线；文件级 afterAll 删除后，OS 层核实目录已消失（见 teardown 验证）——
+describe('P9-乙 T4: work teardown 接线（createdWorkDirs 注册 + 文件级 afterAll 清理）', () => {
+  it('注册 mkdtemp 精确路径进 createdWorkDirs（无通配，路径来自返回值本身）', () => {
+    const dir = mkdtempSync(join(CONFIG.workDir, '__t4-teardown-probe-'))
+    createdWorkDirs.push(dir)
+    // 注册的是 mkdtempSync 的真实返回路径（精确、非前缀拼凑）
+    expect(createdWorkDirs).toContain(dir)
+    expect(existsSync(dir)).toBe(true)
+  })
+})
+
+// —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
-describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 60 次受控实验（4 配置 2×2 矩阵）', () => {
+describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
   // setupExperiment 仅 30-run 需要（建库 + 实验 agents + preflight 真 LLM 调用）。
   // harness 纯函数单测不调它——preflight 需要真实 GLM key，无 key 时只跑单测 describe
   beforeAll(async () => {

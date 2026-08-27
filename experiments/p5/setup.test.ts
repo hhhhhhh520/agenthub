@@ -14,7 +14,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { CONFIG } from './config'
-import { ensureExperimentAgents } from './setup'
+import { assertCliConfigDir, ensureExperimentAgents, isValidModelId } from './setup'
 
 afterAll(() => {
   // 防御：同 worker 顺序执行时恢复 env，不污染其他文件（含 GLM_API_KEY——throw 测试会改它）
@@ -83,5 +83,41 @@ describe('P6 A4: ensureExperimentAgents upsert 守卫（二次运行刷新 model
   it('GLM_API_KEY 缺失 → throw（顶部守卫，key 永不硬编码）', async () => {
     vi.stubEnv('GLM_API_KEY', '') // 空串过不了 !key.trim() 守卫；不用 raw delete（避免漏恢复）
     await expect(ensureExperimentAgents()).rejects.toThrow('GLM_API_KEY env 未设置')
+  })
+
+  it('畸形 GLM_MODEL → ensureExperimentAgents throw（F2 模型 ID 入口闸门，upsert 前拦截）', async () => {
+    // P9-乙 T4：模型 ID 真实流向 GLM_MODEL→CONFIG.model→ensureExperimentAgents upsert→spawn，
+    // 畸形 ID（cmd.exe 元字符）即注入面——入口闸门必须在 upsert 前拦下。
+    // CONFIG 是模块级常量：resetModules 后必须用新注册表里的 ensureExperimentAgents，
+    // 顶层绑定仍指向旧模块实例（旧 CONFIG.model 合法），调它会误放行
+    vi.stubEnv('GLM_MODEL', 'a;rm -rf')
+    vi.resetModules()
+    const { CONFIG: c2 } = await import('./config')
+    const { ensureExperimentAgents: ea2 } = await import('./setup')
+    expect(c2.model).toBe('a;rm -rf') // 前置：新实例的 CONFIG.model 确被 env 覆盖为畸形值（ea2 内引用同实例）
+    await expect(ea2()).rejects.toThrow('model ID')
+    expect(env.upsert).not.toHaveBeenCalled() // 闸门在 upsert 之前
+    vi.resetModules()
+  })
+})
+
+// —— P9-乙 T4: 运行纪律硬化——纯函数单测（白名单包含判定逐字采用 brief 审查 F 必修版反例）——
+describe('P9-乙 T4: 运行纪律硬化', () => {
+  it('preflight 断言 CLAUDE_CONFIG_DIR 白名单包含判定（F3，审查 F 必修版）', () => {
+    // 实现 = resolve 后必须等于或位于 experiments/p5 之内（白名单前缀，非子串猜测）
+    expect(() => assertCliConfigDir(undefined)).toThrow()
+    expect(() => assertCliConfigDir('C:\\Users\\18387\\.claude')).toThrow()      // 用户默认（反斜杠）
+    expect(() => assertCliConfigDir('C:/Users/18387/.claude')).toThrow()        // 用户默认（正斜杠——原方案 fail-open 实锤反例）
+    expect(() => assertCliConfigDir('~/.claude')).toThrow()                     // 家目录形态
+    expect(() => assertCliConfigDir('C:\\Users\\p5fan\\.claude')).toThrow()     // 用户名恰含 p5 的击穿反例
+    expect(() => assertCliConfigDir('D:\\ai全栈挑战赛\\agenthub\\experiments\\p5\\.claude-cfg')).not.toThrow()
+    expect(() => assertCliConfigDir('D:/ai全栈挑战赛/agenthub/experiments/p5/.claude-cfg')).not.toThrow()
+  })
+  it('候选模型 ID 白名单校验（F2）', () => {
+    expect(isValidModelId('xopdeepseekv4flash0731')).toBe(true)
+    expect(isValidModelId('stealth/ox-alpha')).toBe(true)
+    expect(isValidModelId('deepseek-v4-flash')).toBe(true)
+    for (const bad of ['a;rm -rf', 'x"&&calc', 'a b', '中文模型', 'id\ninjection', '%PATH%', 'a^b', 'x|y', '`id`'])
+      expect(isValidModelId(bad)).toBe(false)
   })
 })
