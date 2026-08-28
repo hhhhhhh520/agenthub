@@ -612,7 +612,8 @@ describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批
     console.log('\n===== P5 PILOT REPORT =====\n' + report)
   }, 60 * 1000)
 
-  const P7_GATE = process.env.P7_GATE === '1' ? { config: 'off+verify', taskId: 'A' } : null
+  // P9-乙 T5 Gate 冒烟过滤格：on-seqgate+verify × A ×5（计划 Task 5 指定；旧值 off+verify 已按 spec v3.1 换格）
+  const P7_GATE = process.env.P7_GATE === '1' ? { config: 'on-seqgate+verify', taskId: 'A' } : null
   for (const task of TASKS) {
     for (const config of CONFIG.configs) {
       for (const seed of SEEDS) {
