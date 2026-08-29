@@ -10,6 +10,11 @@ export const envForConfig = (config: string) => ({
   EXPERIMENT_SEQGATE: config.startsWith('on-seqgate') ? 'on' : undefined,
 })
 
+/** P9-乙 T5: 全矩阵三臂选择门控——P9 拍板「verify 砍掉固定 on」（45 run = 三臂×ABC×5），
+ *  但 configs 数组保留 5 配置以维持 P6 2×2 harness 语义；P9_ARMS='1'（严格相等，同 F4）时
+ *  驱动循环跳过 no-verify 格。未设=全 5 配置，P6/P7 行为不变。 */
+export const isP9ArmsOnly = (env: NodeJS.ProcessEnv = process.env): boolean => env.P9_ARMS === '1'
+
 export const CONFIG = {
   model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
