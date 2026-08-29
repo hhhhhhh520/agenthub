@@ -1,7 +1,7 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
 import { writeFileSync, rmSync, mkdtempSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG } from './config'
+import { CONFIG, isP9ArmsOnly } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
@@ -596,6 +596,19 @@ describe('P9-乙 T4: work teardown 接线（createdWorkDirs 注册 + 文件级 a
   })
 })
 
+// —— P9-乙 T5: 全矩阵三臂门控（P9 拍板 verify 固定 on；首跑实证 configs 全 5 配置会跑成 75 run 的接线缺口）——
+describe('P9-乙 T5: 三臂门控 P9_ARMS', () => {
+  it('P9_ARMS 严格相等：仅 "1" 激活（同 F4 口径，杜绝第四静默降级路径）', () => {
+    expect(isP9ArmsOnly({ P9_ARMS: '1' })).toBe(true)
+    expect(isP9ArmsOnly({ P9_ARMS: '0' })).toBe(false)
+    expect(isP9ArmsOnly({ P9_ARMS: 'true' })).toBe(false)
+    expect(isP9ArmsOnly({})).toBe(false)
+  })
+  it('三臂 = configs 去掉 no-verify 且顺序保持（45 run 的格集合钉死）', () => {
+    expect(CONFIG.configs.filter((c) => !c.includes('no-verify'))).toEqual(['on+verify', 'off+verify', 'on-seqgate+verify'])
+  })
+})
+
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
 describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
@@ -614,8 +627,11 @@ describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批
 
   // P9-乙 T5 Gate 冒烟过滤格：on-seqgate+verify × A ×5（计划 Task 5 指定；旧值 off+verify 已按 spec v3.1 换格）
   const P7_GATE = process.env.P7_GATE === '1' ? { config: 'on-seqgate+verify', taskId: 'A' } : null
+  // P9-乙 T5 全矩阵三臂：P9_ARMS=1 跳过 no-verify 格（未设=5 配置全量，P6 2×2 语义不变）
+  const P9_ARMS = isP9ArmsOnly()
   for (const task of TASKS) {
     for (const config of CONFIG.configs) {
+      if (P9_ARMS && config.includes('no-verify')) continue
       for (const seed of SEEDS) {
         if (P7_GATE && (config !== P7_GATE.config || task.id !== P7_GATE.taskId)) continue
         it(`${config} ${task.id} seed=${seed}`, async () => {
