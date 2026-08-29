@@ -280,7 +280,8 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **`EXPERIMENT_STATE_MACHINE=off`** env 是 P5 受控实验(A方向)的状态机开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时决策点跳过 canonicalCorrect/守卫/escalate 且表外 action 保持当前态,只关 enforcement 不关 trace 记录。
 - **`EXPERIMENT_VERIFY=off`** env 是 P6 受控实验(2×2 矩阵 verify 维度)的开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时只跳过 alignment.ts verify 自动创建块,不关状态机强制/done 守卫(chat-router 在 OFF 下已跳过、ON+no-verify 无 verify 可查,天然正交)。
-- **新增实验测试文件必须同步扩 `experiments/p5/vitest.config.ts` 的 include** — p5 本地 config 按**文件名模式**收集(仅 `run.test.ts`/`setup.test.ts`),vitest v4 CLI 无 include 覆盖参数,裸跑 `npx vitest run <新文件>` 报 "No test files found"(P9 丙实测)。先例:analyze-cross-batch.test.ts(ac5d76c)
+- **`EXPERIMENT_SEQGATE=on`** env 是 P9-乙 第三臂(on-seqgate)的开关,只在 harness 用,**生产默认未设**。语义=严格相等 `=== 'on'`(禁真值判断,'1'/'true' 不激活);设 on 时启用 idle 过早 done 闸门(state=idle∧action=done∧零任务→redirect align_decompose),env 经 `envForConfig('on-seqgate+verify')`→run-one 透传。跑实验必须经 `setupExperiment()`(入口 `scrubInheritedProviderEnv()` 清洗继承的 ANTHROPIC_*/CLAUDE_* env,ISSUE-013)。
+- **新增实验测试文件必须同步扩 `experiments/p5/vitest.config.ts` 的 include** — p5 本地 config 按**文件名模式**收集(仅 `run.test.ts`/`setup.test.ts`),vitest v4 CLI 无 include 覆盖参数,裸跑 `npx vitest run <新文件>` 报 "No test files found"(P9 丙实测)。从仓库根跑任何 p5 测试须加 `--config experiments/p5/vitest.config.ts`(根配置 include 只有 `tests/**`,直接跑 p5 文件报 no files,P9 乙实测)。先例:analyze-cross-batch.test.ts(ac5d76c)
 - 实验相关:`experiments/p5/`(独立 vitest config + 独立 DB,产物 gitignored);设计见下方「设计文档」P5/P6 链接;实验代码不动 src/ 生产路径(state-machine/chat-router 的 `isExperimentOff()` 读 env,默认 false)
 
 ### Chat API Session Lock

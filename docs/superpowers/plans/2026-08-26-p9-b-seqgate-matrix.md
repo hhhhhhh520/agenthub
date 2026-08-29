@@ -1,5 +1,7 @@
 # P9-乙 序列闸门矩阵 Implementation Plan
 
+> **状态（2026-08-28）**：T1-T4 已完成并通过 SDD 逐任务评审 + opus 终审 Approve（commits 38d99ed/1eec643/0b72cf7/9a37bd8/db73c72）；T5 Gate 冒烟首跑暴露 ISSUE-013（继承 provider env 泄漏→CLI 401），已修复（ba07df6）并复跑通过（4/5 pass、gate 4/5、健康阴性）。**剩余：T5 全矩阵 45-run（发射器 `run-gate-smoke.ps1` 无参）→ T6 弱模型 pilot（F1 前置=轮换 key）**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现第三臂 `on-seqgate+verify`（idle 过早 done 闸门），扩展 harness 到三臂矩阵，跑强模型（deepseek@xfyun）45 run；弱模型 pilot 探带后铺第二矩阵。
