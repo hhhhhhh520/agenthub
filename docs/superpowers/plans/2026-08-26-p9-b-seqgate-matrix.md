@@ -1,6 +1,6 @@
 # P9-乙 序列闸门矩阵 Implementation Plan
 
-> **状态（2026-08-28）**：T1-T4 已完成并通过 SDD 逐任务评审 + opus 终审 Approve（commits 38d99ed/1eec643/0b72cf7/9a37bd8/db73c72）；T5 Gate 冒烟首跑暴露 ISSUE-013（继承 provider env 泄漏→CLI 401），已修复（ba07df6）并复跑通过（4/5 pass、gate 4/5、健康阴性）。**剩余：T5 全矩阵 45-run（发射器 `run-gate-smoke.ps1` 无参）→ T6 弱模型 pilot（F1 前置=轮换 key）**。
+> **状态（2026-08-30）**：T1-T4 已完成并通过 SDD 逐任务评审 + opus 终审 Approve（commits 38d99ed/1eec643/0b72cf7/9a37bd8/db73c72）；T5 Gate 冒烟首跑暴露 ISSUE-013（继承 provider env 泄漏→CLI 401），已修复（ba07df6）并复跑通过（4/5 pass、gate 4/5、健康阴性）。**T5 全矩阵 45-run 已完成（2026-08-30）**：首发射暴露计划接线缺口（T3 保留 5 配置数组、T5 未指定三臂选择器→无参跑成 75 格；中途止，加 `P9_ARMS=1` 门控修复 455591a，中断批 24 行弃用留 metrics.p9b-aborted-21.bak.jsonl）；重跑 45/45、三臂污染判阴、trace 中毒 0。**结果：seqgate 增量在 C（捷径）显著 p≈0.046（0/5→4/5），A 方向正不显著（2/5→4/5 p=0.317），B 天花板；H1✅ H2✅(仅C传导) H3原句"不影响C"被否、v3.1 修正版证实**。报告 results/report-p9b-strong.md。**剩余：T6 弱模型 pilot（F1 前置=轮换 key）**。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
