@@ -1,7 +1,7 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
 import { writeFileSync, rmSync, mkdtempSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, isP9ArmsOnly } from './config'
+import { CONFIG, isP9ArmsOnly, parseGateCell } from './config'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
@@ -607,6 +607,18 @@ describe('P9-乙 T5: 三臂门控 P9_ARMS', () => {
   it('三臂 = configs 去掉 no-verify 且顺序保持（45 run 的格集合钉死）', () => {
     expect(CONFIG.configs.filter((c) => !c.includes('no-verify'))).toEqual(['on+verify', 'off+verify', 'on-seqgate+verify'])
   })
+  it('parseGateCell：非 P7_GATE=1 → null；默认格 on-seqgate+verify|A；参数格正确解析', () => {
+    expect(parseGateCell({})).toBeNull()
+    expect(parseGateCell({ P7_GATE: '0' })).toBeNull()
+    expect(parseGateCell({ P7_GATE: '1' })).toEqual({ config: 'on-seqgate+verify', taskId: 'A' })
+    expect(parseGateCell({ P7_GATE: '1', P7_GATE_CELL: 'off+verify|A' })).toEqual({ config: 'off+verify', taskId: 'A' })
+  })
+  it('parseGateCell：格式非法 fail-closed throw（不允许静默跑错格）', () => {
+    expect(() => parseGateCell({ P7_GATE: '1', P7_GATE_CELL: 'off+verify' })).toThrow(/非法/)
+    expect(() => parseGateCell({ P7_GATE: '1', P7_GATE_CELL: 'off+verify|D' })).toThrow(/非法/)
+    expect(() => parseGateCell({ P7_GATE: '1', P7_GATE_CELL: 'off+verify|A|extra' })).toThrow(/非法/)
+    expect(() => parseGateCell({ P7_GATE: '1', P7_GATE_CELL: '|A' })).toThrow(/非法/)
+  })
 })
 
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
@@ -625,8 +637,8 @@ describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批
     console.log('\n===== P5 PILOT REPORT =====\n' + report)
   }, 60 * 1000)
 
-  // P9-乙 T5 Gate 冒烟过滤格：on-seqgate+verify × A ×5（计划 Task 5 指定；旧值 off+verify 已按 spec v3.1 换格）
-  const P7_GATE = process.env.P7_GATE === '1' ? { config: 'on-seqgate+verify', taskId: 'A' } : null
+  // P9-乙 T5 Gate 冒烟过滤格：默认 on-seqgate+verify × A（T6 起可由 P7_GATE_CELL 参数化，如探带格 off+verify|A）
+  const P7_GATE = parseGateCell()
   // P9-乙 T5 全矩阵三臂：P9_ARMS=1 跳过 no-verify 格（未设=5 配置全量，P6 2×2 语义不变）
   const P9_ARMS = isP9ArmsOnly()
   for (const task of TASKS) {
