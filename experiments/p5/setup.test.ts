@@ -14,7 +14,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { CONFIG } from './config'
-import { assertCliConfigDir, ensureExperimentAgents, isValidModelId } from './setup'
+import { assertCliConfigDir, ensureExperimentAgents, isValidModelId, scrubInheritedProviderEnv, setupExperiment } from './setup'
 
 afterAll(() => {
   // 防御：同 worker 顺序执行时恢复 env，不污染其他文件（含 GLM_API_KEY——throw 测试会改它）
@@ -119,5 +119,46 @@ describe('P9-乙 T4: 运行纪律硬化', () => {
     expect(isValidModelId('deepseek-v4-flash')).toBe(true)
     for (const bad of ['a;rm -rf', 'x"&&calc', 'a b', '中文模型', 'id\ninjection', '%PATH%', 'a^b', 'x|y', '`id`'])
       expect(isValidModelId(bad)).toBe(false)
+  })
+})
+
+// —— P9-乙 T5-1: 继承 provider env 清洗（Gate 冒烟 401 根因修复，ISSUE-013）——
+describe('P9-乙 T5-1: scrubInheritedProviderEnv', () => {
+  it('清除全部 ANTHROPIC_*/CLAUDE_*（豁免 CLAUDE_CONFIG_DIR）与 CLAUDECODE，不动 GLM_*/业务变量', () => {
+    // 污染集 = 交互式 Claude Code 会话（qwen 代理 settings env 块）泄漏进子进程的真实形态
+    process.env.ANTHROPIC_AUTH_TOKEN = 'PROXY_MANAGED'
+    process.env.ANTHROPIC_MODEL = 'glm-5.3-flash[1m]'
+    process.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = 'qwen3.8-max'
+    process.env.ANTHROPIC_API_KEY = 'stale-key'
+    process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:15721'
+    process.env.CLAUDECODE = '1'
+    process.env.CLAUDE_CODE_CHILD_SESSION = '1'
+    process.env.CLAUDE_CODE_EFFORT_LEVEL = 'max'
+    process.env.CLAUDE_PID = '12060'
+    // 豁免/无关变量
+    process.env.CLAUDE_CONFIG_DIR = 'D:/ai全栈挑战赛/agenthub/experiments/p5/.claude-cfg'
+    process.env.GLM_MODEL_KEEP_TEST = 'keep-me'
+    const scrubbed = scrubInheritedProviderEnv()
+    for (const k of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL_NAME', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_PID'])
+      expect(process.env[k]).toBeUndefined()
+    // CLAUDE_CONFIG_DIR 是唯一保留的 CLAUDE_*（F3 断言与 CLI 子进程隔离目录依赖它）
+    expect(process.env.CLAUDE_CONFIG_DIR).toBe('D:/ai全栈挑战赛/agenthub/experiments/p5/.claude-cfg')
+    expect(process.env.GLM_MODEL_KEEP_TEST).toBe('keep-me')
+    expect(scrubbed).toContain('ANTHROPIC_AUTH_TOKEN')
+    // 幂等：再跑一次不 throw、不再报同样的键
+    expect(scrubbed).not.toContain('GLM_MODEL_KEEP_TEST')
+    expect(() => scrubInheritedProviderEnv()).not.toThrow()
+    delete process.env.CLAUDE_CONFIG_DIR
+    delete process.env.GLM_MODEL_KEEP_TEST
+  })
+
+  it('setupExperiment 接线：先清洗后断言（顺序钉死，非恒真断言）', async () => {
+    // 污染态 + 非法 CLAUDE_CONFIG_DIR → setupExperiment 应在 F3 断言处 throw；
+    // 若 scrub 真在 assert 之前执行，throw 时 AUTH_TOKEN 必须已被清掉（顺序反了此断言即红）
+    process.env.ANTHROPIC_AUTH_TOKEN = 'PROXY_MANAGED'
+    process.env.CLAUDE_CONFIG_DIR = 'C:\\Users\\18387\\.claude' // 非隔离 → assertCliConfigDir throw
+    await expect(setupExperiment()).rejects.toThrow('CLAUDE_CONFIG_DIR')
+    expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    delete process.env.CLAUDE_CONFIG_DIR
   })
 })

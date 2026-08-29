@@ -32,6 +32,27 @@ export function assertCliConfigDir(raw: string | undefined): void {
   }
 }
 
+/** P9-乙 T5-1（ISSUE-013）：清洗继承的 provider/session env——Gate 冒烟 401 根因修复。
+ *  泄漏链：交互式 Claude Code 会话（本地 qwen 代理，settings.json env 块）→ 启动器 → vitest →
+ *  process-registry.ts:349-351 spawn `env: {...process.env, ...providerEnv}`——providerEnv 只覆盖
+ *  ANTHROPIC_API_KEY/BASE_URL（来自 DB 配置），ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL/ANTHROPIC_DEFAULT_*
+ *  与 CLAUDECODE/CLAUDE_PID/CLAUDE_CODE_* 原样漏进 CLI 子进程 → CLI 同时发 Bearer(代理token)+x-api-key(讯飞key)，
+ *  讯飞优先验 Bearer → 401 "HMAC signature cannot be verified: apikey not found"（2026-08-28 实测逐字复现）。
+ *  全清 ANTHROPIC_ 前缀与 CLAUDE_ 前缀（唯一豁免 CLAUDE_CONFIG_DIR——F3 隔离目录本体；CLAUDECODE 精确匹配），
+ *  正主凭据不受影响：其走 GLM_* env → DB agent → providerEnv 逐次注入，与 process.env 解耦。
+ *  返回被清键名列表（供日志回显）。幂等。 */
+export function scrubInheritedProviderEnv(): string[] {
+  const scrubbed: string[] = []
+  for (const k of Object.keys(process.env)) {
+    if (k === 'CLAUDE_CONFIG_DIR') continue
+    if (k.startsWith('ANTHROPIC_') || k.startsWith('CLAUDE_') || k === 'CLAUDECODE') {
+      delete process.env[k]
+      scrubbed.push(k)
+    }
+  }
+  return scrubbed
+}
+
 /** 清 prisma 全局单例，确保下一次 import 用 p5.db（db.ts 模块级 globalForPrisma.prisma） */
 export function resetPrismaSingleton(): void {
   ;(globalThis as unknown as { prisma?: unknown }).prisma = undefined
@@ -100,6 +121,11 @@ export async function preflightDecision(): Promise<void> {
 
 /** 主入口：pilot beforeAll 调 */
 export async function setupExperiment(): Promise<void> {
+  // P9-乙 T5-1（ISSUE-013）：先清洗继承的 provider/session env（Gate 冒烟 401 根因：
+  // 交互式会话的 ANTHROPIC_AUTH_TOKEN 等经 process.env 漏进 CLI 子进程与讯飞 key 并发型），
+  // 再跑 F3 断言——CLAUDE_CONFIG_DIR 在清洗白名单豁免内，顺序不可倒置（setup.test 钉死）
+  const scrubbed = scrubInheritedProviderEnv()
+  if (scrubbed.length > 0) console.log(`[setup] 已清洗继承 env: ${scrubbed.join(', ')}`)
   // P9-乙 T4（F3）：CLI 子进程继承用户默认 CLAUDE_CONFIG_DIR 会挂死（P8 实证）——preflight 第一闸门，未隔离即拒跑
   assertCliConfigDir(process.env.CLAUDE_CONFIG_DIR)
   // P6 T9: 纯单测 import @/lib/orchestrator → @/lib/db 会让 prisma libsql 连接把 p5.db 切进 WAL 模式，
