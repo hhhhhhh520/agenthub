@@ -53,6 +53,7 @@ dev.db-wal
 experiments/p5/p5.db*
 experiments/p5/results/
 experiments/p5/work/
+experiments/p5/.claude-cfg/
 
 # agent workspaces
 workspaces/
