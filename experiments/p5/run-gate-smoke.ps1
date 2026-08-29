@@ -11,7 +11,7 @@ $env:GLM_BASE_URL  = $envMap['GLM_BASE_URL']
 $env:GLM_MODEL     = $envMap['GLM_MODEL']
 $env:CLAUDE_CONFIG_DIR = Join-Path $p5 '.claude-cfg'
 if ($args.Count -gt 0 -and $args[0] -eq 'gate') { $env:P7_GATE = '1'; $log = 'p9b-gate.log' }
-elseif ($args.Count -gt 1 -and $args[0] -eq 'pilot') { $env:P7_GATE = '1'; $env:P7_GATE_CELL = 'off+verify|A'; $env:GLM_MODEL = $args[1]; $log = 'p9b-pilot.log' }
+elseif ($args.Count -gt 1 -and $args[0] -eq 'pilot') { $env:P7_GATE = '1'; $env:P7_GATE_CELL = 'off+verify|A'; $env:GLM_MODEL = $args[1]; if ($args.Count -gt 2) { $env:GLM_BASE_URL = $args[2] }; if ($args.Count -gt 3) { $env:GLM_API_KEY = $args[3] }; $log = 'p9b-pilot.log' }
 else { $env:P9_ARMS = '1'; $log = 'p9b-strong.log' }
 $inner = "npx vitest run --config experiments/p5/vitest.config.ts experiments/p5/run.test.ts > experiments\p5\results\$log 2>&1"
 $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $inner -WorkingDirectory $repo -PassThru -WindowStyle Hidden
