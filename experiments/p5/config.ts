@@ -15,6 +15,18 @@ export const envForConfig = (config: string) => ({
  *  驱动循环跳过 no-verify 格。未设=全 5 配置，P6/P7 行为不变。 */
 export const isP9ArmsOnly = (env: NodeJS.ProcessEnv = process.env): boolean => env.P9_ARMS === '1'
 
+/** T6 探带需要非默认过滤格：P7_GATE=1 时单元格由 P7_GATE_CELL="<config>|<A|B|C>" 指定，
+ *  缺省保持 on-seqgate+verify|A（冒烟既有格）。格式非法直接 throw（fail-closed，不允许静默回退跑错格）。 */
+export const parseGateCell = (env: NodeJS.ProcessEnv = process.env): { config: string; taskId: 'A' | 'B' | 'C' } | null => {
+  if (env.P7_GATE !== '1') return null
+  const raw = env.P7_GATE_CELL || 'on-seqgate+verify|A'
+  const [config, taskId, extra] = raw.split('|')
+  if (!config || extra || (taskId !== 'A' && taskId !== 'B' && taskId !== 'C')) {
+    throw new Error(`P7_GATE_CELL 格式非法（应为 "<config>|A|B|C 之一"）: ${raw}`)
+  }
+  return { config, taskId }
+}
+
 export const CONFIG = {
   model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
