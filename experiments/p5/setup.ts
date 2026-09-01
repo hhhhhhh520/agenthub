@@ -108,7 +108,7 @@ export async function ensureExperimentAgents(): Promise<void> {
  *  宁严勿松是 fail-closed 方向：preflight 正文本应只有「就绪」，命中签名即判环境不判模型。
  *  发射前复核 #4：数字 token 加词边界，防 latency/正文裸数字子串误伤。 */
 export function detectPreflightError(text: string): string | null {
-  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|"error"\s*:/i)
+  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|未返回有效内容|"error"\s*:/i)
   return m ? m[0] : null
 }
 
