@@ -1,9 +1,17 @@
-# P10 launcher v7. Modes:
+# P10 launcher v7.1. Modes:
 #   gate            = smoke cell (on-seqgate+verify x A x5), same as v6
 #   pilot <modelId> = band probe cell (off+verify x A x5), model override ONLY (baseUrl/key single-slot from .env.local)
 #   sentinel        = preflight-only control run (P5_SENTINEL=1)
 #   matrix (no arg) = 45-run full matrix (P9_ARMS=1)
-#   check <expectedPassed> [logName] [allowSkipped] [expectRows] = machine verdict (F3/F4/F12); expectRows default=expectedPassed
+#   check [logName] [batch|sentinel] = machine verdict (batch default). v7's positional
+#     expectedPassed/allowSkipped/expectRows form is RETIRED (v7.1, plan Step7-3): batch verdict now reads the
+#     harness's own [P5-BATCH] runs= rows= marker and cross-checks it against the real metrics.jsonl line count,
+#     so it no longer depends on vitest's passed count (that number includes ~44 always-run unit tests whose
+#     count drifts as tasks are added — the 44-off false-FAIL trap).
+# VERDICT READING (Step7-6, contract unchanged by v7.1): ENV_SUSPECT keeps exit 0 by design -- the env assertion
+#   is a three-value reading (VALID / SUSPECT / not-checked), not a pass-fail. CHECK OK + ENV_SUSPECT means
+#   "batch completed but every run is a floor reading (H4 invalid)". T6/T7 MUST grep the text markers; keying
+#   only off $LASTEXITCODE scores a dead-environment batch as a pass.
 # Keys never on cmdline (F9). No Chinese literals (PS 5.1 GBK). Paths via $PSScriptRoot.
 $ErrorActionPreference = 'Stop'
 $p5 = $PSScriptRoot
@@ -16,11 +24,15 @@ function Get-KeyFp8([string]$k) {
 }
 
 if ($args.Count -gt 0 -and $args[0] -eq 'check') {
-  $expected = [int]$args[1]
-  $log = ''; $allowSkipped = 0; $expectRows = $expected
-  if ($args.Count -gt 2 -and $args[2]) { $log = $args[2] }
-  if ($args.Count -gt 3) { $allowSkipped = [int]$args[3] }
-  if ($args.Count -gt 4) { $expectRows = [int]$args[4] }
+  # v7.1 tokenized verdict (plan Step7-3). v7's positional expectedPassed/allowSkipped/expectRows are RETIRED.
+  $log = ''; $kind = 'batch'
+  if ($args.Count -gt 1) { $log = [string]$args[1] }
+  if ($args.Count -gt 2) { $kind = [string]$args[2] }
+  if ($args.Count -gt 3) { Write-Output "CHECK FAIL: usage: check [logName] [batch|sentinel] (got $($args.Count - 1) args)"; exit 1 }
+  if ($kind -ne 'batch' -and $kind -ne 'sentinel') { Write-Output "CHECK FAIL: usage: unknown check kind '$kind' (expect batch|sentinel)"; exit 1 }
+  # A bare number here means the operator is still on v7's retired `check <expectedPassed> ...` form — say so
+  # instead of reporting a confusing "log not found".
+  if ($log -match '^\d+$') { Write-Output "CHECK FAIL: usage: check takes [logName] [batch|sentinel]; the positional expectedPassed form was retired in v7.1 (got '$log')"; exit 1 }
   if (-not $log) {
     $newest = Get-ChildItem $results -Filter 'p10-*.log' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $newest) { Write-Output 'CHECK FAIL: no p10-*.log found'; exit 1 }
@@ -36,20 +48,43 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
   if (-not $logPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     Write-Output "CHECK FAIL: log must be a file inside results/, not a path: $log"; exit 1
   }
+  if (-not (Test-Path -LiteralPath $logPath)) { Write-Output "CHECK FAIL: log not found: $log"; exit 1 }
   $content = Get-Content -LiteralPath $logPath -Raw
   if ($content -match 'Tests\s+(\d+) failed') { Write-Output "CHECK FAIL: $($Matches[1]) failed in $log"; exit 1 }
-  if ($content -notmatch "Tests\s+$expected passed") { Write-Output "CHECK FAIL: summary '$expected passed' not found in $log (silent-skip or wrong count?)"; exit 1 }
-  if ($allowSkipped -eq 0 -and $content -match '(\d+) skipped') { Write-Output "CHECK FAIL: skipped=$($Matches[1]) (expect 0) in $log"; exit 1 }
   if ($content -match '\b429\b|HTTP/1\.[01] 429|rate.?limit|overloaded|retry-after|too many') { Write-Output 'WARN THROTTLE SIGNATURES PRESENT' }
+
+  if ($kind -eq 'sentinel') {
+    # Control group: preflight-only. No [P5-BATCH] marker exists by design (the matrix describe is skipped).
+    if ($content -notmatch '\[preflight\]') { Write-Output "CHECK FAIL: no [preflight] line in $log (sentinel never reached preflight)"; exit 1 }
+    if ($content -notmatch 'Tests\s+\d+ passed') { Write-Output "CHECK FAIL: no passed summary in $log (sentinel batch silent-skipped?)"; exit 1 }
+    Write-Output "CHECK OK sentinel log=$log"
+    exit 0
+  }
+
+  # batch: cross-check the harness's own marker against the on-disk ledger. What the triple
+  # (marker runs == marker rows == actual metrics.jsonl lines) actually proves is *ledger consistency*: the batch
+  # registered N runs, all N landed, and nothing was lost or padded. It does NOT prove N real LLM round-trips --
+  # run-one.ts:152-172 appends a row per ATTEMPTED run too (its error path writes minimalErrorRow with
+  # totalTransitions=0), so a batch of dead calls can still show runs==rows==45. The floor/environment reading
+  # is ENV_VALID below, which is deliberately weak (>=1 live row); the per-run truth is failureMode in the
+  # ledger itself, which T6/T7 read directly.
+  if ($content -notmatch '\[P5-BATCH\] runs=(\d+) rows=(\d+)') { Write-Output "CHECK FAIL: no [P5-BATCH] marker in $log (batch describe skipped, or died before afterAll)"; exit 1 }
+  $runs = [int]$Matches[1]; $mrows = [int]$Matches[2]
+  if ($runs -lt 1) { Write-Output "CHECK FAIL: marker runs=$runs < 1 (zero-LLM batch: gate cell filtered everything out?)"; exit 1 }
+  if ($runs -ne $mrows) { Write-Output "CHECK FAIL: marker runs=$runs != rows=$mrows (registered runs did not land, OR the ledger was unreadable -- loadMetrics() returns [] on any bad line)"; exit 1 }
   $mj = Join-Path $results 'metrics.jsonl'
   $rows = @()
-  if (Test-Path $mj) { $rows = @(Get-Content $mj | Where-Object { $_ }) }
-  if ($rows.Count -lt $expectRows) { Write-Output "CHECK FAIL: metrics rows $($rows.Count) < expectRows $expectRows"; exit 1 }
-  if ($expectRows -gt 0) {
-    $live = @($rows | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object { $_.rounds -ge 2 -and $_.totalTransitions -gt 0 })
-    if ($live.Count -ge 1) { Write-Output 'ENV_VALID: >=1 run rounds>=2 && trans>0' } else { Write-Output 'ENV_SUSPECT: every run rounds<2 or trans=0 (H4 floor readings INVALID)' }
+  if (Test-Path $mj) { $rows = @(Get-Content -LiteralPath $mj | Where-Object { $_ }) }
+  if ($rows.Count -ne $mrows) { Write-Output "CHECK FAIL: metrics.jsonl lines $($rows.Count) != marker rows=$mrows"; exit 1 }
+  $live = 0; $rowIdx = 0
+  foreach ($r in $rows) {
+    $rowIdx++
+    # Step7-5: a corrupt ledger must come back as a marked verdict, not a bare PS exception blob.
+    try { $o = $r | ConvertFrom-Json } catch { Write-Output "CHECK FAIL: metrics.jsonl unparseable at line $rowIdx"; exit 1 }
+    if ($o.rounds -ge 2 -and $o.totalTransitions -gt 0) { $live++ }
   }
-  Write-Output "CHECK OK rows=$($rows.Count) log=$log"
+  if ($live -ge 1) { Write-Output 'ENV_VALID: >=1 run rounds>=2 && trans>0' } else { Write-Output 'ENV_SUSPECT: every run rounds<2 or trans=0 (H4 floor readings INVALID)' }
+  Write-Output "CHECK OK rows=$($rows.Count) runs=$runs log=$log"
   exit 0
 }
 
@@ -71,7 +106,10 @@ foreach ($l in $lines) { $k, $v = $l.Split('=', 2); $envMap[$k.Trim()] = $v.Trim
 foreach ($k in 'GLM_API_KEY', 'GLM_BASE_URL', 'GLM_MODEL') {
   if (-not $envMap[$k]) { Write-Output "LAUNCH BLOCKED: .env.local missing $k (all-or-none rule)"; exit 1 }
 }
-if ($envMap['GLM_BASE_URL'] -notmatch '^https://([A-Za-z0-9.-]+\.)?(openrouter\.ai|xf-yun\.com|volces\.com|bigmodel\.cn)$') {
+# Step7-1 (finding 1, option A): the v7 anchor sat on the hostname end, so every real endpoint was rejected —
+# Claude-CLI bridging to a non-Anthropic provider NEEDS a path (/anthropic, /api). Host is still pinned:
+# openrouter.ai.evil.com fails (no '/' at that position) and http:// still fails.
+if ($envMap['GLM_BASE_URL'] -notmatch '^https://([A-Za-z0-9.-]+\.)?(openrouter\.ai|xf-yun\.com|volces\.com|bigmodel\.cn)(/.*)?$') {
   Write-Output "LAUNCH BLOCKED: GLM_BASE_URL fails https+host whitelist: $($envMap['GLM_BASE_URL'])"; exit 1
 }
 $env:GLM_API_KEY = $envMap['GLM_API_KEY']
@@ -79,6 +117,11 @@ $env:GLM_BASE_URL = $envMap['GLM_BASE_URL']
 $env:GLM_MODEL = $envMap['GLM_MODEL']
 $env:CLAUDE_CONFIG_DIR = Join-Path $p5 '.claude-cfg'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+# Step7-4 (finding 新B, proved: a stale P5_SENTINEL=1 in the operator's shell collapsed a matrix batch from 89
+# collected tests to 45 — a 45-run batch silently became a single preflight call that "passed"). Clear every
+# mode switch first, then set only the one this mode owns. Inactive semantics hold under strict equality:
+# parseGateCell (config.ts:21 `!== '1'`), isP9ArmsOnly (:16 `=== '1'`), SENTINEL (run.test.ts:652 `=== '1'`).
+$env:P7_GATE = ''; $env:P7_GATE_CELL = ''; $env:P9_ARMS = ''; $env:P5_SENTINEL = ''
 switch ($mode) {
   'gate'     { $env:P7_GATE = '1'; $model = $envMap['GLM_MODEL']; $log = "p10-gate-$stamp.log" }
   'pilot'    {
