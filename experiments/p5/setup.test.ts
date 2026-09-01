@@ -14,7 +14,7 @@ vi.mock('@/lib/db', () => ({
 }))
 
 import { CONFIG } from './config'
-import { assertCliConfigDir, ensureExperimentAgents, isValidModelId, scrubInheritedProviderEnv, setupExperiment } from './setup'
+import { assertCliConfigDir, detectPreflightError, ensureExperimentAgents, isValidModelId, scrubInheritedProviderEnv, setupExperiment } from './setup'
 
 afterAll(() => {
   // 防御：同 worker 顺序执行时恢复 env，不污染其他文件（含 GLM_API_KEY——throw 测试会改它）
@@ -160,5 +160,19 @@ describe('P9-乙 T5-1: scrubInheritedProviderEnv', () => {
     await expect(setupExperiment()).rejects.toThrow('CLAUDE_CONFIG_DIR')
     expect(process.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
     delete process.env.CLAUDE_CONFIG_DIR
+  })
+})
+
+describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）', () => {
+  it('detectPreflightError 命中黑名单', () => {
+    for (const bad of ['API Error: 401 Unauthorized', 'HTTP 429 Too Many Requests', '{"error":{"message":"overloaded"}}', '您的额度不足', '请求过于频繁', 'Service Unavailable', 'invalid api key']) {
+      expect(detectPreflightError(bad)).toBeTruthy()
+    }
+  })
+  it('不误伤正常回复/裸数字子串；含 quota 的正文宁严勿松照拦', () => {
+    expect(detectPreflightError('就绪')).toBeNull()
+    expect(detectPreflightError('OK! 一切正常')).toBeNull()
+    expect(detectPreflightError('a 20403 number and latency=14290ms')).toBeNull() // 复核#4：数字必须词边界
+    expect(detectPreflightError('a text about quota policies')).toBe('quota')
   })
 })
