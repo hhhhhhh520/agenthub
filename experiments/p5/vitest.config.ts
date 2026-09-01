@@ -10,8 +10,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['**/run.test.ts', '**/setup.test.ts', '**/analyze-cross-batch.test.ts'],
-    testTimeout: 30 * 60 * 1000,      // 单 run 上限（含决策/补拆/执行 mock）
-    hookTimeout: 30 * 60 * 1000,      // beforeAll setup 跑真实 preflight，与 testTimeout 同值
+    testTimeout: 35 * 60 * 1000,      // P10 F7：比 CONFIG.timeoutMs(30min) 多 5min——内部 deadline 必先触发，kill+finally+teardown 有余量
+    hookTimeout: 35 * 60 * 1000,      // beforeAll 真实 preflight，同值
     fileParallelism: false,
     env: {
       DATABASE_URL: 'file:D:/ai全栈挑战赛/agenthub/experiments/p5/p5.db', // 绝对路径，消除 cwd 歧义

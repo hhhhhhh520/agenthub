@@ -649,14 +649,15 @@ describe('P9-乙 T5: 三臂门控 P9_ARMS', () => {
 
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
-describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
+const SENTINEL = process.env.P5_SENTINEL === '1'
+describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
   // setupExperiment 仅 30-run 需要（建库 + 实验 agents + preflight 真 LLM 调用）。
   // harness 纯函数单测不调它——preflight 需要真实 GLM key，无 key 时只跑单测 describe
   beforeAll(async () => {
     // 幂等重置：跨次运行不留旧 metrics.jsonl（否则 30-run 重跑叠加成 60/90 行，破坏每格 N=5 受控对比，T7 stats 会错）
     rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
     await setupExperiment()
-  }, 30 * 60 * 1000)
+  }, 35 * 60 * 1000)
   afterAll(async () => {
     // 生成报告（Spec §11）
     const report = generateReport(loadMetrics())
@@ -680,8 +681,13 @@ describe.skipIf(!process.env.GLM_API_KEY)('P5 pilot: 受控实验全矩阵跑批
           expect(m.runId).toBeTruthy()
           expect(typeof m.pass).toBe('boolean')
           expect(m.rounds).toBeGreaterThanOrEqual(0)
-        }, 30 * 60 * 1000)
+        }, 35 * 60 * 1000)
       }
     }
   }
+})
+
+// P10（spec §2.2-③）：控制组哨兵——只跑 setupExperiment（含 preflight），探带批末「判环境不判模型」回归用
+describe.skipIf(!SENTINEL || !process.env.GLM_API_KEY)('P10 sentinel: preflight-only（控制组回归）', () => {
+  it('setupExperiment preflight 通过', async () => { await setupExperiment() }, 5 * 60 * 1000)
 })
