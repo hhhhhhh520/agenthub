@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar } from './stats'
 import { CONFIG } from './config'
@@ -13,6 +14,12 @@ export function generateReport(metrics: RunMetrics[]): string {
   const lines: string[] = []
   lines.push('# P5 Pilot Report', '')
   lines.push(`> model: ${CONFIG.model} | baseUrl: ${process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go'} | runsPerCell: ${CONFIG.runsPerCell} | escalateLimit: ${CONFIG.escalateLimit} | maxRounds: ${CONFIG.maxRounds}`)
+  // P10（spec §2.3 / 审查 F5）：环境快照段——P9-F4「报告回显 env 供人眼终检」补票；key 永不回显本体
+  lines.push('', '## 环境快照')
+  const envOr = (k: string) => process.env[k] ?? '(unset)'
+  lines.push(`- EXPERIMENT_STATE_MACHINE=${envOr('EXPERIMENT_STATE_MACHINE')} | EXPERIMENT_VERIFY=${envOr('EXPERIMENT_VERIFY')} | EXPERIMENT_SEQGATE=${envOr('EXPERIMENT_SEQGATE')}`)
+  lines.push(`- P7_GATE=${envOr('P7_GATE')} | P7_GATE_CELL=${envOr('P7_GATE_CELL')} | P9_ARMS=${envOr('P9_ARMS')} | P5_SENTINEL=${envOr('P5_SENTINEL')}`)
+  lines.push(`- seed 集=[0,1,2,3,4] | key 指纹=${process.env.GLM_API_KEY ? createHash('sha256').update(process.env.GLM_API_KEY).digest('hex').slice(0, 8) : '(no key)'}（sha256 前 8 位）`)
   lines.push(`> 执行 mock（executeTaskBatch + monitoring 恒不纠正）| 决策真实 LLM`)
   // Spec §6：混淆变量必须固定，报告写明罐头消息
   lines.push(`> 罐头消息: ${JSON.stringify(CONFIG.cannedReplies)}`)
@@ -45,7 +52,7 @@ export function generateReport(metrics: RunMetrics[]): string {
       const on = bySeed(metrics, `on+${verify}`, taskId)
       const off = bySeed(metrics, `off+${verify}`, taskId)
       const m = pairedMcNemar(off, on) // b=OFF 过 ON 败；c=OFF 败 ON 过
-      lines.push(`- ${taskId} (${verify}): ON+${verify} ${on.filter(Boolean).length}/${on.length} vs OFF+${verify} ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+      lines.push(`- ${taskId} (${verify}): ON+${verify} ${on.filter(Boolean).length}/${on.length} vs OFF+${verify} ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p_exact=${m.pExact.toFixed(3)} p_asym≈${m.pValue.toFixed(3)}`)
     }
   }
   // P9-乙 T3: seqgate 臂配对（OFF vs ON-seqgate，verify 固定）
@@ -54,7 +61,7 @@ export function generateReport(metrics: RunMetrics[]): string {
     if (onSeqgate.length === 0) continue
     const off = bySeed(metrics, 'off+verify', taskId)
     const m = pairedMcNemar(off, onSeqgate) // b=OFF 过 ON-seqgate 败；c=OFF 败 ON-seqgate 过
-    lines.push(`- ${taskId} (seqgate): ON-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} vs OFF+verify ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+    lines.push(`- ${taskId} (seqgate): ON-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} vs OFF+verify ${off.filter(Boolean).length}/${off.length} | b=${m.b} c=${m.c} p_exact=${m.pExact.toFixed(3)} p_asym≈${m.pValue.toFixed(3)}`)
   }
   // —— P9-乙 T3: seqgate 臂增量小节（ON vs ON-seqgate 同臂配对 + seqgate 触发合计）——
   lines.push('', '## seqgate 臂增量（ON vs ON-seqgate）')
@@ -63,7 +70,7 @@ export function generateReport(metrics: RunMetrics[]): string {
     if (onSeqgate.length === 0) continue
     const on = bySeed(metrics, 'on+verify', taskId)
     const m = pairedMcNemar(on, onSeqgate) // b=ON 过 ON-seqgate 败；c=ON 败 ON-seqgate 过
-    lines.push(`- ${taskId}: on+verify ${on.filter(Boolean).length}/${on.length} vs on-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+    lines.push(`- ${taskId}: on+verify ${on.filter(Boolean).length}/${on.length} vs on-seqgate+verify ${onSeqgate.filter(Boolean).length}/${onSeqgate.length} | b=${m.b} c=${m.c} p_exact=${m.pExact.toFixed(3)} p_asym≈${m.pValue.toFixed(3)}`)
   }
   {
     // 合计行：optional 字段 ?? 0 合并旧行（P6/P7 批 JSONL 无该字段，防 NaN）
@@ -81,7 +88,7 @@ export function generateReport(metrics: RunMetrics[]): string {
       const verify = bySeed(metrics, `${sm}+verify`, taskId)
       const noVerify = bySeed(metrics, `${sm}+no-verify`, taskId)
       const m = pairedMcNemar(noVerify, verify) // b=no-verify 过 verify 败；c=no-verify 败 verify 过
-      lines.push(`- ${taskId} (${sm}): ${sm}+verify ${verify.filter(Boolean).length}/${verify.length} vs ${sm}+no-verify ${noVerify.filter(Boolean).length}/${noVerify.length} | b=${m.b} c=${m.c} p≈${m.pValue.toFixed(3)}`)
+      lines.push(`- ${taskId} (${sm}): ${sm}+verify ${verify.filter(Boolean).length}/${verify.length} vs ${sm}+no-verify ${noVerify.filter(Boolean).length}/${noVerify.length} | b=${m.b} c=${m.c} p_exact=${m.pExact.toFixed(3)} p_asym≈${m.pValue.toFixed(3)}`)
     }
   }
 

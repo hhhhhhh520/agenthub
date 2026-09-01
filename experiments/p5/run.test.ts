@@ -6,7 +6,7 @@ import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
-import { bootstrapCI, pairedMcNemar, seedNoise } from './stats'
+import { bootstrapCI, mcnemarExact, pairedMcNemar, seedNoise } from './stats'
 import { generateReport } from './report'
 
 // —— vi.mock 注入（Spec §5.2，必须在 src 模块首次 import 前）——
@@ -301,6 +301,32 @@ describe('P5 stats', () => {
     expect(r.b).toBe(3)
     expect(r.c).toBe(0)
     expect(r.pValue).toBeLessThan(0.1)
+  })
+  it('mcnemarExact: b=0,c=4 → 0.125（P9-乙 C 格校准锚点）；b+c=0 → 1；n=1 → 1；b=0,c=8 → 0.0078125', () => {
+    expect(mcnemarExact(0, 4)).toBeCloseTo(0.125, 6)
+    expect(mcnemarExact(0, 0)).toBe(1)
+    expect(mcnemarExact(1, 0)).toBe(1)
+    expect(mcnemarExact(0, 8)).toBeCloseTo(0.0078125, 8)
+  })
+  it('pairedMcNemar 增 pExact：off全败on全过 → b=0 c=4，渐近≈0.0455 与精确 0.125 并列', () => {
+    const r = pairedMcNemar([false, false, false, false], [true, true, true, true])
+    expect(r.b).toBe(0); expect(r.c).toBe(4)
+    expect(r.pValue).toBeCloseTo(0.0455, 3)
+    expect(r.pExact).toBeCloseTo(0.125, 5)
+  })
+  it('generateReport 含环境快照段与 p_exact 行（P10 读分标记）', () => {
+    const mk = (config: string, seed: number, pass: boolean): RunMetrics => ({
+      runId: `${config}-${seed}`, config: config as RunMetrics['config'], taskId: 'A', seed, pass,
+      failureMode: pass ? 'pass' : 'no-pass', rounds: 5, escalateCount: 0, correctionCount: 0,
+      illegalProposalCount: 0, totalTransitions: 3, latencyMs: 1000, tracePath: 'x',
+    })
+    const rows: RunMetrics[] = []
+    for (let s = 0; s < 5; s++) rows.push(mk('off+verify', s, false))
+    for (let s = 0; s < 5; s++) rows.push(mk('on+verify', s, s < 4))
+    const rep = generateReport(rows)
+    expect(rep).toContain('## 环境快照')
+    expect(rep).toContain('p_exact=')
+    expect(rep).toContain('key 指纹')
   })
   it('seedNoise: 全同 → 0 方差', () => {
     const ns = seedNoise([
