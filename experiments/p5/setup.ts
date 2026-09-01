@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -103,20 +104,34 @@ export async function ensureExperimentAgents(): Promise<void> {
   }
 }
 
-/** preflight：1 次真实决策调用验证 CLI + provider 可用（默认 opencode.ai/zen/go + deepseek-v4-flash），失败快速失败不烧 30 次（Spec §7.2） */
+/** P10（F3）：CLI 会把 provider 错误当正文返回（401 合成文本先例）——「非空白即通过」会把环境故障判成就绪。
+ *  宁严勿松是 fail-closed 方向：preflight 正文本应只有「就绪」，命中签名即判环境不判模型。
+ *  发射前复核 #4：数字 token 加词边界，防 latency/正文裸数字子串误伤。 */
+export function detectPreflightError(text: string): string | null {
+  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|"error"\s*:/i)
+  return m ? m[0] : null
+}
+
+/** P10 加固：耗时+key 指纹（非 key 本体）回显建立 R1 读分基线（走 console.log 进 .log，T6 Step0 抄录）；
+ *  空文本/错误签名都 throw（快速失败不烧批）。返回 void——复核 #7：无消费方的字段不返回。 */
 export async function preflightDecision(): Promise<void> {
   const { prisma } = await import('@/lib/db')
   const orch = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
   if (!orch) throw new Error('preflight: 无 orchestrator agent')
-  // 走 executeSingleAgent 一次真实调用（deepseek-v4-flash），验证 spawn CLI + provider 配好
+  const key = process.env.GLM_API_KEY ?? ''
+  const fingerprint8 = createHash('sha256').update(key).digest('hex').slice(0, 8)
   const { executeSingleAgent } = await import('@/lib/orchestrator')
+  const t0 = Date.now()
   const { result } = await executeSingleAgent(
     { name: orch.name, systemPrompt: orch.systemPrompt, platform: orch.platform, model: orch.model, baseUrl: orch.baseUrl, apiKey: orch.apiKey },
-    '只回复两个字：就绪',
-    '',
-    () => {}
+    '只回复两个字：就绪', '', () => {},
   )
-  if (!result || !result.trim()) throw new Error('preflight: LLM 返回空，provider 未配好')
+  const latencyMs = Date.now() - t0
+  const reply = (result ?? '').slice(0, 60)
+  console.log(`[preflight] model=${CONFIG.model} baseUrl=${orch.baseUrl} latency=${latencyMs}ms key#${fingerprint8} reply="${reply}"`)
+  if (!result || !result.trim()) throw new Error(`preflight: LLM 返回空（latency=${latencyMs}ms, key#${fingerprint8}）——provider 未配好`)
+  const sig = detectPreflightError(result)
+  if (sig) throw new Error(`preflight: 回复含 provider 错误签名「${sig}」（latency=${latencyMs}ms, key#${fingerprint8}）——环境故障，不得进探带读数`)
 }
 
 /** 主入口：pilot beforeAll 调 */
