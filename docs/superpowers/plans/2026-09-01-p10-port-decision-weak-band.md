@@ -1,7 +1,7 @@
 # P10 实施计划：移植回顾决策 × 弱模型探带
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-> **状态：待安全审查（pre-flight，向用户展示前必跑 Security Engineer 复核本计划）**
+> **状态：发射前安全复核完成（PROCEED_WITH_FIXES）——复核 #1-#7 已全部并入本文件（内联超时 35min、throttle 词边界、孤儿闸门列单+P5_FORCE_LAUNCH 通道、preflight 数字边界+void 化、T4/T5 注记），待执行开工**
 
 **Goal:** 落地 P10 spec v2（`docs/superpowers/specs/2026-09-01-p10-port-decision-weak-band-design.md`，git `55f81f9`）：线一 seqgate 移植回顾决策（离线快照分析）+ 线二 OpenRouter 中间带探带与条件 45-run 弱模型批，含双视角审查并入的统计精确化与发射加固。
 
@@ -139,7 +139,7 @@ git commit -m "feat(p5): P10 T1 精确McNemar+report环境快照（统计口径�
 - Test: `experiments/p5/setup.test.ts`（追加 describe）
 
 **Interfaces:**
-- Produces: `detectPreflightError(text: string): string | null`；`preflightDecision(): Promise<{ latencyMs: number; keyFingerprint8: string; replyExcerpt: string }>`（`setupExperiment` 调用点 await 不变，返回新对象向后兼容）。
+- Produces: `detectPreflightError(text: string): string | null`；`preflightDecision(): Promise<void>`（加固回显走 console.log 进 .log——发射前复核 #7：不返回未消费字段，避免"设计了但未集成"；T6 Step0 从日志抄 latency 基线）。`setupExperiment` 调用点不变。
 
 - [ ] **Step 1: 写失败测试（setup.test.ts，import 行补 `detectPreflightError`）**
 
@@ -150,9 +150,10 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
       expect(detectPreflightError(bad)).toBeTruthy()
     }
   })
-  it('detectPreflightError 不误伤正常回复；含 quota 的正文宁严勿松照拦', () => {
+  it('不误伤正常回复/裸数字子串；含 quota 的正文宁严勿松照拦', () => {
     expect(detectPreflightError('就绪')).toBeNull()
     expect(detectPreflightError('OK! 一切正常')).toBeNull()
+    expect(detectPreflightError('a 20403 number and latency=14290ms')).toBeNull() // 复核#4：数字必须词边界
     expect(detectPreflightError('a text about quota policies')).toBe('quota')
   })
 })
@@ -164,14 +165,16 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
 
 ```ts
 /** P10（F3）：CLI 会把 provider 错误当正文返回（401 合成文本先例）——「非空白即通过」会把环境故障判成就绪。
- *  宁严勿松是 fail-closed 方向：preflight 正文本应只有「就绪」，命中签名即判环境不判模型。 */
+ *  宁严勿松是 fail-closed 方向：preflight 正文本应只有「就绪」，命中签名即判环境不判模型。
+ *  发射前复核 #4：数字 token 加词边界，防 latency/正文裸数字子串误伤。 */
 export function detectPreflightError(text: string): string | null {
-  const m = text.match(/401|403|429|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|"error"\s*:/i)
+  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|"error"\s*:/i)
   return m ? m[0] : null
 }
 
-/** P10 加固：耗时+key 指纹（非 key 本体）回显建立 R1 读分基线；空文本/错误签名都 throw（快速失败不烧批） */
-export async function preflightDecision(): Promise<{ latencyMs: number; keyFingerprint8: string; replyExcerpt: string }> {
+/** P10 加固：耗时+key 指纹（非 key 本体）回显建立 R1 读分基线（走 console.log 进 .log，T6 Step0 抄录）；
+ *  空文本/错误签名都 throw（快速失败不烧批）。返回 void——复核 #7：无消费方的字段不返回。 */
+export async function preflightDecision(): Promise<void> {
   const { prisma } = await import('@/lib/db')
   const orch = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
   if (!orch) throw new Error('preflight: 无 orchestrator agent')
@@ -189,11 +192,10 @@ export async function preflightDecision(): Promise<{ latencyMs: number; keyFinge
   if (!result || !result.trim()) throw new Error(`preflight: LLM 返回空（latency=${latencyMs}ms, key#${fingerprint8}）——provider 未配好`)
   const sig = detectPreflightError(result)
   if (sig) throw new Error(`preflight: 回复含 provider 错误签名「${sig}」（latency=${latencyMs}ms, key#${fingerprint8}）——环境故障，不得进探带读数`)
-  return { latencyMs, keyFingerprint8: fingerprint8, replyExcerpt: reply }
 }
 ```
 
-- [ ] **Step 4: 测试** `npx vitest run --config experiments/p5/vitest.config.ts setup.test.ts` 全绿；再全量 `npx vitest run --config experiments/p5/vitest.config.ts` → 无 key 环境仅真 LLM describe skip、其余绿（旧 setup 测试若断言 preflight void 返回，按新返回对象修断言——预期只有调用方式无断言）。
+- [ ] **Step 4: 测试** `npx vitest run --config experiments/p5/vitest.config.ts setup.test.ts` 全绿；再全量 `npx vitest run --config experiments/p5/vitest.config.ts` → 无 key 环境仅真 LLM describe skip、其余绿（`preflightDecision` 保持 `Promise<void>` 签名不变——复核 #7 定案，既有测试断言不受影响）。
 
 - [ ] **Step 5: 三视角审查 + 提交**
 
@@ -214,12 +216,16 @@ git commit -m "feat(p5): P10 T2 preflight错误签名黑名单+耗时/指纹回�
 **Interfaces:**
 - Produces: 模式 `gate` / `pilot <modelId>`（**无 baseUrl/key 参数**，单槽 .env.local 是唯一切换面）/ `sentinel` / `matrix`（无参默认）/ `check <expectedPassed> [logName] [allowSkipped] [expectRows]`；check 输出标记 `CHECK OK`(exit0) / `CHECK FAIL`(exit1) / `ENV_VALID|ENV_SUSPECT` / `WARN THROTTLE`——T6/T7 读分全依赖。新 env `P5_SENTINEL==='1'`（严格相等）。
 
-- [ ] **Step 1: vitest.config.ts 超时错位（F7）** :13-14 改：
+- [ ] **Step 1: 超时错位（F7）——config + 内联两处都改（发射前复核 #1：inline 超时覆盖 config，只改 config = F7 静默失效）**
+
+`experiments/p5/vitest.config.ts` :13-14 改：
 
 ```ts
     testTimeout: 35 * 60 * 1000,      // P10 F7：比 CONFIG.timeoutMs(30min) 多 5min——内部 deadline 必先触发，kill+finally+teardown 有余量
     hookTimeout: 35 * 60 * 1000,      // beforeAll 真实 preflight，同值
 ```
+
+再在 `experiments/p5/run.test.ts` 执行 `grep -n '30 \* 60 \* 1000' experiments/p5/run.test.ts`（当前应为 :633 beforeAll 与 :657 逐 it 两处），**全部**改为 `35 * 60 * 1000`。CONFIG.timeoutMs（config.ts:44）保持 30min 不动——错位关系是：内部 deadline(30) < vitest 判死(35)。
 
 - [ ] **Step 2: run.test.ts sentinel 接线** :626 改（Grep `describe.skipIf(!process.env.GLM_API_KEY)` 定位）：
 
@@ -272,7 +278,7 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
   if ($content -match 'Tests\s+(\d+) failed') { Write-Output "CHECK FAIL: $($Matches[1]) failed in $log"; exit 1 }
   if ($content -notmatch "Tests\s+$expected passed") { Write-Output "CHECK FAIL: summary '$expected passed' not found in $log (silent-skip or wrong count?)"; exit 1 }
   if ($allowSkipped -eq 0 -and $content -match '(\d+) skipped') { Write-Output "CHECK FAIL: skipped=$($Matches[1]) (expect 0) in $log"; exit 1 }
-  if ($content -match '429|overloaded|retry-after|Too Many') { Write-Output 'WARN THROTTLE SIGNATURES PRESENT' }
+  if ($content -match '\b429\b|HTTP/1\.[01] 429|rate.?limit|overloaded|retry-after|too many') { Write-Output 'WARN THROTTLE SIGNATURES PRESENT' }
   $mj = Join-Path $results 'metrics.jsonl'
   $rows = @()
   if (Test-Path $mj) { $rows = @(Get-Content $mj | Where-Object { $_ }) }
@@ -288,7 +294,15 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
 # —— launch modes ——
 $mode = if ($args.Count -gt 0) { $args[0] } else { 'matrix' }
 $orphans = @(Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='claude.exe' OR Name='opencode.exe'" | Where-Object { $_.CommandLine -match '--model' })
-if ($orphans.Count -gt 0) { Write-Output "LAUNCH BLOCKED: $($orphans.Count) orphan CLI process(es) with --model (F7). Kill/wait then relaunch."; exit 1 }
+# Review #3: the bare --model filter also catches unrelated interactive CLI sessions (fail-safe: refuses, never kills).
+# It prints the list for triage; kill real experiment orphans, or set P5_FORCE_LAUNCH=1 (strict '1') when the list is all unrelated.
+if ($orphans.Count -gt 0 -and $env:P5_FORCE_LAUNCH -ne '1') {
+  $orphans | Select-Object -First 5 | ForEach-Object {
+    $cl = [string]$_.CommandLine; if ($cl.Length -gt 140) { $cl = $cl.Substring(0, 140) }
+    Write-Output "  orphan pid=$($_.ProcessId) name=$($_.Name) cmd=$cl"
+  }
+  Write-Output "LAUNCH BLOCKED: $($orphans.Count) --model process(es) (F7 gate). Triage list above; P5_FORCE_LAUNCH=1 to proceed if all unrelated."; exit 1
+}
 $lines = Get-Content (Join-Path $p5 '.env.local') | Where-Object { $_ -match '=' -and $_ -notmatch '^\s*#' }
 $envMap = @{}
 foreach ($l in $lines) { $k, $v = $l.Split('=', 2); $envMap[$k.Trim()] = $v.Trim() }
@@ -521,7 +535,9 @@ describe('renderReport', () => {
 /** P10 线一：seqgate 移植回顾决策（spec 2026-09-01 §2.1）——dev.db 快照只读分析，零 LLM。
  *  安全配方（审查 F1/F2/F6/F8/F10/F11/F13 并入）：快照副本 + query_only + write-self-test +
  *  fail-closed 前置闸门；禁 import @/lib/db（prisma-libsql 切 WAL + Windows 句柄泄漏，setup.ts:131 实证）；
- *  永不发 PRAGMA journal_mode=<设置>（只读取值）。 */
+ *  永不发 PRAGMA journal_mode=<设置>（只读取值）。
+ *  注（发射前复核 #5）：query_only 连接可能在快照目录留 -wal/-shm 伴生文件——副本 disposable 无害
+ *  （close 不释放句柄是 vitest runner 已知行为，本脚本走 tsx 单进程）；本脚本绝不对活体 dev.db 指路径。 */
 import { createClient, type Client } from '@libsql/client'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -713,7 +729,7 @@ git commit -m "feat(p5): P10 T4 线一analyze-port-replay（快照+query_only+fa
 
 - [ ] **Step 1: 跑分析** `npx -y --registry=https://registry.npmmirror.com tsx@4 experiments/p5/analyze-port-replay.ts`
   Expected: 输出 `BRANCH=3` + 聚合行 `扫描21/可分析0/命中0/截断0 → 分支3`（若 §0 探测后 dev.db 变化以实输出为准）；exit 0；`results/report-p10-port-decision.md` 出现。
-- [ ] **Step 2: 人工验报告**：打开报告确认快照元数据齐（sha256/journal_mode/三态计数），命中表为空或符合 §0 事实。
+- [ ] **Step 2: 人工验报告**：打开报告确认快照元数据齐（sha256/journal_mode/三态计数），命中表为空或符合 §0 事实。**若命令 exit 1 / 无 `BRANCH=` 行**：fail-closed 闸门触发（复核 #6）——看 stderr 找根因，此时**没有报告文件、不得手搓一份**；修复后重跑。
 - [ ] **Step 3: 落档（聚合数字 only）**——PROGRESS.md 待办表上方完成表加一行：
   `| P10-线一 | seqgate 移植回顾决策：**维持 env 门控不转正**（dev.db 快照可分析会话 0<20，分支3）；启动条件=可分析≥20 且命中≥5 重跑 analyze-port-replay | results/report-p10-port-decision.md | 2026-09-0X |`
   规划 §9.2 与 memory 各加同义一句话（本地文档，手动 Edit）。
@@ -804,5 +820,6 @@ Expected: `0`。清理前后计数记入 ISSUE-020。
 2. **占位符**：无 TBD；T6 候选名单允许「以目录实况定」属 spec 既定的计划化动作（附预期示例与筛选规则），非占位。
 3. **类型一致**：`pExact`（T1 产）↔ report 行（T1 内）；`P5_SENTINEL`（T3 两处）；`check` 第 4 参 `expectRows`（T3 定义 ↔ T6 Step0/check 1 <log> 1 0 调用）；`gateHits/decideBranch` 签名（T4 测试↔实现↔T5 消费）；`analyzeSessions` 返回 `PartialStats` + main 里 spread 补三字段成 `ReplayStats`——一致。
 4. **已知偏差声明**：`spec §2.2-① 的 metrics 行断言`实现为 check 模式 expectRows ≥ 判定（不是 ==），因为 resume 批行数可超——刻意保留。
+5. **发射前复核并入（Security Engineer PROCEED_WITH_FIXES，实证 15+ 承重假设全部对上 schema/migration/dev.db 实测）**：#1 run.test.ts 内联 30min 超时覆盖 config→T3 Step1 加两处 35min；#2 throttle `429` 裸子串误伤 latency 数字→词边界+HTTP/rate 短语；#3 孤儿闸门会拦无关交互会话→打印明细+`P5_FORCE_LAUNCH==='1'` 显式通道（fail-safe 不 kill）；#4 preflight 数字 token 加 `\b`（含负例测试）；#5 T4 注记（副本伴生文件无害/永不指活库）；#6 T5 fail-closed 无报告时看 stderr 禁止手搓；#7 preflightDecision 无消费方字段删除改回 void（防"设计了未集成"）。复核并确证：SQL 列名/表名、`+00:00` 日期格式、write-self-test 双分支、dev.db 实数（扫描21/可分析0/命中0→分支3）、vitest 下 argv 守卫、T1 四处替换行字节一致无旧断言冲突。
 
 
