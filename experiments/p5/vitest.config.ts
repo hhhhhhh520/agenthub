@@ -9,7 +9,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['**/run.test.ts', '**/setup.test.ts', '**/analyze-cross-batch.test.ts'],
+    include: ['**/run.test.ts', '**/setup.test.ts', '**/analyze-cross-batch.test.ts', '**/analyze-port-replay.test.ts'],
     testTimeout: 35 * 60 * 1000,      // P10 F7：比 CONFIG.timeoutMs(30min) 多 5min——内部 deadline 必先触发，kill+finally+teardown 有余量
     hookTimeout: 35 * 60 * 1000,      // beforeAll 真实 preflight，同值
     fileParallelism: false,
