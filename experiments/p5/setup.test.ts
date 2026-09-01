@@ -175,4 +175,7 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
     expect(detectPreflightError('a 20403 number and latency=14290ms')).toBeNull() // 复核#4：数字必须词边界
     expect(detectPreflightError('a text about quota policies')).toBe('quota')
   })
+  it('fix-r1：空结果被上游兜底文本替代（EMPTY_RESPONSE，orchestrator/index.ts:623-626）——哨兵必须在黑名单，否则全 error-chunk 故障判就绪', () => {
+    expect(detectPreflightError('[Agent 未返回有效内容]')).toBe('未返回有效内容')
+  })
 })
