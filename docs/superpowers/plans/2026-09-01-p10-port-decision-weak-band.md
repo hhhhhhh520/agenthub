@@ -355,6 +355,16 @@ git add --renormalize experiments/p5/run-gate-smoke.ps1 experiments/p5/vitest.co
 git commit -m "feat(p5): P10 T3 启动器v7(候选隔离/env断言/孤儿闸门/check机判)+35min超时错位+sentinel(F4/F7/F9/F12)"
 ```
 
+- [ ] **Step 7: T3 fix-r1（实现者上报 4 项经作者裁定后落地；提交 39e769e/d352d3a 后增补）**
+
+1. **baseUrl 白名单放路径**（发现1，方案A）：v7:64 正则改 `^https://([A-Za-z0-9.-]+\.)?(openrouter\.ai|xf-yun\.com|volces\.com|bigmodel\.cn)(/.*)?$`——主机仍锚死（`openrouter.ai.evil.com` 因尾随非 `/` 不匹配），只解耦 path；现存 `.env.local` 的 `…/anthropic` 与 OpenRouter `/api` 均放行。
+2. **preflight 黑名单补传输层签名**（发现2，PROBE A 实证：连接拒绝以正文返回判就绪）：setup.ts `detectPreflightError` alternation 加 `unable to connect|connectionrefused|econnrefused|fetch failed|\bapi error\b|\btimed? ?out\b`（数字类保持词边界风格）；setup.test.ts 补正例 `'API Error: Unable to connect to API (ConnectionRefused)'`。
+3. **check 标记化机判（消灭 44 单测漂移，发现C/新A）**：run.test.ts 矩阵 describe 内注册循环计数 `let batchExpected = 0`（每个注册的 LLM it +1），afterAll 在报告输出后追加 `console.log('[P5-BATCH] runs=' + batchExpected + ' rows=' + loadMetrics().length)`；check 模式签名改 `check [logName] [batch|sentinel]`（batch 默认）：batch 判据=无 failed 行 ∧ 命中 `\[P5-BATCH\] runs=(\d+)` ∧ runs≥1 ∧ runs==rows ∧ jsonl 实行数==rows ∧ ENV 地板（jsonl 为 harness 落盘，stdout 伪造不过）；sentinel 判据=无 failed ∧ 命中 `\[preflight\]` 行 ∧ 存在 `Tests\s+\d+ passed`。位置参数 expectedPassed/allowSkipped/expectRows 全部退役（`check 5 p10-synth.log` 旧形态不再有效——合成用例随之重写：log 含 marker 行 `[P5-BATCH] runs=5 rows=5` + 5 行 jsonl 才是正例；marker runs≠rows、缺 marker、rows=0 都是 FAIL 负例）。
+4. **跨模式 env 卫生（新B，实证 P5_SENTINEL 残留把矩阵降格成哨兵）**：switch 之前统一 `$env:P7_GATE=''; $env:P7_GATE_CELL=''; $env:P9_ARMS=''; $env:P5_SENTINEL=''` 再按模式置位（严格相等语义下 ''=未激活，已验证 parseGateCell/isP9ArmsOnly/SENTINEL 对 '' 均落非激活）。
+5. **check 用法守卫 + jsonl 解析 fail-closed 标记**（视角1 🟡×2）：参数非法（非数字/未知 mode 值）→ `CHECK FAIL: usage...` exit 1；`ConvertFrom-Json` 外套 try/catch → `CHECK FAIL: metrics.jsonl unparseable`（不再裸抛无标记）。
+6. 文档化不改码：`ENV_SUSPECT` 维持 exit 0 三值契约（T6/T7 读分**必须 grep 文本标记**，不得只看 exit code）；`metrics.auto-*` 归档件清理挂 T8。
+7. 备案不动：run.test.ts:628-646 既有 12 条 TS2345（ProcessEnv）属 Tasks1-2 之前的历史存量，非本任务引入，按"不顺手改"纪律留档。
+
 ---
 
 ### Task 4: 线一分析脚本 analyze-port-replay（spec §2.1；F1/F2/F6/F8/F10/F11/F13）
@@ -746,16 +756,16 @@ git commit -m "feat(p5): P10 T4 线一analyze-port-replay（快照+query_only+fa
 - Create: `experiments/p5/results/p10-candidates.md`、`results/p10-band-notes.md`（gitignored 台账）
 - Modify: `experiments/p5/.env.local`（切 OpenRouter 三元组，验后恢复讯飞——**永不 commit**）
 
-- [ ] **Step 0: 基线哨兵（回归 T3 启动器 + 记录强模型基线）**：`.env.local` 仍为讯飞时跑 `powershell -NoProfile -File experiments\p5\run-gate-smoke.ps1 sentinel` → 验日志文件出现（Glob `experiments/p5/results/p10-sentinel-*.log`）→ 完成后 `powershell ... run-gate-smoke.ps1 check 1 <log> 1 0` → Expected `CHECK OK`（preflight 行含 latency 基线，抄进 p10-candidates.md）。若 FAIL：T3 装置或环境有问题，**停，回修 T3，不带病探带**。
+- [ ] **Step 0: 基线哨兵（回归 T3 启动器 + 记录强模型基线）**：`.env.local` 仍为讯飞时跑 `powershell -NoProfile -File experiments\p5\run-gate-smoke.ps1 sentinel` → 验日志文件出现（Glob `experiments/p5/results/p10-sentinel-*.log`）→ 完成后 `powershell ... run-gate-smoke.ps1 check <该log> sentinel` → Expected `CHECK OK`（preflight 行含 latency 基线，抄进 p10-candidates.md）。若 FAIL：T3 装置或环境有问题，**停，回修 T3，不带病探带**。
 - [ ] **Step 1: 钉候选** `curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer <读自.env.local>"`（key 从文件读，不上命令行明文——用 `--header @` 或 powershell 变量拼接）筛 3~9B 付费带 4 个（预期如 `qwen/qwen3-8b`、`meta-llama/llama-3.1-8b-instruct`、`qwen/qwen2.5-7b-instruct`、GLM-4.9(9B) 级；以目录实况+价格定，记录 modelId/价格/参数规模于 p10-candidates.md）。
 - [ ] **Step 2: 切 `.env.local`** 三行 = OpenRouter（baseUrl `https://openrouter.ai/api`、key、model 占位候选1）。
 - [ ] **Step 3: 逐候选探带**（每候选循环以下 5 步，全程记 p10-band-notes.md）：
   1. `run-gate-smoke.ps1 pilot <modelId>` → **Glob 验 `p10-pilot-<model>-*.log` 出现**才离开（教训③）；
   2. 轮询至 vitest 结束（5 run，预计 20-40min）；
-  3. `check 5 <该log>` → 记录 `CHECK OK/FAIL`、`ENV_VALID/ENV_SUSPECT`、`WARN THROTTLE` 三标记；
+  3. `check <该log>`（batch 标记制） → 记录 `CHECK OK/FAIL`、`ENV_VALID/ENV_SUSPECT`、`WARN THROTTLE` 三标记；
   4. **有效性裁决（F3）**：ENV_SUSPECT 或 WARN THROTTLE → 该候选**重探一次**；再现 → 记「环境除名」，**不计入 H4 地板证据**（不得把限流写成模型失能）；
   5. 有效批读分：powershell `Get-Content results/metrics.jsonl | ConvertFrom-Json` → pass 计数 + failKind 分布 + rounds/trans/latency 列，对照中间带标准（pass 1-4/5 且 skip/非法形态出现）。
-- [ ] **Step 4: 控制组哨兵（批末）**：`.env.local` 恢复讯飞三元组 → 再跑 `sentinel` + `check 1 <log> 1 0`。Expected `CHECK OK`；若控制组也退化 ⇒ **本批探带读分全部作废判环境**，记录并停（不与模型结论混淆）。
+- [ ] **Step 4: 控制组哨兵（批末）**：`.env.local` 恢复讯飞三元组 → 再跑 `sentinel` + `check <该log> sentinel`。Expected `CHECK OK`；若控制组也退化 ⇒ **本批探带读分全部作废判环境**，记录并停（不与模型结论混淆）。
 - [ ] **Step 5: H4 裁决**：≥1 合格 → 取 |pass数-2.5| 最小者（并列取 latency 低者）钉为弱模型批唯一模型，写 p10-candidates.md 钉选行；全环境除名/全地板/全天花板 → 负结果按 spec §2.2 落档（PROGRESS 一行 + 规划 §9.2 一句），**T7 跳过，直达 T8**。
 - [ ] **Step 6: 提交**（本任务无 tracked 代码改动；台账 gitignored；仅当有裁决落档时改 PROGRESS 提交）
 
@@ -770,7 +780,7 @@ git commit -m "feat(p5): P10 T4 线一analyze-port-replay（快照+query_only+fa
 - Modify: `experiments/p5/.env.local`（GLM_MODEL=钉选模型，OpenRouter 三值；**永不 commit**）；`PROGRESS.md`（裁决行）
 
 - [ ] **Step 1: 发射**：`.env.local` 指向钉选模型 → 无参启动器（matrix 模式）→ **Glob 验 `p10-matrix-*.log` 出现**；预计 45 run × 2-5min。
-- [ ] **Step 2: 批终机判**：`check 45 <log>` → `CHECK OK` + `ENV_VALID`；`Tests ... passed` 不符（含 flake）→ 复跑一次整批（vitest 单例 Temp/ssr ENOENT 已知，三次以上才升级 ISSUE）。
+- [ ] **Step 2: 批终机判**：`check <log>` → `CHECK OK` + `ENV_VALID`；`Tests ... passed` 不符（含 flake）→ 复跑一次整批（vitest 单例 Temp/ssr ENOENT 已知，三次以上才升级 ISSUE）。
 - [ ] **Step 3: 健康检查（不改 analyze-cross-batch，NormRow 内联，spec §2.3）**：
 
 ```bash
@@ -821,7 +831,7 @@ Expected: `0`。清理前后计数记入 ISSUE-020。
 
 1. **spec 覆盖**：§0 更正→T1/T5/T8；§2.1 全部→T4/T5；§2.2-①②③④→T3/T2/T6；§2.3→T1(精确/快照)/T3(超时/sentinel)/T7(健康/裁决/④)；§2.4→T8；§4 验证→各任务 Step + T3-Step4；§5 R1-R8→T3 check 标记/T6 Step3-4/T8 Step1-2。无缺口。
 2. **占位符**：无 TBD；T6 候选名单允许「以目录实况定」属 spec 既定的计划化动作（附预期示例与筛选规则），非占位。
-3. **类型一致**：`pExact`（T1 产）↔ report 行（T1 内）；`P5_SENTINEL`（T3 两处）；`check` 第 4 参 `expectRows`（T3 定义 ↔ T6 Step0/check 1 <log> 1 0 调用）；`gateHits/decideBranch` 签名（T4 测试↔实现↔T5 消费）；`analyzeSessions` 返回 `PartialStats` + main 里 spread 补三字段成 `ReplayStats`——一致。
+3. **类型一致**：`pExact`（T1 产）↔ report 行（T1 内）；`P5_SENTINEL`（T3 两处）；`check` v7.1 标记制（T3-Step7 定义 ↔ T6 Step0 `check <log> sentinel` / T7 batch 调用）；`gateHits/decideBranch` 签名（T4 测试↔实现↔T5 消费）；`analyzeSessions` 返回 `PartialStats` + main 里 spread 补三字段成 `ReplayStats`——一致。
 4. **已知偏差声明**：`spec §2.2-① 的 metrics 行断言`实现为 check 模式 expectRows ≥ 判定（不是 ==），因为 resume 批行数可超——刻意保留。
 5. **发射前复核并入（Security Engineer PROCEED_WITH_FIXES，实证 15+ 承重假设全部对上 schema/migration/dev.db 实测）**：#1 run.test.ts 内联 30min 超时覆盖 config→T3 Step1 加两处 35min；#2 throttle `429` 裸子串误伤 latency 数字→词边界+HTTP/rate 短语；#3 孤儿闸门会拦无关交互会话→打印明细+`P5_FORCE_LAUNCH==='1'` 显式通道（fail-safe 不 kill）；#4 preflight 数字 token 加 `\b`（含负例测试）；#5 T4 注记（副本伴生文件无害/永不指活库）；#6 T5 fail-closed 无报告时看 stderr 禁止手搓；#7 preflightDecision 无消费方字段删除改回 void（防"设计了未集成"）。复核并确证：SQL 列名/表名、`+00:00` 日期格式、write-self-test 双分支、dev.db 实数（扫描21/可分析0/命中0→分支3）、vitest 下 argv 守卫、T1 四处替换行字节一致无旧断言冲突。
 
