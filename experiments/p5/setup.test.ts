@@ -178,4 +178,27 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
   it('fix-r1：空结果被上游兜底文本替代（EMPTY_RESPONSE，orchestrator/index.ts:623-626）——哨兵必须在黑名单，否则全 error-chunk 故障判就绪', () => {
     expect(detectPreflightError('[Agent 未返回有效内容]')).toBe('未返回有效内容')
   })
+  // T3-fix-r1（Step7-2）：传输层故障。PROBE A 真机实证——baseUrl 不可达时 CLI 把连接失败当正文返回，
+  // 旧黑名单放行 ⇒ 哨兵"判环境"失效。首条即探针原文，其余覆盖同族各签名 + 不带数字码的纯文本错误。
+  it('fix-r1：传输层签名必须命中（PROBE A 原文 + 同族）', () => {
+    const transport = [
+      'API Error: Unable to connect to API (ConnectionRefused)', // PROBE A 实录（127.0.0.1:9，176s 后返回正文）
+      'Unable to connect to the remote server',
+      'connect ECONNREFUSED 127.0.0.1:9',
+      'fetch failed',
+      'API Error: Connection timeout',
+      'request timed out after 60s',
+      'API Error: upstream timeout',
+    ]
+    for (const bad of transport) {
+      expect(detectPreflightError(bad), bad).toBeTruthy()
+    }
+  })
+  // 宁严勿松不等于「什么都拦」：合法就绪正文与含 latency/数字的良性文本必须继续放行，否则每次发射都会被自己挡住
+  it('fix-r1：传输层签名不误伤就绪正文/裸数字（新B 反向界）', () => {
+    expect(detectPreflightError('就绪')).toBeNull()
+    expect(detectPreflightError('OK! 一切正常')).toBeNull()
+    expect(detectPreflightError('latency=176703ms key#69cdcd6c')).toBeNull()
+    expect(detectPreflightError('a 20403 number and latency=14290ms')).toBeNull()
+  })
 })

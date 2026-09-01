@@ -106,9 +106,12 @@ export async function ensureExperimentAgents(): Promise<void> {
 
 /** P10（F3）：CLI 会把 provider 错误当正文返回（401 合成文本先例）——「非空白即通过」会把环境故障判成就绪。
  *  宁严勿松是 fail-closed 方向：preflight 正文本应只有「就绪」，命中签名即判环境不判模型。
- *  发射前复核 #4：数字 token 加词边界，防 latency/正文裸数字子串误伤。 */
+ *  发射前复核 #4：数字 token 加词边界，防 latency/正文裸数字子串误伤。
+ *  T3-fix-r1（Step7-2）：补**传输层**签名。PROBE A 实证——baseUrl 不可达时 CLI 返回正文
+ *  "API Error: Unable to connect to API (ConnectionRefused)"，旧黑名单只覆盖 provider 语义类（401/429/额度…），
+ *  连接级故障被判「就绪」⇒ 哨兵的「判环境不判模型」形同空话。数字类保持词边界风格不误伤 latency。 */
 export function detectPreflightError(text: string): string | null {
-  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|未返回有效内容|"error"\s*:/i)
+  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|未返回有效内容|"error"\s*:|unable to connect|connectionrefused|econnrefused|fetch failed|\bapi error\b|\btimed? ?out\b/i)
   return m ? m[0] : null
 }
 

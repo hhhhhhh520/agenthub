@@ -658,10 +658,15 @@ describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全
     rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
     await setupExperiment()
   }, 35 * 60 * 1000)
+  // P10 T3-fix-r1（Step7-3）：本批注册了多少条真 LLM run——check 机判靠它做「标记 vs 落盘」双账对齐，
+  // 不再让启动器猜 vitest 的 passed 计数（那个数含恒跑单测，条数随任务增删而漂移）。
+  let batchExpected = 0
   afterAll(async () => {
     // 生成报告（Spec §11）
     const report = generateReport(loadMetrics())
     console.log('\n===== P5 PILOT REPORT =====\n' + report)
+    // 机器可读收尾标记：runs=注册数 rows=实际落盘数；两者不等 ⇒ 批中途掉行（见 run-gate-smoke.ps1 check）
+    console.log('[P5-BATCH] runs=' + batchExpected + ' rows=' + loadMetrics().length)
   }, 60 * 1000)
 
   // P9-乙 T5 Gate 冒烟过滤格：默认 on-seqgate+verify × A（T6 起可由 P7_GATE_CELL 参数化，如探带格 off+verify|A）
@@ -673,6 +678,7 @@ describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全
       if (P9_ARMS && config.includes('no-verify')) continue
       for (const seed of SEEDS) {
         if (P7_GATE && (config !== P7_GATE.config || task.id !== P7_GATE.taskId)) continue
+        batchExpected++ // 过完两道过滤才算真注册了一条 LLM run（gate/matrix 模式下这个数分别是 5 / 45）
         it(`${config} ${task.id} seed=${seed}`, async () => {
           // P6 A1: mock factory 按 currentTaskId 取 task 罐头（架构师 decompose 消费）
           mocks.state.currentTaskId = task.id
