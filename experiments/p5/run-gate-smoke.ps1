@@ -4,13 +4,18 @@
 #   sentinel        = preflight-only control run (P5_SENTINEL=1)
 #   matrix (no arg) = 45-run full matrix (P9_ARMS=1)
 #   check [logName] [batch|sentinel] = machine verdict (batch default). v7's positional
-#     expectedPassed/allowSkipped/expectRows form is RETIRED (v7.1, plan Step7-3): batch verdict now reads the
-#     harness's own [P5-BATCH] runs= rows= marker and cross-checks it against the real metrics.jsonl line count,
+#     expectedPassed/allowSkipped/expectRows form is RETIRED (v7.1, plan Step7-3): batch verdict reads the
+#     harness's own runs= rows= signal and cross-checks it against the real metrics.jsonl line count,
 #     so it no longer depends on vitest's passed count (that number includes ~44 always-run unit tests whose
 #     count drifts as tasks are added -- the 44-off false-FAIL trap).
 #   v7.2: sentinel verdict reads results/preflight-last.json (a file signal) because vitest v4 intercepts
 #     console emitted inside a test body -- T6 Step0's real sentinel run produced 45 passed and zero
 #     [preflight] lines in its log.
+#   v7.3: batch verdict reads results/p5-batch-last.json (file signal written by the matrix describe's
+#     afterAll via buildBatchRecord, overwrite semantics); the log's [P5-BATCH] console line is RETIRED
+#     from the verdict -- its redirection into the log is INTERMITTENT (P10 pilot 20260902-201732: clean
+#     49-passed batch, zero [P5-BATCH] lines in the log; p9b-pilot.log has the line, p9b-strong.log does
+#     not). Console marker in the log = informational only. Missing/stale/unparseable file => fail-closed.
 # VERDICT READING (Step7-6, contract unchanged by v7.1): ENV_SUSPECT keeps exit 0 by design -- the env assertion
 #   is a three-value reading (VALID / SUSPECT / not-checked), not a pass-fail. CHECK OK + ENV_SUSPECT means
 #   "batch completed but every run is a floor reading (H4 invalid)". T6/T7 MUST grep the text markers; keying
@@ -94,21 +99,38 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
     exit 0
   }
 
-  # batch: cross-check the harness's own marker against the on-disk ledger. What the triple
-  # (marker runs == marker rows == actual metrics.jsonl lines) actually proves is *ledger consistency*: the batch
+  # batch: cross-check the harness's own file signal against the on-disk ledger. What the triple
+  # (signal runs == signal rows == actual metrics.jsonl lines) actually proves is *ledger consistency*: the batch
   # registered N runs, all N landed, and nothing was lost or padded. It does NOT prove N real LLM round-trips --
   # run-one.ts:152-172 appends a row per ATTEMPTED run too (its error path writes minimalErrorRow with
   # totalTransitions=0), so a batch of dead calls can still show runs==rows==45. The floor/environment reading
   # is ENV_VALID below, which is deliberately weak (>=1 live row); the per-run truth is failureMode in the
   # ledger itself, which T6/T7 read directly.
-  if ($content -notmatch '\[P5-BATCH\] runs=(\d+) rows=(\d+)') { Write-Output "CHECK FAIL: no [P5-BATCH] marker in $log (batch describe skipped, or died before afterAll)"; exit 1 }
-  $runs = [int]$Matches[1]; $mrows = [int]$Matches[2]
-  if ($runs -lt 1) { Write-Output "CHECK FAIL: marker runs=$runs < 1 (zero-LLM batch: gate cell filtered everything out?)"; exit 1 }
-  if ($runs -ne $mrows) { Write-Output "CHECK FAIL: marker runs=$runs != rows=$mrows (registered runs did not land, OR the ledger was unreadable -- loadMetrics() returns [] on any bad line)"; exit 1 }
+  # v7.3: the signal is a FILE (results/p5-batch-last.json, written by the matrix describe's afterAll), not the
+  # log's console line -- that line's redirection into the log is intermittent (P10 pilot 20260902-201732: clean
+  # 49-passed batch, zero [P5-BATCH] lines in the log). Console marker in the log = informational only.
+  if ($content -match '\[P5-BATCH\]') { Write-Output 'INFO: log carries a console [P5-BATCH] line (informational only, verdict reads p5-batch-last.json)' }
+  $sigPath = Join-Path $results 'p5-batch-last.json'
+  if (-not (Test-Path -LiteralPath $sigPath)) { Write-Output "CHECK FAIL: p5-batch-last.json missing (batch never reached afterAll)"; exit 1 }
+  # Staleness gate vs the log's CREATION time, same method as the sentinel branch (r2): the record must postdate
+  # the log file's creation, else it belongs to an earlier batch. mtime-based, and any rewrite refreshes it --
+  # it proves "a batch finished during this log's lifetime", NOT "this file's content came from this run";
+  # content identity is what the runs/rows/metrics triple below establishes.
+  if ((Get-Item -LiteralPath $sigPath).LastWriteTime -lt (Get-Item -LiteralPath $logPath).CreationTime) {
+    Write-Output 'CHECK FAIL: p5-batch-last.json predates this log (stale)'; exit 1
+  }
+  $sig = $null
+  try { $sig = Get-Content -LiteralPath $sigPath -Raw | ConvertFrom-Json } catch { Write-Output 'CHECK FAIL: p5-batch-last.json unparseable'; exit 1 }
+  # r2-style type guard (mirror of the sentinel latencyMs check): a hand-edited signal with non-numeric
+  # runs/rows must come back as a marked verdict, not a bare [int] cast terminating error.
+  if (-not (($sig.runs -is [int] -or $sig.runs -is [long] -or $sig.runs -is [double]) -and ($sig.rows -is [int] -or $sig.rows -is [long] -or $sig.rows -is [double]))) { Write-Output 'CHECK FAIL: p5-batch-last.json runs/rows not numeric'; exit 1 }
+  $runs = [int]$sig.runs; $mrows = [int]$sig.rows
+  if ($runs -lt 1) { Write-Output "CHECK FAIL: p5-batch-last.json runs=$runs < 1 (zero-LLM batch: gate cell filtered everything out?)"; exit 1 }
+  if ($runs -ne $mrows) { Write-Output "CHECK FAIL: p5-batch-last.json runs=$runs != rows=$mrows (registered runs did not land, OR the ledger was unreadable -- loadMetrics() returns [] on any bad line)"; exit 1 }
   $mj = Join-Path $results 'metrics.jsonl'
   $rows = @()
   if (Test-Path $mj) { $rows = @(Get-Content -LiteralPath $mj | Where-Object { $_ }) }
-  if ($rows.Count -ne $mrows) { Write-Output "CHECK FAIL: metrics.jsonl lines $($rows.Count) != marker rows=$mrows"; exit 1 }
+  if ($rows.Count -ne $mrows) { Write-Output "CHECK FAIL: metrics rows $($rows.Count) != marker rows $mrows"; exit 1 }
   $live = 0; $rowIdx = 0
   foreach ($r in $rows) {
     $rowIdx++
