@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, vi, afterAll, beforeAll, beforeEach } from 'vitest'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 // —— P6 A4 upsert 守卫：mock @/lib/db（db.ts 模块级 PrismaClient 单例，不 mock 会真实构造 libsql adapter）——
 // GLM_MODEL/GLM_BASE_URL 置空放 vi.hoisted（先于 config.ts 模块求值），保证 CONFIG.model 与 baseUrl 走默认钉死值；
@@ -7,14 +10,18 @@ const env = vi.hoisted(() => {
   const orig = { GLM_MODEL: process.env.GLM_MODEL, GLM_BASE_URL: process.env.GLM_BASE_URL, GLM_API_KEY: process.env.GLM_API_KEY }
   process.env.GLM_MODEL = ''
   process.env.GLM_BASE_URL = ''
-  return { orig, upsert: vi.fn() }
+  return { orig, upsert: vi.fn(), findFirst: vi.fn(), exec: vi.fn() }
 })
 vi.mock('@/lib/db', () => ({
-  prisma: { agent: { upsert: env.upsert } },
+  prisma: { agent: { upsert: env.upsert, findFirst: env.findFirst } },
+}))
+// T3-r2：preflight 决策路径要 mock 掉真 LLM 桥（文件里已有 db mock 先例，同法）
+vi.mock('@/lib/orchestrator', () => ({
+  executeSingleAgent: env.exec,
 }))
 
 import { CONFIG } from './config'
-import { assertCliConfigDir, detectPreflightError, ensureExperimentAgents, isValidModelId, scrubInheritedProviderEnv, setupExperiment } from './setup'
+import { assertCliConfigDir, detectPreflightError, ensureExperimentAgents, isValidModelId, preflightDecision, scrubInheritedProviderEnv, setupExperiment } from './setup'
 
 afterAll(() => {
   // 防御：同 worker 顺序执行时恢复 env，不污染其他文件（含 GLM_API_KEY——throw 测试会改它）
@@ -200,5 +207,52 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
     expect(detectPreflightError('OK! 一切正常')).toBeNull()
     expect(detectPreflightError('latency=176703ms key#69cdcd6c')).toBeNull()
     expect(detectPreflightError('a 20403 number and latency=14290ms')).toBeNull()
+  })
+})
+
+// —— P10 T3-r2：preflight 文件信号（vitest v4 拦截测试体内 console，T6 Step0 哨兵真跑实证日志 0 条
+//    [preflight] 行 ⇒ check 只能读 results/preflight-last.json；文件存在 ⇒ 最近一次 preflight 成功）——
+describe('P10 T3-r2: preflightDecision 落盘 preflight-last.json（check 的信号源）', () => {
+  const pfPath = join(CONFIG.resultsDir, 'preflight-last.json')
+  // 原始状态只在 beforeAll 抓一次——若放 beforeEach，后一个测试会把前一个测试写的假记录当成
+  // 「原始文件」在 afterAll 恢复回去，results/ 真目录就被测试垃圾污染（实测踩过：dummy latencyMs:0 被还原）
+  let original: string | null = null
+  let hadOriginal = false
+
+  beforeAll(() => {
+    hadOriginal = existsSync(pfPath)
+    original = hadOriginal ? readFileSync(pfPath, 'utf8') : null
+  })
+
+  beforeEach(() => {
+    vi.stubEnv('GLM_API_KEY', 'fake-key') // 指纹断言的期望值由同一 stub 推出，永不触碰真实 key
+    if (existsSync(pfPath)) rmSync(pfPath) // 每条用例都从「无文件」起步，负例断言才有意义
+    env.findFirst.mockReset()
+    env.exec.mockReset()
+  })
+
+  afterAll(() => {
+    if (hadOriginal && original !== null) writeFileSync(pfPath, original) // 恢复实验真台账
+    else if (existsSync(pfPath)) rmSync(pfPath) // describe 自产的自清
+  })
+
+  it('成功 preflight 落盘：字段齐全 + baseUrlHost 取 host + 指纹=sha256(env key) 前 8 位', async () => {
+    env.findFirst.mockResolvedValue({ name: 'orch', systemPrompt: 'x', platform: 'claude-code', model: 'm', baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/anthropic', apiKey: 'k' })
+    env.exec.mockResolvedValue({ result: '就绪' })
+    await preflightDecision()
+    const rec = JSON.parse(readFileSync(pfPath, 'utf8')) as Record<string, unknown>
+    expect(Object.keys(rec).sort()).toEqual(['baseUrlHost', 'keyFingerprint8', 'latencyMs', 'model', 'ts'])
+    expect(rec.baseUrlHost).toBe('maas-api.cn-huabei-1.xf-yun.com')
+    expect(rec.model).toBe(CONFIG.model)
+    expect(rec.keyFingerprint8).toBe(createHash('sha256').update('fake-key').digest('hex').slice(0, 8))
+    expect(rec.latencyMs).toBeTypeOf('number')
+    expect(Number.isFinite(new Date(rec.ts as string).getTime())).toBe(true)
+  })
+
+  it('失败 preflight（错误签名）不落盘——文件不存在 ⇒ check 会以 missing FAIL（fail-closed）', async () => {
+    env.findFirst.mockResolvedValue({ name: 'orch', systemPrompt: 'x', platform: 'claude-code', model: 'm', baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/anthropic', apiKey: 'k' })
+    env.exec.mockResolvedValue({ result: 'API Error: 401 Unauthorized' })
+    await expect(preflightDecision()).rejects.toThrow(/provider 错误签名/)
+    expect(existsSync(pfPath)).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { CONFIG } from './config'
@@ -115,6 +115,26 @@ export function detectPreflightError(text: string): string | null {
   return m ? m[0] : null
 }
 
+/** check<sentinel> 的信号记录（run-gate-smoke.ps1 读 results/preflight-last.json 做 key 指纹绑定） */
+export interface PreflightRecord {
+  model: string
+  baseUrlHost: string
+  latencyMs: number
+  keyFingerprint8: string
+  ts: string
+}
+
+/** T3-r2：preflight 记录构造（纯函数，setup.test 钉字段形状） */
+export function buildPreflightRecord(orch: { baseUrl: string }, latencyMs: number, fingerprint8: string): PreflightRecord {
+  return {
+    model: CONFIG.model,
+    baseUrlHost: new URL(orch.baseUrl).host,
+    latencyMs,
+    keyFingerprint8: fingerprint8,
+    ts: new Date().toISOString(),
+  }
+}
+
 /** P10 加固：耗时+key 指纹（非 key 本体）回显建立 R1 读分基线（走 console.log 进 .log，T6 Step0 抄录）；
  *  空文本/错误签名都 throw（快速失败不烧批）。返回 void——复核 #7：无消费方的字段不返回。 */
 export async function preflightDecision(): Promise<void> {
@@ -135,6 +155,15 @@ export async function preflightDecision(): Promise<void> {
   if (!result || !result.trim()) throw new Error(`preflight: LLM 返回空（latency=${latencyMs}ms, key#${fingerprint8}）——provider 未配好`)
   const sig = detectPreflightError(result)
   if (sig) throw new Error(`preflight: 回复含 provider 错误签名「${sig}」（latency=${latencyMs}ms, key#${fingerprint8}）——环境故障，不得进探带读数`)
+  // T3-r2：成功才落盘（写在全部判定之后 ⇒ 文件存在即「最近一次 preflight 成功」）。
+  // 为什么用文件不用 console：vitest v4 拦截**测试体内**的 console（T6 Step0 哨兵真跑 45 passed，
+  // 日志 0 条 [preflight] 行——console 信号到不了 check）；afterAll 的 console 不拦，故 batch 的
+  // [P5-BATCH] 标记不受影响。写失败静默忽略：check 侧会以 missing/unparseable FAIL（fail-closed），
+  // 不因落盘故障烧掉本已成功的实验。
+  try {
+    mkdirSync(CONFIG.resultsDir, { recursive: true })
+    appendFileSync(join(CONFIG.resultsDir, 'preflight-last.json'), JSON.stringify(buildPreflightRecord(orch, latencyMs, fingerprint8)))
+  } catch { /* 文件信号缺失 ⇒ check FAIL，方向安全 */ }
 }
 
 /** 主入口：pilot beforeAll 调 */

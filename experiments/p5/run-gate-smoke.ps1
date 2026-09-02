@@ -7,7 +7,10 @@
 #     expectedPassed/allowSkipped/expectRows form is RETIRED (v7.1, plan Step7-3): batch verdict now reads the
 #     harness's own [P5-BATCH] runs= rows= marker and cross-checks it against the real metrics.jsonl line count,
 #     so it no longer depends on vitest's passed count (that number includes ~44 always-run unit tests whose
-#     count drifts as tasks are added — the 44-off false-FAIL trap).
+#     count drifts as tasks are added -- the 44-off false-FAIL trap).
+#   v7.2: sentinel verdict reads results/preflight-last.json (a file signal) because vitest v4 intercepts
+#     console emitted inside a test body -- T6 Step0's real sentinel run produced 45 passed and zero
+#     [preflight] lines in its log.
 # VERDICT READING (Step7-6, contract unchanged by v7.1): ENV_SUSPECT keeps exit 0 by design -- the env assertion
 #   is a three-value reading (VALID / SUSPECT / not-checked), not a pass-fail. CHECK OK + ENV_SUSPECT means
 #   "batch completed but every run is a floor reading (H4 invalid)". T6/T7 MUST grep the text markers; keying
@@ -55,11 +58,32 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
 
   if ($kind -eq 'sentinel') {
     # Control group: preflight-only. No [P5-BATCH] marker exists by design (the matrix describe is skipped).
-    # Final-review should-fix#1: a full batch log ALSO contains [preflight] + a passed summary, so without this
-    # guard `check <batchlog> sentinel` would pass both lines below and skip the [P5-BATCH] ledger cross-check.
+    # v7.2: the signal is a FILE, not console -- vitest v4 intercepts console emitted inside a test body
+    # (T6 Step0 real run: 45 passed, zero [preflight] lines in the 309B log). afterAll console is not
+    # intercepted, which is why batch's marker still works. File exists => the most recent preflight SUCCEEDED
+    # (setup.ts writes it only after every verdict passes).
+    # Keep the batch-log rejection: a batch run ALSO writes preflight-last.json (its beforeAll preflights) and
+    # has a passed summary, so without it `check <batchlog> sentinel` could pass everything below.
     if ($content -match '\[P5-BATCH\]') { Write-Output 'CHECK FAIL: batch log passed as sentinel'; exit 1 }
-    if ($content -notmatch '\[preflight\]') { Write-Output "CHECK FAIL: no [preflight] line in $log (sentinel never reached preflight)"; exit 1 }
-    if ($content -notmatch 'Tests\s+\d+ passed') { Write-Output "CHECK FAIL: no passed summary in $log (sentinel batch silent-skipped?)"; exit 1 }
+    $pfPath = Join-Path $results 'preflight-last.json'
+    if (-not (Test-Path -LiteralPath $pfPath)) { Write-Output "CHECK FAIL: preflight-last.json missing (no successful preflight on record)"; exit 1 }
+    $pf = $null
+    try { $pf = Get-Content -LiteralPath $pfPath -Raw | ConvertFrom-Json } catch { Write-Output "CHECK FAIL: preflight-last.json unparseable"; exit 1 }
+    # Staleness gate vs the log's CREATION time (not LastWriteTime -- the log keeps growing until the run ends,
+    # so a genuine sentinel's file is always older than the log's last write). The record must postdate the log
+    # file's creation, else it belongs to an earlier batch and this sentinel may have skipped preflight entirely
+    # (skipped batch + stale file + unchanged key would otherwise read as PASS).
+    if ((Get-Item -LiteralPath $pfPath).LastWriteTime -lt (Get-Item -LiteralPath $logPath).CreationTime) {
+      Write-Output "CHECK FAIL: preflight-last.json predates this log (stale signal -- this sentinel never preflighted)"; exit 1
+    }
+    # Fingerprint binding needs the launcher's key, so sentinel check reads .env.local here (batch stays independent of it).
+    $pfEnv = @{}
+    foreach ($l in (Get-Content (Join-Path $p5 '.env.local') | Where-Object { $_ -match '=' -and $_ -notmatch '^\s*#' })) { $k, $v = $l.Split('=', 2); $pfEnv[$k.Trim()] = $v.Trim() }
+    if (-not $pfEnv['GLM_API_KEY']) { Write-Output 'CHECK FAIL: .env.local missing GLM_API_KEY (cannot bind sentinel fingerprint)'; exit 1 }
+    $pfKeyfp = Get-KeyFp8 $pfEnv['GLM_API_KEY']
+    if ($pf.keyFingerprint8 -ne $pfKeyfp) { Write-Output "CHECK FAIL: preflight fingerprint mismatch ($($pf.keyFingerprint8) vs $pfKeyfp) -- this sentinel did not run with the launcher key"; exit 1 }
+    if (-not ($pf.latencyMs -is [int] -or $pf.latencyMs -is [long] -or $pf.latencyMs -is [double]) -or [double]$pf.latencyMs -le 0) { Write-Output "CHECK FAIL: preflight latencyMs not a positive number ($($pf.latencyMs))"; exit 1 }
+    Write-Output "PREFLIGHT OK model=$($pf.model) latency=$($pf.latencyMs)ms key#$pfKeyfp"
     Write-Output "CHECK OK sentinel log=$log"
     exit 0
   }
