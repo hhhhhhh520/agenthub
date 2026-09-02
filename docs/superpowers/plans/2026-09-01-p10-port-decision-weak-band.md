@@ -756,6 +756,8 @@ git commit -m "feat(p5): P10 T4 线一analyze-port-replay（快照+query_only+fa
 - Create: `experiments/p5/results/p10-candidates.md`、`results/p10-band-notes.md`（gitignored 台账）
 - Modify: `experiments/p5/.env.local`（切 OpenRouter 三元组，验后恢复讯飞——**永不 commit**）
 
+- [ ] **Step -1: 终审 should-fix 两行（终审 PROCEED 附带，先于 T6 落地）**：① ps1 sentinel 分支加固：`check <log> sentinel` 遇日志含 `[P5-BATCH]` 时输出 `CHECK FAIL: batch log passed as sentinel` exit 1（防误用形态跳过 ledger 交叉核）；② report.ts `## 环境快照` 段尾加一行注释：`注: EXPERIMENT_* 为进程基线（批内恒 unset）——每 run 臂值由 metrics 行 config 列驱动（envForConfig 透传），逐格读 pass 数组行，勿读本段判臂`（防 45-run 矩阵报告里 `EXPERIMENT_SEQGATE=(unset)` 被误读为"seqgate 没开"）。两行改动+覆盖断言，提交一个 commit。
+
 - [ ] **Step 0: 基线哨兵（回归 T3 启动器 + 记录强模型基线）**：`.env.local` 仍为讯飞时跑 `powershell -NoProfile -File experiments\p5\run-gate-smoke.ps1 sentinel` → 验日志文件出现（Glob `experiments/p5/results/p10-sentinel-*.log`）→ 完成后 `powershell ... run-gate-smoke.ps1 check <该log> sentinel` → Expected `CHECK OK`（preflight 行含 latency 基线，抄进 p10-candidates.md）。若 FAIL：T3 装置或环境有问题，**停，回修 T3，不带病探带**。
 - [ ] **Step 1: 钉候选** `curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer <读自.env.local>"`（key 从文件读，不上命令行明文——用 `--header @` 或 powershell 变量拼接）筛 3~9B 付费带 4 个（预期如 `qwen/qwen3-8b`、`meta-llama/llama-3.1-8b-instruct`、`qwen/qwen2.5-7b-instruct`、GLM-4.9(9B) 级；以目录实况+价格定，记录 modelId/价格/参数规模于 p10-candidates.md）。
 - [ ] **Step 2: 切 `.env.local`** 三行 = OpenRouter（baseUrl `https://openrouter.ai/api`、key、model 占位候选1）。
@@ -796,9 +798,10 @@ console.log(JSON.stringify({n,avgTrans,defectRatio,roundsFullRatio,contaminated}
 ```
 Expected `contaminated:false`；true ⇒ 本批改标 `p10-weak-aborted` 落档，停（不得进裁决）。
 - [ ] **Step 4: 截取报告**：从 log 中 `===== P5 PILOT REPORT =====` 至尾写入 `results/report-p10-weak.md`（含环境快照段——逐字核对 model/baseUrl/key 指纹与预期一致，F5 人眼终检）。
-- [ ] **Step 5: H5/H6 裁决（精确口径为主）**：读 report 的 `## 配对 McNemar` 与 `## seqgate 臂增量` 各行 `p_exact`：
-  - **H5**：OFF vs ON 三 task 行 p_exact 与 b/c——任一 task p_exact<0.05 ⇒ H5 成立；全 ≥0.05 ⇒ H5 未证实（落档「弱模型仍 null——H1′ 修正义务转 P11」）；
-  - **H6**：ON vs seqgate、OFF vs seqgate 行（C 重点）——seqgate 不减分且 ≥1 维方向为正 ⇒ H6 保持；seqgate 任一行 b>c 且 p_exact<0.05 ⇒ H6 被否定（落档降级）；中间态记「方向性证据、n 小不定论」（P9 §11 传统）。
+- [ ] **Step 5: H5/H6 裁决（精确口径为主；终审修正：每 task 5 对下精确双侧 p 下限 = 2/2⁵ = 0.0625，"<0.05" 不可达——以下三类判据取代 v1 的 <0.05 二分）**：读 report 的 `## 配对 McNemar` 与 `## seqgate 臂增量` 各行 `p_exact` 与 b/c：
+  - **H5（OFF vs ON）**：(a) 任一 task 不一致对全同向且 p_exact=0.0625（5-0 扫描）⇒ 「方向性强证据（n=5 精确检验下限 0.0625，达不到 0.05），显著性不定论」；(b) 不一致对混合/稀少 ⇒ 「H5 未证实——H1′ 修正义务转 P11」；(c) 天花板/地板格无判别空间 ⇒ 如实注明中间带局限。
+  - **H6（seqgate 两行，C 重点）**：(a) seqgate 臂 ≥1 task 出现 b=0 c=4/5 型全同向优势扫描 ⇒ 「方向性强证据（同上口径）」；(b) **镜像否证**：任一 task 出现 b>c 全同向劣势扫描（如 b=4/5 c=0，p_exact=0.0625）⇒ 记「方向性否定证据——seqgate 在弱模型减分」，不得静默落"中间态"；(c) 其余 ⇒ 中间态「方向性证据、n 小不定论」（P9 §11 传统）。
+  - 裁决表必须**逐格抄 b/c/p_exact 原始数字**再下判语——先数字后结论，禁止先结论后找数。
   - 裁决表（H4/H5/H6 行 × 依据）手写进 report-p10-weak.md 尾部 `## P10 裁决`。
 - [ ] **Step 6: ④顺带并排表**：report-p10-weak.md 加 `## A 任务跨批并排（观察项，非配对）`——强批（off 3/on 2/seqgate 4）vs 弱批 A 三臂行，注「跨模型不构成配对，不做合并显著性声明」。
 - [ ] **Step 7: `.env.local` 恢复讯飞** + 提交 PROGRESS 一行裁决摘要。
