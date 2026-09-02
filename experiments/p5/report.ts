@@ -20,6 +20,8 @@ export function generateReport(metrics: RunMetrics[]): string {
   lines.push(`- EXPERIMENT_STATE_MACHINE=${envOr('EXPERIMENT_STATE_MACHINE')} | EXPERIMENT_VERIFY=${envOr('EXPERIMENT_VERIFY')} | EXPERIMENT_SEQGATE=${envOr('EXPERIMENT_SEQGATE')}`)
   lines.push(`- P7_GATE=${envOr('P7_GATE')} | P7_GATE_CELL=${envOr('P7_GATE_CELL')} | P9_ARMS=${envOr('P9_ARMS')} | P5_SENTINEL=${envOr('P5_SENTINEL')}`)
   lines.push(`- seed 集=[0,1,2,3,4] | key 指纹=${process.env.GLM_API_KEY ? createHash('sha256').update(process.env.GLM_API_KEY).digest('hex').slice(0, 8) : '(no key)'}（sha256 前 8 位）`)
+  // P10 终审 should-fix#2：45-run 矩阵报告里 EXPERIMENT_SEQGATE=(unset) 是进程基线，不是"seqgate 没开"
+  lines.push('> 注: EXPERIMENT_* 为进程基线（批内恒 unset）——每 run 臂值由 metrics 行 config 列驱动（envForConfig 透传），逐格读 pass 数组行，勿读本段判臂')
   lines.push(`> 执行 mock（executeTaskBatch + monitoring 恒不纠正）| 决策真实 LLM`)
   // Spec §6：混淆变量必须固定，报告写明罐头消息
   lines.push(`> 罐头消息: ${JSON.stringify(CONFIG.cannedReplies)}`)
