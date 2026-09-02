@@ -73,12 +73,18 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
     # so a genuine sentinel's file is always older than the log's last write). The record must postdate the log
     # file's creation, else it belongs to an earlier batch and this sentinel may have skipped preflight entirely
     # (skipped batch + stale file + unchanged key would otherwise read as PASS).
+    # Honest limitation (r3 doc): the gate is mtime-based, and any rewrite of preflight-last.json refreshes it --
+    # it proves "a preflight ran during this log's lifetime", NOT "this file's content came from this run".
+    # Content identity is what the fingerprint check below establishes.
     if ((Get-Item -LiteralPath $pfPath).LastWriteTime -lt (Get-Item -LiteralPath $logPath).CreationTime) {
       Write-Output "CHECK FAIL: preflight-last.json predates this log (stale signal -- this sentinel never preflighted)"; exit 1
     }
     # Fingerprint binding needs the launcher's key, so sentinel check reads .env.local here (batch stays independent of it).
+    # r3-guard: a missing/unreadable .env.local must come back as a marked verdict, not a bare terminating error.
     $pfEnv = @{}
-    foreach ($l in (Get-Content (Join-Path $p5 '.env.local') | Where-Object { $_ -match '=' -and $_ -notmatch '^\s*#' })) { $k, $v = $l.Split('=', 2); $pfEnv[$k.Trim()] = $v.Trim() }
+    try {
+      foreach ($l in (Get-Content (Join-Path $p5 '.env.local') | Where-Object { $_ -match '=' -and $_ -notmatch '^\s*#' })) { $k, $v = $l.Split('=', 2); $pfEnv[$k.Trim()] = $v.Trim() }
+    } catch { Write-Output "CHECK FAIL: .env.local unreadable"; exit 1 }
     if (-not $pfEnv['GLM_API_KEY']) { Write-Output 'CHECK FAIL: .env.local missing GLM_API_KEY (cannot bind sentinel fingerprint)'; exit 1 }
     $pfKeyfp = Get-KeyFp8 $pfEnv['GLM_API_KEY']
     if ($pf.keyFingerprint8 -ne $pfKeyfp) { Write-Output "CHECK FAIL: preflight fingerprint mismatch ($($pf.keyFingerprint8) vs $pfKeyfp) -- this sentinel did not run with the launcher key"; exit 1 }

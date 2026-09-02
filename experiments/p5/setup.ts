@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { CONFIG } from './config'
@@ -160,9 +160,12 @@ export async function preflightDecision(): Promise<void> {
   // 日志 0 条 [preflight] 行——console 信号到不了 check）；afterAll 的 console 不拦，故 batch 的
   // [P5-BATCH] 标记不受影响。写失败静默忽略：check 侧会以 missing/unparseable FAIL（fail-closed），
   // 不因落盘故障烧掉本已成功的实验。
+  // T3-r3（复审 Critical）：必须 writeFileSync 覆盖写——固定文件名 + append 语义会在第二次成功 preflight
+  // （哨兵重跑/任何批次的 beforeAll preflight）时拼出 {…}{…} 双对象，PS 5.1 ConvertFrom-Json 直接抛，
+  // 之后所有 check<sentinel> 永久 unparseable（实测复现过）。
   try {
     mkdirSync(CONFIG.resultsDir, { recursive: true })
-    appendFileSync(join(CONFIG.resultsDir, 'preflight-last.json'), JSON.stringify(buildPreflightRecord(orch, latencyMs, fingerprint8)))
+    writeFileSync(join(CONFIG.resultsDir, 'preflight-last.json'), JSON.stringify(buildPreflightRecord(orch, latencyMs, fingerprint8)))
   } catch { /* 文件信号缺失 ⇒ check FAIL，方向安全 */ }
 }
 
