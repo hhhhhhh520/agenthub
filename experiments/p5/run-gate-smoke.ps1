@@ -55,6 +55,9 @@ if ($args.Count -gt 0 -and $args[0] -eq 'check') {
 
   if ($kind -eq 'sentinel') {
     # Control group: preflight-only. No [P5-BATCH] marker exists by design (the matrix describe is skipped).
+    # Final-review should-fix#1: a full batch log ALSO contains [preflight] + a passed summary, so without this
+    # guard `check <batchlog> sentinel` would pass both lines below and skip the [P5-BATCH] ledger cross-check.
+    if ($content -match '\[P5-BATCH\]') { Write-Output 'CHECK FAIL: batch log passed as sentinel'; exit 1 }
     if ($content -notmatch '\[preflight\]') { Write-Output "CHECK FAIL: no [preflight] line in $log (sentinel never reached preflight)"; exit 1 }
     if ($content -notmatch 'Tests\s+\d+ passed') { Write-Output "CHECK FAIL: no passed summary in $log (sentinel batch silent-skipped?)"; exit 1 }
     Write-Output "CHECK OK sentinel log=$log"

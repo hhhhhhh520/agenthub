@@ -327,6 +327,8 @@ describe('P5 stats', () => {
     expect(rep).toContain('## 环境快照')
     expect(rep).toContain('p_exact=')
     expect(rep).toContain('key 指纹')
+    // P10 终审 should-fix#2：基线注释行存在，防 EXPERIMENT_SEQGATE=(unset) 被误读为"seqgate 没开"
+    expect(rep).toContain('勿读本段判臂')
   })
   it('seedNoise: 全同 → 0 方差', () => {
     const ns = seedNoise([
