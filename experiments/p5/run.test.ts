@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
-import { writeFileSync, rmSync, mkdtempSync, existsSync } from 'node:fs'
+import { writeFileSync, rmSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CONFIG, isP9ArmsOnly, parseGateCell } from './config'
 import { TASKS } from './tasks'
@@ -649,6 +649,43 @@ describe('P9-乙 T5: 三臂门控 P9_ARMS', () => {
   })
 })
 
+// —— P10 T3-r4: batch 收尾文件信号——afterAll 的 console [P5-BATCH] 行经重定向落盘是间歇性的
+//    （pilot 实跑实证：p10-pilot-ark-code 20260902-201732 批干净结束（49 passed|1 skipped），log 里 0 处
+//    marker；p9b-pilot.log 有、p9b-strong.log 无），check 判据已退役 console 信号改读本文件（ps1 v7.3）。
+//    调用方必须用 writeFileSync 覆盖写——勿改回 appendFileSync：固定文件名 append 会拼出 }{ 双对象
+//    炸 ps1 ConvertFrom-Json（r3 Critical 同款前科，注释钉死防回退）。
+const BATCH_SIGNAL = join(CONFIG.resultsDir, 'p5-batch-last.json')
+function buildBatchRecord(runs: number, rows: number): string {
+  return JSON.stringify({ runs, rows, ts: new Date().toISOString() })
+}
+
+describe('P10 T3-r4: buildBatchRecord 文件信号（单对象 / runs rows ts 三键 / writeFileSync 覆盖语义）', () => {
+  it('纯函数：单对象 JSON、恰 runs/rows/ts 三键、ts 可解析', () => {
+    const parsed = JSON.parse(buildBatchRecord(45, 45)) as { runs: number; rows: number; ts: string }
+    expect(Object.keys(parsed).sort()).toEqual(['rows', 'runs', 'ts'])
+    expect(parsed.runs).toBe(45)
+    expect(parsed.rows).toBe(45)
+    expect(Number.isNaN(Date.parse(parsed.ts))).toBe(false)
+  })
+  it('writeFileSync 覆盖语义：预置旧文件 → 再写 → 单对象、无 }{ 拼接（r3 appendFileSync 前科防回退）', () => {
+    // r2 污染教训：测试不得在 results/ 留下自己的数据——有真文件则按快照还原，原本缺席则删除
+    const existed = existsSync(BATCH_SIGNAL)
+    const prev = existed ? readFileSync(BATCH_SIGNAL, 'utf8') : null
+    try {
+      writeFileSync(BATCH_SIGNAL, '{"runs":99,"rows":99,"ts":"stale-old"}') // 预置旧内容
+      writeFileSync(BATCH_SIGNAL, buildBatchRecord(5, 5))                   // afterAll 同款覆盖写
+      const raw = readFileSync(BATCH_SIGNAL, 'utf8')
+      expect(raw.includes('}{')).toBe(false) // append 拼接即炸 ps1 ConvertFrom-Json
+      const parsed = JSON.parse(raw) as { runs: number; rows: number; ts: string } // 覆盖写后仍单对象可解析
+      expect(parsed.runs).toBe(5)
+      expect(parsed.rows).toBe(5)
+    } finally {
+      if (prev === null) rmSync(BATCH_SIGNAL, { force: true })
+      else writeFileSync(BATCH_SIGNAL, prev)
+    }
+  })
+})
+
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
 const SENTINEL = process.env.P5_SENTINEL === '1'
@@ -669,6 +706,12 @@ describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全
     console.log('\n===== P5 PILOT REPORT =====\n' + report)
     // 机器可读收尾标记：runs=注册数 rows=实际落盘数；两者不等 ⇒ 批中途掉行（见 run-gate-smoke.ps1 check）
     console.log('[P5-BATCH] runs=' + batchExpected + ' rows=' + loadMetrics().length)
+    // P10 T3-r4: console 通道落盘是间歇性的（pilot 实跑实证，见 BATCH_SIGNAL 处注释）→ 追加文件信号，
+    // check 判据改读它（console 行保留仅 informational）。写失败静默——check 端 fail-closed（json 缺失
+    // 即 CHECK FAIL），不因落盘故障烧掉已完成的批。
+    try {
+      writeFileSync(BATCH_SIGNAL, buildBatchRecord(batchExpected, loadMetrics().length))
+    } catch { /* 写失败静默——check 端 fail-closed */ }
   }, 60 * 1000)
 
   // P9-乙 T5 Gate 冒烟过滤格：默认 on-seqgate+verify × A（T6 起可由 P7_GATE_CELL 参数化，如探带格 off+verify|A）
