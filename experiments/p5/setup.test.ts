@@ -255,4 +255,19 @@ describe('P10 T3-r2: preflightDecision 落盘 preflight-last.json（check 的信
     await expect(preflightDecision()).rejects.toThrow(/provider 错误签名/)
     expect(existsSync(pfPath)).toBe(false)
   })
+
+  // T3-r3（复审 Critical）：文件已存在时第二次成功 preflight 必须覆盖写——append 语义会拼出 {…}{…}，
+  // PS 5.1 ConvertFrom-Json 直接抛 ⇒ 哨兵门永久 unparseable（实测复现过，这里钉死防回归）
+  it('fix-r3：预置旧记录再成功 preflight → 落盘为单个合法 JSON 对象（覆盖而非拼接）', async () => {
+    writeFileSync(pfPath, '{"model":"old","baseUrlHost":"old.example.com","latencyMs":1,"keyFingerprint8":"deadbeef","ts":"2026-09-01T00:00:00.000Z"}')
+    env.findFirst.mockResolvedValue({ name: 'orch', systemPrompt: 'x', platform: 'claude-code', model: 'm', baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/anthropic', apiKey: 'k' })
+    env.exec.mockResolvedValue({ result: '就绪' })
+    await preflightDecision()
+    const raw = readFileSync(pfPath, 'utf8')
+    let parsed: Record<string, unknown>
+    expect(() => { parsed = JSON.parse(raw) }).not.toThrow() // 拼接形态在此即炸
+    expect(raw.includes('}{')).toBe(false) // {…}{…} 双对象拼接的特征串
+    expect(Object.keys(parsed!).sort()).toEqual(['baseUrlHost', 'keyFingerprint8', 'latencyMs', 'model', 'ts'])
+    expect(parsed!.keyFingerprint8).toBe(createHash('sha256').update('fake-key').digest('hex').slice(0, 8)) // 新记录，非旧 deadbeef
+  })
 })
