@@ -18,3 +18,6 @@ experiments/p5/tasks.ts:36（罐头原文）、src/lib/adapter/claude-code-adapt
 
 ## 参考资料
 PROGRESS P9-乙 收官行（第三次出现记录）；P10 T8 Step4 线索验证任务
+
+## 复现记录（2026-09-03）
+第四次现身：T7 attempt2 批（21:54-22:49，ark-code-latest 45-run）期间再次写入 `.env.example`（PORT=8080），2026-09-03 上午推送前检查时发现并照例还原。与根因链吻合：批中 task C 执行 CLI（cwd=process.cwd()=仓库根）执行罐头指令。**活体复现强化根因结论**。
