@@ -176,7 +176,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 # collected tests to 45 — a 45-run batch silently became a single preflight call that "passed"). Clear every
 # mode switch first, then set only the one this mode owns. Inactive semantics hold under strict equality:
 # parseGateCell (config.ts:21 `!== '1'`), isP9ArmsOnly (:16 `=== '1'`), SENTINEL (run.test.ts:652 `=== '1'`).
-$env:P7_GATE = ''; $env:P7_GATE_CELL = ''; $env:P9_ARMS = ''; $env:P5_SENTINEL = ''
+$env:P7_GATE = ''; $env:P7_GATE_CELL = ''; $env:P9_ARMS = ''; $env:P5_SENTINEL = ''; $env:EXPERIMENT_STATE_MACHINE = ''; $env:EXPERIMENT_VERIFY = ''; $env:EXPERIMENT_SEQGATE = ''  # P10-T8: clear EXPERIMENT_* too (operator-shell stale exports would pollute report env-snapshot lines)
 switch ($mode) {
   'gate'     { $env:P7_GATE = '1'; $model = $envMap['GLM_MODEL']; $log = "p10-gate-$stamp.log" }
   'pilot'    {
