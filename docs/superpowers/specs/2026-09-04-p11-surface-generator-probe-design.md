@@ -1,9 +1,10 @@
 # P11 设计：作用面「有界预测」证伪探针（四桶失败地图为主，红/绿裁决为辅）
 
-> 日期：2026-09-04 | **状态：v5（四轮审查并入：Security Eng F1–F14 + pre-commit 5❌ + 外部方法评审 M1–M5 + v4 聚焦核查 3❌/⚠️）→ 待用户审阅**
+> 日期：2026-09-04 | **状态：v6（五轮审查并入：+ v5 复核钉死机检(i)防恒真回放）→ 已获批，待 writing-plans**
 > 项目：AgentHub A方向（显式状态机） | 上游：P10 全收官 + spec `2026-09-01-p10-...md` §3 + 规划 §9.2 + memory `agenthub-direction_a_state_machine` + 接续 prompt
 > 定位：北极星=**追因·拆件+功效**。P11 = **一个纯离线探针**：产出 A（+ C 正对照）的**四桶失败分解地图**（主角交付物），并借此给「作用面论对 A 的有界预测」摆一次**可被打脸的证伪检验**（裁决是地图的副产物）。造第二张网 + 测试批 = 条件触发的后续项目 P11b，不在本 spec 实施。
 > **v5 关键修正**（v4 聚焦核查）：①「机检并入②归属」曾击穿四桶穷尽性 → ② 改为**构造性残差桶**（= ¬pass − ⓪ − ① − ③）+ confirm-state 分级（§2.3）；②机检删掉对新模式自相矛盾的「反例在 gate-开副本消失」支；③`TRANSITIONS` 补入内联 + 漂移测试；④正对照钉**强带 C-off** 且签名归因由探针自验（弱带非全①族）；⑤哨兵带宽改精确和；⑥Step0 白名单收窄到快照（禁原地开库）；⑦快照只拷主文件 + 非空 WAL 拒跑。
+> **v6（用户复核）**：钉死机检 (i)「派生」定义（转移表可达性判定、**严禁回放本会话观测序列**，防恒真退化）+ §4-1(d) 补**负例/变异 fixture**（先证明机检会红）；补 ①∩③ 交叠 fixture；`==13` 降为 sanity、真正口径约束改 ③≤4+skip/defect 对照。
 
 ---
 
@@ -103,7 +104,7 @@
 | 4 | **② 构造性残差桶** | 其余 ¬pass（即 `failKind==skipped-spec-edge ∨ done-but-conformance` 且非①/⓪/③）——理论未预见的结构跳步候选池 |
 
 **② 的 confirm-state（Refinement 1 修正，翻绿门）**：对每个不同 ② 签名过**机检复现**两支——
-- (i) **结构可复现**：仅由 `(末态, 提议, 内联 TRANSITIONS)` 自动派生的路径，其 `missingRequired(派生) == 实测缺失边集`（证结构性，非模型怪癖/计数噪声）；
+- (i) **结构可复现（判定转移表结构性缺口，非本会话序列回放；v6 钉死）**：**派生** = 从 `(末态, 提议)` 出发、仅据内联 `TRANSITIONS` 判断「转移表是否存在能覆盖各缺失必需边的可达续作路径」。判定方向：**若缺失必需边可经 `TRANSITIONS` 从 `(末态,提议)` 的可达续作覆盖**（表本可走通、是模型没走）→ 属单点偶发/模型怪癖，非结构性缺口 → **(i) 失败 → candidate**；**各缺失必需边均不能被任何 `TRANSITIONS` 可达续作覆盖** → (i) 通过（=转移表结构性缺口，新闸门是唯一杠杆）。**硬约束：派生只依赖 `(末态,提议)` + 内联 `TRANSITIONS`，严禁回放本会话已观测的 applied 序列**——否则 `missingRequired(派生) ≡ missingRequired(观测)` 恒真，机检塌缩成「同签名≥2」计数，假绿通道复活（v5 复核 🔴）；
 - (ii) **非①邻域**：该签名**不满足** seqgate 谓词（证真新模式）。
 过 (i)+(ii) ∧ 同签名 ≥2 → `confirmed`；机检不过 ∨ 孤例(<2) → `candidate`（呈于地图，**不翻绿**）。**绿只认 confirmed ∧ 跨带 presence（§2.4）**。
 > 注：机检**不再含「反例在 gate-开副本消失」**——真正的新②此刻无对应门，该支要么循环（引用尚不存在的门）要么必误杀（新签名不受 seqgate 影响→永不消失→②恒空→证伪名存实亡）（v4 核查 A-2）。
@@ -113,7 +114,7 @@
 **worked example（M5，端到端；脱敏示意非真实 sessionId）**：
 - **A-off 会话**：`idle →(delegate 旁路)→ idle 提议 done, tc=0 →(off 无 gate，TRANSITIONS[idle].done=done)→ phase=done`，appliedEdges={done:idle→done}，缺边含 `align_decompose→align_arch`、`execute→exec`、`exec→done` → failKind=skipped-spec-edge、¬pass。归桶：appliedEdges>0 非⓪ → 末决策 `idle∧done∧tc0` → **①(a)** ⇒ 桶①（老靶，非第二门）。
 - **强带 C-off 会话（标定）**：同类末决策 `idle∧done∧tc0` → **①** ⇒ 复现 P9-乙 已知 C 族 ⇒ 尺子校准。
-- **②-候选长什么样（反例说明②之稀有）**：末决策 `align_arch 提议 done`（缺 decompose 边、非 idle-done-0）、非⓪/①/③ → **②**；再过机检：派生路径确实复现缺失边集 ∧ 非 seqgate 谓词 ⇒ 若跨带同签名 ≥2 → `confirmed` → 翻绿。否则 `candidate`，仅呈地图。
+- **②-候选长什么样（反例说明②之稀有）**：末决策 `align_arch 提议 done`（缺 decompose 边、非 idle-done-0）、非⓪/①/③ → **②**；再过机检：该缺失边**不可经 `TRANSITIONS` 从 `(align_arch,done)` 的可达续作覆盖**（结构性缺口，(i) 过）∧ 非 seqgate 谓词（(ii) 过）⇒ 若跨带同签名 ≥2 → `confirmed` → 翻绿。否则（缺失边可被转移表续作覆盖=模型怪癖→(i) 败，或孤例<2）→ `candidate`，仅呈地图。
 
 ### 2.4 裁决（最小升级规则；砍阈值机——M2）
 分母 = (task,band) 合并三臂、排除⓪的 ①+②+③。**探针只判「有没有理论未预见的 confirmed 群」**；「能否验出」全交 P11b 功效预算：
@@ -136,11 +137,11 @@
 ---
 
 ## 4. 验证（每改必新增针对性测试；红绿验证）
-1. **classifier TDD**：fixture 钉四桶 + 边界——(a) ① (a)/(b) 各命中 + 「本 run 任意处 fired 不入①」（`on-seqgate s3` 反例）；(b) 无 Task-table taskCount → **拒绝裁决**（非默认入②，F2 假绿回归守卫）；(c) `⓪≻①≻③` 交叠（error ∧ appliedEdges=0 → ⓪；error ∧ appliedEdges>0 → ③，M3）；(d) **② 机检复现双向**：真 ② 群过机检（派生==实测 ∧ 非 seqgate）→ confirmed；机检不过/孤例 → candidate 不翻绿；(e) fired 支三合取缺一不误判；(f) **穷尽构造**：任给 ¬pass 集合，四桶和 == 总数（构造式断言，A-1 回归守卫）。
+1. **classifier TDD**：fixture 钉四桶 + 边界——(a) ① (a)/(b) 各命中 + 「本 run 任意处 fired 不入①」（`on-seqgate s3` 反例）；(b) 无 Task-table taskCount → **拒绝裁决**（非默认入②，F2 假绿回归守卫）；(c) `⓪≻①≻③` 交叠（error ∧ appliedEdges=0 → ⓪；error ∧ appliedEdges>0 → ③，M3）+ **①∩③ 交叠**（末条目干净 `handleOrchestratorDecision` + fired correction ∧ `failureMode=error` → 按优先级 `①≻③` 落①，钉死优先级方向）；(d) **② 机检复现双向 + 变异检验（先证明会红）**：**正例**——结构性缺口签名（缺失边不可经 TRANSITIONS 续作覆盖 ∧ 非 seqgate ∧ 同签名≥2）→ (i)(ii) 过 → confirmed；**负例/变异**——造一会话其缺失必需边**确可经 `TRANSITIONS` 从 `(末态,提议)` 覆盖**（模型怪癖/单点偶发）→ 机检 (i) **必须失败** → candidate 不翻绿（此条专防「派生=回放观测序列」的恒真退化实现，v6）；孤例(<2) → candidate；(e) fired 支三合取缺一不误判；(f) **穷尽构造**：任给 ¬pass 集合，四桶和 == 总数（构造式断言，A-1 回归守卫）。
 2. **missingRequired 等价性黄金测试**：探针本地版 vs `metrics.ts` oracle 缺失边集全等（防口径分家=新假绿通道）。
 3. **正对照测试（Refinement 2，钉强带）**：强带 C-off fixture → 分类器①复现率 ≥4/5；另造「强带 C-off 多为⓪」fixture → §2.2-6 降级横幅触发；守卫断言**弱带 C-off 不入样本、不计入标定基线**（§2.1 弱带 cells 仅 A:15，非全①族的弱带 4 skipped+1 defect 不参与标定）。
 4. **join 测试**：同 title 多 run 靠 projectDir runId 前缀分 attempt1/最终批；双射 + 计数（A=15/带、强带 C-off=5）；参数化 + 断言探针 SQL 无 `${}`（F12）；弱批 sha256 != `af6e590a…` → exit 1（M4）；**原地开库（非快照路径）→ exit 1**（§2.2-1 白名单收窄）。
-5. **口径锚点哨兵（F6/❌1→§4-5，v5 带宽修正）**：**精确约束**：`⓪+①+②+③ == 13`（构造）∧ `③ ≤ 4`（③⊆defect/error 行）∧ 池 `skip==9 / defect==4`（§0 权威）。**近似带宽（防误报，非硬断言）**：③∈[2,4]、①+②∈[9,11]（①/③ 切分依赖末决策签名，指标层无法钉死下界 3，放宽为 2，避免在正确输出上误报「先自查口径」）。显著偏离精确约束 → 顶部横幅「先自查口径（选样/taskCount/join）」。
+5. **口径锚点哨兵（F6/❌1→§4-5，v6 修正）**：**真正咬人的口径约束** = `③ ≤ 4`（③⊆defect/error 行）∧ 池 `skip==9 / defect==4` ∧ metrics 三列对照（§0 权威）；**`⓪+①+②+③ == 13` 是构造恒等、恒真，仅作实现 bug 的 sanity，不得当口径正确性判据**（v5 复核 🟡）。**近似带宽（防误报）**：③∈[2,4]、①+②∈[9,11]。显著偏离硬约束 → 顶部横幅「先自查口径（选样/taskCount/join）」。
 6. **零生产 import 测试**：模块图**无任何指向 `src/lib/**` 运行时边**（`@/lib/db` 具名子断言；type-only 按擦除识别、正则扫非 `import type` 的 `from '@/lib`）+ **`TRANSITIONS`/`NON_TRANSITIONING`/谓词 内联副本源文本漂移测试**（v5 补 TRANSITIONS）。
 7. 新测试文件进 `vitest.config.ts` include；收尾 pre-commit 三视角 + 全 diff 密钥扫描。
 
