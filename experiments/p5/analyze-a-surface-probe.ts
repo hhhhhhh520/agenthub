@@ -224,3 +224,29 @@ export function confirmStateT(signature: string, missingEdges: Array<{ action: s
 export function confirmState(signature: string, missingEdges: Array<{ action: string; from: string; to: string }>, count: number, terminalState: string): 'confirmed' | 'candidate' {
   return confirmStateT(signature, missingEdges, count, terminalState, TRANSITIONS)
 }
+
+// ── Task 10：口径锚点哨兵——探针重算的四桶分布对 §0 权威数的对账闸门 ──
+// 硬约束：③≤4（③⊆defect/error 行）/ skip==9 / defect==4（§0 权威锚点，重算漂移即红）/ ①+② ≤ skip+defect 上限；
+// ⓪+①+②+③==13 是构造恒等、恒真，仅作实现 bug 的 sanity，不得当口径正确性判据；
+// 近似带宽（超限仅警告不阻断）：③∈[2,4]、①+②∈[9,11]。ok===false 时调用方（Task 12）不得落任何靶点结论。
+export interface BucketTally { zero: number; one: number; two: number; three: number }
+export interface SentinelResult { ok: boolean; violations: string[]; warnings?: string[] }
+/** §0 权威数（口径锚点）：13 行失败 = 9 skip + 4 defect；③ 上界 4 = defect 行数。 */
+export const SENTINEL_AUTHORITY = { skip: 9, defect: 4, threeMax: 4, total: 13 } as const
+export function assertSentinel(t: BucketTally, metricsTruth: { skip: number; defect: number }): SentinelResult {
+  const v: string[] = []
+  const sum = t.zero + t.one + t.two + t.three
+  if (sum !== SENTINEL_AUTHORITY.total) v.push(`⓪+①+②+③=${sum} ≠ 13（构造恒等破坏=实现 bug sanity，非口径判据）`)
+  if (t.three > SENTINEL_AUTHORITY.threeMax) v.push(`③=${t.three} > 4（③⊆defect/error 行）`)
+  const onePlusTwo = t.one + t.two
+  if (onePlusTwo > metricsTruth.skip + metricsTruth.defect) v.push(`①+②=${onePlusTwo} 超出 skip+defect 上限`)
+  if (metricsTruth.skip !== SENTINEL_AUTHORITY.skip) v.push(`skip=${metricsTruth.skip} ≠ §0 权威 9（口径锚点漂移）`)
+  if (metricsTruth.defect !== SENTINEL_AUTHORITY.defect) v.push(`defect=${metricsTruth.defect} ≠ §0 权威 4（口径锚点漂移）`)
+  // 带宽（近似，超限仅警告不阻断，仅记录供报告）
+  const warnings: string[] = []
+  if (t.three < 2) warnings.push(`③=${t.three} 低于带宽[2,4]（①/③切分依赖末决策签名，可接受）`)
+  if (onePlusTwo < 9 || onePlusTwo > 11) warnings.push(`①+②=${onePlusTwo} 出带宽[9,11]`)
+  const out: SentinelResult = { ok: v.length === 0, violations: v }
+  if (warnings.length) out.warnings = warnings
+  return out
+}
