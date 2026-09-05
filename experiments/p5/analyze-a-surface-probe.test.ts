@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, assertSentinel, type Bucket } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -209,7 +209,7 @@ describe('四桶分类器', () => {
 // ── Task 7：missingRequired 与 oracle 等价性黄金测试 ──
 // 探针不 import metrics.ts 的 hasRequiredEdges（未导出且属生产文件）；等价性靠此处独立手写的参考实现对拍，防口径分家。
 describe('missingRequired 等价性', () => {
-  // 参考实现（镜像 metrics.ts:27 hasRequiredEdges 的缺失边语义，独立写以防口径分家）
+  // 参考实现（镜像 metrics.ts:27 hasRequiredEdges 的缺失边语义，独立写以防口径分家）。冻结：勿随 missingRequired 同步修改。
   const refMissing = (applied: any[], required: any[]) => required.filter(req => !applied.some(a => a.action === req.action && a.to === req.to && (req.from === '*' || a.from === req.from)))
   const A = TASKS.find(t => t.id === 'A')!.requiredEdges
   it('与参考实现逐例全等', () => {
@@ -269,4 +269,19 @@ describe('正对照标定（钉强带）', () => {
   it('多⓪ → 降级并给原因', () => { const c = calibrate(['⓪','⓪','⓪','①','①']); expect(c.degraded).toBe(true); expect(c.reason).toContain('⓪') })
   it('①复现率 恰等 4/5 → 不降级', () => expect(calibrate(['①','①','①','①','②']).degraded).toBe(false))
   it('空数组 → fail-closed 降级', () => expect(calibrate([]).degraded).toBe(true))
+})
+
+// ── Task 10：口径锚点哨兵（硬约束 ③≤4 / skip==9 / defect==4；==13 仅 sanity）──
+describe('口径锚点哨兵', () => {
+  it('满足硬约束 → ok', () => expect(assertSentinel({ zero:0, one:9, two:0, three:4 }, { skip:9, defect:4 }).ok).toBe(true))
+  it('③>4 → 违例', () => expect(assertSentinel({ zero:0, one:8, two:0, three:5 }, { skip:9, defect:4 }).ok).toBe(false))
+  it('skip≠9 → 违例', () => expect(assertSentinel({ zero:0, one:8, two:1, three:4 }, { skip:8, defect:4 }).ok).toBe(false))
+  it('③∈[2,4] 带宽外仅警告不阻断', () => { const r = assertSentinel({ zero:0, one:10, two:0, three:3 }, { skip:9, defect:4 }); expect(r.ok).toBe(true) })
+  // ── Task 7 审查携带①：数据金丝雀——钉住「当前数据无 to:'*' 边」这一 missingRequired 口径前提；数据演化引入 to:'*' 时此测试直接红、强制口径复核 ──
+  it('数据金丝雀：TASKS 无 to:\'*\' 边', () => expect(TASKS.flatMap(t => t.requiredEdges).filter(e => e.to === '*')).toHaveLength(0))
+  // ── 针对性补钉：brief 代码未覆盖的硬约束（defect==4 / ==13 sanity）、①+② 带宽、warnings 可选字段 ──
+  it('defect≠4 → 违例（§0 权威锚点）', () => expect(assertSentinel({ zero:0, one:9, two:0, three:4 }, { skip:9, defect:5 }).ok).toBe(false))
+  it('⓪+①+②+③≠13 → 违例（构造恒等破坏=实现 bug sanity，非口径判据）', () => expect(assertSentinel({ zero:0, one:9, two:0, three:3 }, { skip:9, defect:4 }).ok).toBe(false))
+  it('①+② 出带宽[9,11] → 仅警告不阻断', () => { const r = assertSentinel({ zero:0, one:12, two:0, three:1 }, { skip:9, defect:4 }); expect(r.ok).toBe(true); expect(r.warnings?.some(w => w.includes('①+②'))).toBe(true) })
+  it('带内无 warnings 字段（可选字段非恒在）', () => expect(assertSentinel({ zero:0, one:9, two:0, three:4 }, { skip:9, defect:4 }).warnings).toBeUndefined())
 })
