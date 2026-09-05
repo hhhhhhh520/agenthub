@@ -117,6 +117,11 @@ export function terminalDecision(entries: TraceEntry[]): { state: string; action
   const state = last.inputState?.state ?? ''; const action = last.llmProposal?.action ?? ''
   return { state, action }
 }
+/**
+ * 【上游已知偏差·Task 5 审查传递约束 3】非法 createdAt（Date.parse→NaN）被静默排除（NaN<=ts 恒 false）
+ * → taskCount 少计 → 虚增①命中（污染偏向 gate 侧）。测试已钉住该行为。
+ * 【传递约束 2】本函数不按 sessionId 过滤（设计如此）——调用方必须先 tasks.filter(t => t.sessionId === session.id) 再传入。
+ */
 export function taskCountAtDecision(tasks: TaskRow[], ts: number): number {
   return tasks.filter(t => Date.parse(String(t.createdAt)) <= ts).length
 }
@@ -127,4 +132,38 @@ export function appliedEdgesOf(entries: TraceEntry[]): Array<{ action: string; f
     if (at?.applied === true && at.action && !NON_TRANSITIONING.has(at.action as Action)) out.push({ action: at.action, from: at.from ?? '', to: at.to ?? '' })
   }
   return out
+}
+
+export type Bucket = '⓪' | '①' | '②' | '③'
+export interface ClassifyInput {
+  entries: TraceEntry[]
+  appliedEdges: Array<{ action: string; from: string; to: string }>
+  failureMode: string
+  failKind?: string
+  terminal: { state: string; action: string } | null
+  /**
+   * 【传递约束 2·Task 5 审查】必须按会话先过滤：调用方（Task 12）须先
+   * `tasks.filter(t => t.sessionId === session.id)`，再喂 `taskCountAtDecision(filtered, ts)` 的结果传入本字段。
+   * taskCountAtDecision 本身不按 sessionId 过滤（Task 5 设计如此）——混入其他会话的任务会虚增计数、压低①命中。
+   * 另：taskCountAtDecision 对非法 createdAt（Date.parse→NaN）静默排除 → taskCount 少计 → 虚增①命中
+   * （污染偏向 gate 侧，上游已知偏差方向，见其 JSDoc）。
+   */
+  taskCountAtTerminal: number
+}
+export function classifyBucket(x: ClassifyInput): Bucket {
+  // 传递约束 1：空串签名拒收——terminalDecision 对缺失字段回退 ''，空串不得滑入任何正桶（尤其防「非 idle→②」否定式谓词误吸空串）
+  if (x.terminal && (x.terminal.state === '' || x.terminal.action === '')) throw new Error(`[p11-probe fail-closed] terminal 签名含空串（terminalDecision 缺字段回退）——不可分类，拒收: ${JSON.stringify(x.terminal)}`)
+  // ⓪ 未推进（最先）
+  if (x.entries.length === 0 || x.appliedEdges.length === 0) return '⓪'
+  // ① 老靶（限末决策；两支）
+  const t = x.terminal
+  const lastDec = [...x.entries].reverse().find(e => e.decisionPoint === 'handleOrchestratorDecision')
+  const fired = (lastDec?.corrections ?? []).some(c => c.from === 'done' && c.to === 'align_decompose') && lastDec?.inputState?.state === 'idle'
+  const predA = !!t && seqgatePredicate(t.state, t.action, x.taskCountAtTerminal)
+  if (predA || fired) return '①'
+  // ③ 内容/流程不可救（∧非⓪ 已过）
+  const isDefect = ['error', 'stuck', 'escalate-exhausted'].includes(x.failureMode) || x.failKind === 'defect'
+  if (isDefect) return '③'
+  // ② 构造性残差（兜底）
+  return '②'
 }
