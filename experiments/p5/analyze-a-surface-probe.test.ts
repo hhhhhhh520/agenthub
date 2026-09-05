@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, type Bucket } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -260,4 +260,11 @@ describe('机检 (i)(ii) + confirm-state', () => {
   it('confirmState confirmed 分支：(i)过 ∧ count=2 → confirmed（钉活分支，兼杀恒-candidate/整段删除变异）', () => {
     expect(confirmStateT('sig', [reqDone], 2, 'exec', synth)).toBe('confirmed')
   })
+})
+
+// ── Task 9：强带 C-off 正对照/标定（阈值 4/5 + ⓪退化降级）──
+describe('正对照标定（钉强带）', () => {
+  it('①复现率 ≥4/5 → 校准通过', () => expect(calibrate(['①','①','①','①','①']).degraded).toBe(false))
+  it('①复现率 3/5 → 降级', () => expect(calibrate(['①','①','①','②','③']).degraded).toBe(true))
+  it('多⓪ → 降级并给原因', () => { const c = calibrate(['⓪','⓪','⓪','①','①']); expect(c.degraded).toBe(true); expect(c.reason).toContain('⓪') })
 })

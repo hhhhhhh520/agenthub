@@ -178,6 +178,19 @@ export function classifyBucket(x: ClassifyInput): Bucket {
   return '②'
 }
 
+/** Task 9：强带 C-off 正对照/标定（只钉强带，弱带 C-off 不参与——Task 12 选样纪律）。①复现率 <4/5 或 ⓪占比 ≥0.4 任一触发即降级（⓪ 优先，正对照退化软证据）。 */
+export interface Calibration { reproRate: number; zeroCount: number; degraded: boolean; reason: string }
+export function calibrate(strongCOffBuckets: Bucket[]): Calibration {
+  const n = strongCOffBuckets.length || 1
+  const ones = strongCOffBuckets.filter(b => b === '①').length
+  const zeros = strongCOffBuckets.filter(b => b === '⓪').length
+  const reproRate = ones / n
+  let degraded = false; let reason = ''
+  if (zeros / n >= 0.4) { degraded = true; reason = `强带 C-off ${zeros}/${n} 为⓪（未推进），正对照退化软证据` }
+  else if (reproRate < 4 / 5) { degraded = true; reason = `强带 C-off ①复现率 ${ones}/${n} < 4/5，尺子未干净校准，A-null 证据强度降级` }
+  return { reproRate, zeroCount: zeros, degraded, reason }
+}
+
 /** 从 state 出发、沿 TRANSITIONS 是否存在可达续作能走通 edge（edge.from==='*' 则 from-agnostic）。判定转移表可达性，非会话序列回放。 */
 export function edgeCoverableFromT(state: State, edge: { action: string; from: string; to: string }, T: Record<State, Partial<Record<Action, State>>>): boolean {
   const seen = new Set<State>(); const queue: State[] = [state]
