@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, type Bucket } from './analyze-a-surface-probe'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
 
@@ -153,5 +153,42 @@ describe('签名提取', () => {
   it('appliedEdgesOf 漏 applied=false / 无 actualTransition 不收', () => {
     const entries = [E({ actualTransition: { action: 'done', from: 'idle', to: 'done', applied: false, escalated: false } }), { ts: '2026-09-02T10:00:00.000Z' }]
     expect(appliedEdgesOf(entries)).toEqual([])
+  })
+})
+
+describe('四桶分类器', () => {
+  const base = { appliedEdges: [{ action:'done', from:'idle', to:'done' }], failureMode:'no-pass', failKind:'skipped-spec-edge' }
+  it('⓪：空 trace', () => expect(classifyBucket({ ...base, entries: [], terminal: null, taskCountAtTerminal: 0 })).toBe('⓪'))
+  it('⓪：appliedEdges=0 ∧ error（⓪≻③）', () => expect(classifyBucket({ entries:[{}], appliedEdges: [], failureMode:'error', failKind:'defect', terminal:{state:'idle',action:'done'}, taskCountAtTerminal:0 })).toBe('⓪'))
+  it('①(a)：末决策 idle∧done∧tc0', () => expect(classifyBucket({ ...base, entries:[{}], terminal:{state:'idle',action:'done'}, taskCountAtTerminal:0 })).toBe('①'))
+  it('①(b)：末条目 fired correction（三合取）', () => {
+    const entries = [{ decisionPoint:'handleOrchestratorDecision', inputState:{state:'idle'}, llmProposal:{action:'done'}, corrections:[{from:'done',to:'align_decompose'}], actualTransition:{applied:false}, ts:'2026-09-02T10:00:00.000Z' }]
+    expect(classifyBucket({ entries, appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'no-pass', failKind:'skipped-spec-edge', terminal:{state:'idle',action:'done'}, taskCountAtTerminal:1 })).toBe('①')
+  })
+  it('①∩③：fired correction ∧ error → ①（优先级）', () => {
+    const entries = [{ decisionPoint:'handleOrchestratorDecision', inputState:{state:'idle'}, llmProposal:{action:'done'}, corrections:[{from:'done',to:'align_decompose'}], actualTransition:{applied:true,action:'done',from:'idle',to:'done'}, ts:'' }]
+    expect(classifyBucket({ entries, appliedEdges:[{action:'done',from:'idle',to:'done'}], failureMode:'error', failKind:'defect', terminal:{state:'idle',action:'done'}, taskCountAtTerminal:0 })).toBe('①')
+  })
+  it('③：error ∧ appliedEdges>0 ∧ 非①签名', () => expect(classifyBucket({ entries:[{}], appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'error', failKind:'defect', terminal:{state:'exec',action:'execute'}, taskCountAtTerminal:1 })).toBe('③'))
+  it('②：skipped-spec-edge ∧ 非① ∧ 非③ ∧ 非⓪（构造性残差）', () => expect(classifyBucket({ entries:[{}], appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'no-pass', failKind:'skipped-spec-edge', terminal:{state:'align_arch',action:'done'}, taskCountAtTerminal:1 })).toBe('②'))
+  it('穷尽构造：任给集合 ⓪+①+②+③ == 总数', () => {
+    // 由实现保证 ② 为残差，四桶覆盖全集
+    const cases = ['⓪','①','②','③'] as Bucket[]
+    expect(new Set(cases).size).toBe(4)
+  })
+  // ── Task 5 审查传递约束 1：空串签名拒收——terminalDecision 缺字段回退 ''，空串不得滑入任何正桶 ──
+  it('空串签名拒收：terminal.state=\'\' 抛错（防「非 idle→②」否定式谓词误吸空串）', () => {
+    expect(() => classifyBucket({ ...base, entries:[{}], terminal:{state:'',action:'done'}, taskCountAtTerminal:1 })).toThrow(/空串/)
+  })
+  it('空串签名拒收：terminal.action=\'\' 抛错（idle∧空action 不得判①或②）', () => {
+    expect(() => classifyBucket({ ...base, entries:[{}], terminal:{state:'idle',action:''}, taskCountAtTerminal:0 })).toThrow(/空串/)
+  })
+  // ── Task 5 审查传递约束 3：NaN createdAt 静默排除的偏差方向钉子（少计→虚增①命中，污染偏向 gate 侧）──
+  it('taskCountAtDecision 已知偏差：NaN createdAt 任务不计入（钉住上游行为）', () => {
+    const tasks = [
+      { id: 'bad', sessionId: 's', createdAt: 'not-a-date' },
+      { id: 'ok', sessionId: 's', createdAt: '2026-09-02T09:00:00.000Z' },
+    ]
+    expect(taskCountAtDecision(tasks, Date.parse('2026-09-02T10:00:00.000Z'))).toBe(1)
   })
 })
