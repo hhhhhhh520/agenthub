@@ -191,4 +191,16 @@ describe('四桶分类器', () => {
     ]
     expect(taskCountAtDecision(tasks, Date.parse('2026-09-02T10:00:00.000Z'))).toBe(1)
   })
+  // ── 审查 R1 变异存活缺口负例：①语义「常被做错」两处各钉一条（实现零改动）──
+  it('负例A·限末决策：前条 fired 但末决策非①签名 → ②（find 改 filter+some 会误判①）', () => {
+    const entries = [
+      { decisionPoint:'handleOrchestratorDecision', inputState:{state:'idle'}, llmProposal:{action:'done'}, corrections:[{from:'done',to:'align_decompose'}], ts:'2026-09-02T10:00:00.000Z' },
+      { decisionPoint:'handleOrchestratorDecision', inputState:{state:'align_arch'}, llmProposal:{action:'done'}, corrections:[], ts:'2026-09-02T10:01:00.000Z' },
+    ]
+    expect(classifyBucket({ entries, appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'no-pass', failKind:'skipped-spec-edge', terminal:{state:'align_arch',action:'done'}, taskCountAtTerminal:1 })).toBe('②')
+  })
+  it('负例B·第三合取：corrections 命中但 inputState 非 idle → ②（删第三合取会误判①）', () => {
+    const entries = [{ decisionPoint:'handleOrchestratorDecision', inputState:{state:'align_arch'}, llmProposal:{action:'done'}, corrections:[{from:'done',to:'align_decompose'}], ts:'2026-09-02T10:00:00.000Z' }]
+    expect(classifyBucket({ entries, appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'no-pass', failKind:'skipped-spec-edge', terminal:{state:'align_arch',action:'done'}, taskCountAtTerminal:1 })).toBe('②')
+  })
 })
