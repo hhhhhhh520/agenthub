@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, assertSentinel, verdict, renderMap, type Bucket, type SigRow } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, assertWeakFrozenSha, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, assertSentinel, verdict, renderMap, signatureOf, metricsTruthFromRows, calibrationBuckets, assertPctLedger, probeSession, probeSessions, buildMapRows, partitionSingles, assembleReport, type Bucket, type SigRow, type JoinedRun, type TaskRow, type MapRowInput, type ReportParts } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -309,5 +309,204 @@ describe('地图渲染 + 裁决', () => {
     ], { degraded:false, reason:'' } as any, { ok:true, violations:[] } as any)
     const body = md.split('\n').filter(l => /^\| (strong|weak) /.test(l))
     expect(body.map(l => l.split('|')[5]?.trim())).toEqual(['s-a', 's-b', 's-on', 's-weak'])
+  })
+})
+
+// ── Task 12：main() 端到端编排 + Step-0 fail-closed + 报告装配 ──
+// Step-0 fail-closed（brief Step1）：弱批 sha 不符 → 抛错不落结论；非快照路径拒（Task 3 已覆盖 assertSnapshotPath，
+// 此处按 brief Step2「若已绿则补装配测试」策略补 sha 正/负两向 + 装配层测试）。
+describe('Task12: Step0 fail-closed（弱批 sha 双向钉）', () => {
+  const weakReal = join(import.meta.dirname, 'results', 'metrics.p10-weak-frozen-20260904.bak.jsonl')
+  it('弱批 sha 不符 → 抛错（exit 语义：抛错不落结论）', () =>
+    expect(() => assertWeakFrozenSha(weakReal, 'deadbeef'.repeat(8))).toThrow(/sha256/))
+  it('弱批冻结锚点 == 真实冻结副本（正向钉，防锚点/文件单侧漂移）', () =>
+    expect(() => assertWeakFrozenSha(weakReal, PROBE_BATCH.weakFrozenSha)).not.toThrow())
+})
+
+describe('Task12: 签名串/metricsTruth/标定守卫/pct对账（携带项可测部分）', () => {
+  it('signatureOf 三段确定串：<末态>/<提议>/<缺失边集排序>', () => {
+    expect(signatureOf({ state: 'align_arch', action: 'done' }, [{ action: 'execute', from: 'idle', to: 'exec' }, { action: 'done', from: 'exec', to: 'done' }]))
+      .toBe('align_arch/done/done@exec->done,execute@idle->exec')
+  })
+  it('signatureOf terminal=null → null/- 前缀（仍确定串）', () =>
+    expect(signatureOf(null, [])).toBe('null/-/'))
+  it('metricsTruthFromRows 真实重算 skip/defect（数行，非硬编码）', () => {
+    const r = (failKind: string, over: object = {}) => ({ runId: 'x', config: 'off+verify', taskId: 'A' as const, seed: 0, pass: false, failureMode: 'no-pass', failKind, rounds: 1, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 1, latencyMs: 1, ...over })
+    const rows = Array.from({ length: 9 }, (_, i) => r('skipped-spec-edge', { seed: i })).concat(Array.from({ length: 4 }, (_, i) => r('defect', { seed: 100 + i })))
+    expect(metricsTruthFromRows(rows)).toEqual({ skip: 9, defect: 4, total: 13 })
+  })
+  it('metricsTruthFromRows failKind 缺口 → fail-closed（skip/defect 口径漂移即抛）', () => {
+    const bad = { runId: 'x', config: 'off+verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', failKind: 'done-but-conformance', rounds: 1, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 1, latencyMs: 1 }
+    expect(() => metricsTruthFromRows([bad as never])).toThrow(/failKind/)
+  })
+  // 【T9 携带】防御落点=选样管道：弱带桶混入标定即拒
+  it('calibrationBuckets 弱带桶混入即拒（只钉强带 C-off）', () => {
+    expect(() => calibrationBuckets([{ band: 'weak', bucket: '①' }, { band: 'strong', bucket: '①' }])).toThrow(/强带/)
+    expect(() => calibrationBuckets([{ band: 'strong', bucket: '①' }, { band: 'strong', bucket: '②' }])).not.toThrow()
+  })
+  // 【T11 携带 B】pct 分母对账：每 (task,band) Σn == 非⓪分母 ∧ pct == n/分母
+  it('assertPctLedger 恒等通过（Σn==分母 ∧ pct==n/分母）', () => {
+    const rows: SigRow[] = [
+      { band: 'strong', arm: 'on+verify', task: 'A', bucket: '①', signature: 's1', confirmState: 'candidate', n: 2, pct: (2 / 6) * 100 },
+      { band: 'strong', arm: 'off+verify', task: 'A', bucket: '③', signature: 's2', confirmState: 'candidate', n: 4, pct: (4 / 6) * 100 },
+    ]
+    expect(() => assertPctLedger(rows, { 'A|strong': 6 })).not.toThrow()
+  })
+  it('assertPctLedger Σn≠分母 → 抛', () => {
+    // pct 先按 n/分母 给对（40%），只让 Σn 违例触发（隔离被测分支）
+    const rows: SigRow[] = [{ band: 'strong', arm: 'off+verify', task: 'A', bucket: '①', signature: 's', confirmState: 'candidate', n: 2, pct: 40 }]
+    expect(() => assertPctLedger(rows, { 'A|strong': 5 })).toThrow(/Σn/)
+  })
+  it('assertPctLedger pct≠n/分母 → 抛（防构造期误除）', () => {
+    const rows: SigRow[] = [{ band: 'weak', arm: 'on+verify', task: 'A', bucket: '②', signature: 's', confirmState: 'candidate', n: 3, pct: 50 }]
+    expect(() => assertPctLedger(rows, { 'A|weak': 7 })).toThrow(/pct/)
+  })
+})
+
+describe('Task12: joinRuns 多候选守卫（T4 携带观察项闭环）', () => {
+  const sess = (projectDir: string) => ({ id: 's' + projectDir, title: 'p5-x', projectDir, phase: 'done', createdAt: '', decisionTrace: '[]' })
+  const mrow = (runId: string) => ({ runId, config: 'off+verify', taskId: 'A' as const, seed: 0, pass: false, failureMode: 'no-pass', failKind: 'skipped-spec-edge', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 1 })
+  it('多于一个未占用候选命中同一 runId → 抛（防 find() 静默取首个=错配）', () => {
+    expect(() => joinRuns([mrow('r1')], [sess('r1-aaaa'), sess('r1-bbbb')], { A: 1 })).toThrow(/多于一个未占用/)
+  })
+})
+
+describe('Task12: probeSession 逐会话分类（损坏降级不炸整批）', () => {
+  const REQ = [{ action: 'done', from: 'exec', to: 'done' }, { action: 'execute', from: '*', to: 'exec' }]
+  const E = (over: object = {}) => ({ decisionPoint: 'handleOrchestratorDecision', inputState: { state: 'idle' }, llmProposal: { action: 'done' }, corrections: [], validation: {}, actualTransition: { action: 'done', from: 'idle', to: 'done', applied: true, escalated: false }, ts: '2026-09-02T10:00:00.000Z', ...over })
+  const sess = (id: string, decisionTrace: string | null, projectDir = '/w/x'): any => ({ id, title: 'p5-x', projectDir, phase: 'done', createdAt: '2026-09-02T10:00:00.000Z', decisionTrace })
+  const mrow = (runId: string, over: object = {}) => ({ runId, config: 'off+verify', taskId: 'A' as const, seed: 0, pass: false, failureMode: 'no-pass', failKind: 'skipped-spec-edge', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 0, totalTransitions: 2, latencyMs: 1, ...over })
+  const tasks: TaskRow[] = [
+    { id: 't1', sessionId: 's1', createdAt: '2026-09-02T09:59:00.000Z' },
+    { id: 't2', sessionId: 's2', createdAt: '2026-09-02T09:30:00.000Z' }, // 他会话任务，不得计入 s1
+  ]
+  it('正常会话：桶+签名+tc（【传递约束 2】sessionId 先过滤再计数；tc=1→非seqgate→②）', () => {
+    const j = { row: mrow('r1'), session: sess('s1', JSON.stringify([E()])) } as unknown as JoinedRun
+    const c = probeSession(j, tasks, REQ)
+    expect(c.bucket).toBe('②')            // idle/done/tc=1（t2 不计、t1 计入）→ predA 假 → 落②
+    expect(c.taskCountAtTerminal).toBe(1)
+    expect(c.corruptReason).toBeNull()
+    expect(c.schemaBad).toBeNull()
+    expect(c.signature).toBe(signatureOf({ state: 'idle', action: 'done' }, missingRequired([{ action: 'done', from: 'idle', to: 'done' }], REQ)))
+  })
+  it('① 命中需 tc=0：本会话无任务 → ①', () => {
+    const j = { row: mrow('r1'), session: sess('s1', JSON.stringify([E()])) } as unknown as JoinedRun
+    const c = probeSession(j, [{ id: 't2', sessionId: 's2', createdAt: '2026-09-02T09:30:00.000Z' }], REQ)
+    expect(c.taskCountAtTerminal).toBe(0)
+    expect(c.bucket).toBe('①')
+  })
+  // 【T6 携带】terminal 空串抛错须显式降级策略：action='' 过字段存在性 schema（键在）→ classifyBucket 拒收 → 损坏列
+  it('空串签名（action=\'\'）→ classifyBucket 拒收 → bucket=null + corruptReason（损坏/拒收列，不炸整批）', () => {
+    const j = { row: mrow('r1'), session: sess('s1', JSON.stringify([E({ llmProposal: { action: '' } })])) } as unknown as JoinedRun
+    const c = probeSession(j, tasks, REQ)
+    expect(c.bucket).toBeNull()
+    expect(c.corruptReason).toMatch(/空串/)
+    expect(c.schemaBad).toBeNull()
+  })
+  it('state=\'\' ∉ State → schemaBad（§2.2-4 exit-1 语义优先于损坏列）', () => {
+    const j = { row: mrow('r1'), session: sess('s1', JSON.stringify([E({ inputState: { state: '' } })])) } as unknown as JoinedRun
+    const c = probeSession(j, tasks, REQ)
+    expect(c.schemaBad).toMatch(/State/)
+    expect(c.bucket).toBeNull()
+  })
+  it('decisionTrace 畸形（非数组）→ schemaBad 置位（§2.2-4 exit 1 语义由编排计数）', () => {
+    const j = { row: mrow('r1'), session: sess('s1', '{broken') } as unknown as JoinedRun
+    const c = probeSession(j, tasks, REQ)
+    expect(c.schemaBad).toMatch(/解析失败/)
+  })
+  it('决策条目 ts 非法 → schemaBad（防 NaN→tc=0 虚增①，F2）', () => {
+    const j = { row: mrow('r1'), session: sess('s1', JSON.stringify([E({ ts: 'not-a-date' })])) } as unknown as JoinedRun
+    const c = probeSession(j, tasks, REQ)
+    expect(c.schemaBad).toMatch(/ts/)
+  })
+  it('probeSessions 汇总：schemaBad/corrupted 独立计数', () => {
+    const joined = [
+      { row: mrow('r1'), session: sess('s1', JSON.stringify([E()])), band: 'strong' },
+      { row: mrow('r2', { seed: 1 }), session: sess('s2', JSON.stringify([E({ llmProposal: { action: '' } })])), band: 'strong' },
+      { row: mrow('r3', { seed: 2 }), session: sess('s3', '{broken'), band: 'weak' },
+    ] as never[]
+    const out = probeSessions(joined as never, tasks, { A: REQ })
+    expect(out.corruptedCount).toBe(1)
+    expect(out.schemaBadCount).toBe(1)
+    expect(out.results.filter(x => x.bucket !== null)).toHaveLength(1)
+    expect(out.results[2].band).toBe('weak')   // band 透传（文件来源定带）
+  })
+})
+
+describe('Task12: buildMapRows/partitionSingles/assembleReport 装配', () => {
+  const input = (over: Partial<MapRowInput> = {}): MapRowInput => ({ band: 'strong', arm: 'off+verify', task: 'A', bucket: '①', signature: 'idle/done/done@idle->done', terminalState: 'idle', missingEdges: [{ action: 'done', from: 'exec', to: 'done' }], ...over })
+  it('buildMapRows：分组 n/pct=÷非⓪分母/①③行 confirmState 恒 candidate 占位', () => {
+    const { rows, denominators } = buildMapRows([input(), input({ arm: 'on+verify' }), input({ bucket: '③', signature: 'align_arch/self/x', terminalState: 'align_arch' })])
+    expect(denominators).toEqual({ 'A|strong': 3 })
+    expect(rows).toHaveLength(3)   // 三个不同 (arm,bucket,signature) 组各一行
+    const onOne = rows.find(r => r.arm === 'on+verify')!
+    expect(onOne.n).toBe(1)
+    expect(onOne.pct).toBeCloseTo((1 / 3) * 100, 9)
+    expect(onOne.confirmState).toBe('candidate')   // ① 行占位，不参与绿门
+    expect(rows.every(r => r.bucket === '①' || r.bucket === '③')).toBe(true)
+  })
+  it('buildMapRows：②签名跨带 merged 计数喂 confirmState（真实表 (i) 败 → candidate，主结局）', () => {
+    const { rows } = buildMapRows([
+      input({ bucket: '②', signature: 'align_arch/done/x', arm: 'off+verify' }),
+      input({ bucket: '②', signature: 'align_arch/done/x', band: 'weak', arm: 'off+verify' }),
+    ])
+    expect(rows).toHaveLength(2)
+    expect(rows.every(r => r.confirmState === 'candidate')).toBe(true)   // 真实连通表 → (i) 败
+  })
+  it('partitionSingles：② 单例（跨带合并 n<2）分离；①/③ 不进孤例表', () => {
+    const rows: SigRow[] = [
+      { band: 'strong', arm: 'o', task: 'A', bucket: '①', signature: 'sigA', confirmState: 'candidate', n: 1, pct: 10 },   // 单例但非② → 主表
+      { band: 'strong', arm: 'o', task: 'A', bucket: '②', signature: 'sigB', confirmState: 'candidate', n: 1, pct: 10 },   // ② 单例 → 孤例
+      { band: 'weak', arm: 'o', task: 'A', bucket: '②', signature: 'sigC', confirmState: 'candidate', n: 1, pct: 10 },
+      { band: 'strong', arm: 'o2', task: 'A', bucket: '②', signature: 'sigC', confirmState: 'candidate', n: 1, pct: 10 },  // sigC 跨带合并=2 → 群
+    ]
+    const { groups, singles } = partitionSingles(rows)
+    expect(singles.map(r => r.signature)).toEqual(['sigB'])
+    expect(groups.map(r => r.signature).sort()).toEqual(['sigA', 'sigC', 'sigC'])
+  })
+  const parts = (over: Partial<ReportParts> = {}): ReportParts => ({
+    groups: [{ band: 'strong', arm: 'off+verify', task: 'A', bucket: '①', signature: 'idle/done/done@idle->done', confirmState: 'candidate', n: 2, pct: (2 / 6) * 100 }],
+    singles: [],
+    cal: { degraded: false, reason: '', reproRate: 1, zeroCount: 0 },
+    sent: { ok: true, violations: [] },
+    tally: { zero: 0, one: 9, two: 0, three: 4 },
+    aNotPass: 13,
+    corrupted: 0,
+    strongCOffBuckets: ['①', '①', '①', '①', '①'],
+    metricsTruth: { skip: 9, defect: 4 },
+    step0: { snapshotPath: 'snapshot-x/p5.db', snapshotSha: 'abc', journalMode: 'delete', join: 'A strong=15/C-off=5/A weak=15', titleCoarse: '575/575', parseOk: 35, parseTotal: 35, schemaBad: 0, cellMismatch: 0, zeroRatio: '0/13', strongFile: 'strong.jsonl 45行', weakFile: 'weak.jsonl 45行 sha锚点✓' },
+    ...over,
+  })
+  it('装配（正常·哨兵 ok）：裁决行 + 标定行 + 对账平（13）+ §0 对照 + 孤例空段', () => {
+    const md = assembleReport(parts())
+    expect(md).toMatch(/\*\*裁决：/)
+    expect(md).toContain('标定')
+    expect(md).toContain('⓪0 + ①9 + ②0 + ③4 == 13 == A ¬pass 13')
+    expect(md).toContain('skip=9')
+    expect(md).toContain('defect=4')
+    expect(md).not.toMatch(/先自查口径/)
+    expect(md).toContain('无孤例')
+  })
+  it('装配（哨兵违例）：无红/绿裁决行 + 顶部「先自查口径」横幅（T10 携带②③实测行为）', () => {
+    const md = assembleReport(parts({ sent: { ok: false, violations: ['③=5 > 4（③⊆defect/error 行）'] } }))
+    expect(md).not.toMatch(/\*\*裁决：/)
+    expect(md).toContain('先自查口径（选样/taskCount/join）')
+    expect(md).toContain('③=5 > 4')
+    expect(md).toContain('全部靶点结论阻断')
+  })
+  it('装配（标定降级·哨兵 ok）：自查横幅输出，裁决行仍在（阻断仅哨兵违例触发）', () => {
+    const md = assembleReport(parts({ cal: { degraded: true, reason: '①复现率 3/5 < 4/5', reproRate: 0.6, zeroCount: 0 } }))
+    expect(md).toContain('先自查口径（选样/taskCount/join）')
+    expect(md).toMatch(/\*\*裁决：/)
+    expect(md).toContain('标定降级')
+  })
+  it('装配：②单例 → 孤例表段渲染（非空）', () => {
+    const md = assembleReport(parts({ singles: [{ band: 'weak', arm: 'off+verify', task: 'A', bucket: '②', signature: 'align_pm/done/x', confirmState: 'candidate', n: 1, pct: 14.285714285714285 }] }))
+    expect(md).toContain('孤例表')
+    expect(md).toContain('align_pm/done/x')
+  })
+  it('装配：损坏/拒收独立计数列进入对账段', () => {
+    const md = assembleReport(parts({ corrupted: 1 }))
+    expect(md).toMatch(/损坏\/拒收[^]*?1/)
   })
 })
