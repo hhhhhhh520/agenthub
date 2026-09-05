@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-08-10
+> 创建时间: 2026-05-22 | 最后更新: 2026-09-05
 
 ## 项目概述
 **项目地址**: D:\ai全栈挑战赛\agenthub | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -225,11 +225,12 @@
 | P10 线一：seqgate 移植回顾决策（2026-09-02，**分支3=维持门控**） | 新增 `experiments/p5/analyze-port-replay.ts`（快照副本+query_only+write-self-test+fail-closed 前置闸门+摘录消毒，审查 F1/F2/F6/F8/F10/F11/F13 配方全落地，db009de；终审 should-fix 两行加固 0c82d00；SDD T1-T4 逐任务评审+opus/fable 终审全过）。真库实跑：扫描 21 会话/可分析 0/命中 0/截断 0 → **分支 3：维持 env 门控（EXPERIMENT_SEQGATE 生产默认关）不转正；启动条件=可分析会话≥20 且 gate 命中≥5 时重跑本脚本即出数据**。附带：T1 统计口径精确化（mcnemarExact，b+c<25 用精确式——P9-乙 C 格 p≈0.046 为渐近口径、精确 0.125，全终审修正裁决规则防"<0.05 不可达"误判） | results/report-p10-port-decision.md（gitignored，sha256=3fef6726…） | 2026-09-02 |
 | P10 T6 探带（2026-09-02，**H4 成立**） | 装置 4 轮修复后发射（T3 fix-r1 baseUrl 放路径尾/r2 preflight 文件信号+指纹绑定/r3 覆盖写 Critical/r4 batch 判据文件信号——afterAll console 间歇丢失实证，双通道全部文件信号化；launch 前 env 卫生+check 机判三重交叉核）。provider 按用户拍板改 Ark plan（spec §2.2 OpenRouter 修订，候选收敛两点：ark-code-latest=后端 glm-5-3-flash 轻量档 + deepseek-v4-flash-ga-260731 强锚；doubao/kimi 等 plan 端点全不支持）。**基线哨兵×2 过闸**（讯飞 2239ms/Ark 22225ms，指纹绑定+时间窗+文件信号）；主候选探带 off+verify×A×5=**pass 4/5**（s3 skipped-spec-edge✓ ill=2）→ 中间带上沿 → **H4 成立**；强档控制组哨兵绿（2464ms）。台账 results/p10-candidates.md | 2026-09-02 |
 | P10 T7 弱模型 45-run（2026-09-02/03，**H6 方向性强证据+H5 跨档第四次 null**） | attempt1 37 行作废（vitest Temp/ssr 缓存被系统清→8 run 瞬间炸未执行，已知 flake 升级形态——缺的恰是 seqgate C 主战场格，勿用残批出裁决，处置已入 CLAUDE.md）；attempt2 整批干净：45/45 CHECK OK（p5-batch-last.json 文件信号首真批✓）+ENV_VALID+判阴+零 error/stuck。**逐格**：A off2/on2/**seq4**；B 5/5/4；C 0/0/**5**。**裁决（精确口径）**：H5（OFF vs ON）三格全平 p=1.000 → **未证实——状态机主效应跨能力档第四次 null（P6/P7/P8+本批），H1′ 修正义务转 P11**（候补解释：主导错误是缺失类，canonicalCorrect 面向的非法类产出率弱模型上也低）；**H6 保持：C 0/5→5/5（5-0 全同向扫描，p_exact=0.0625=n=5 精确下限，显著性不定论）比强批 0→4 更陡**；gate 触发 7/15（C 格 5/5 全触发全 pass 同现率 100%，与强批形态复现）；H2′ 弱模型版 C 格成立。「干预效应∝作用面」核心命题跨两能力档闭环：靶点探针→seqgate→强批显著（方向性）→弱批复现放大→主效应边界。数据 metrics.jsonl（45 行）+metrics.p10-matrix-attempt1-37rows.bak.jsonl、报告 report-p10-weak.md | 2026-09-03 |
+| P11 作用面「有界预测」证伪探针（2026-09-04/05，**红灯=有界预测证实，A 无第二 gateable 主导群**） | 北极星拍板=追因·拆件+功效；方法评审重定位：**不拆旧捆绑**（已被 P9-丙+作用面论解释——ON 成分作用在罕见/不命中模式），改把作用面论从解释器用成生成器——对 A 的有界预测（¬pass ⊆ ③内容不可救 ∪ ①seqgate 已罩、②稀疏）摆**可被打脸的证伪检验**，**四桶失败地图为主角交付、红/绿裁决为副产物**；强带 C-off 作正对照标定（分类器能复现已知①族，A 的②-空才可信）。spec v6（五轮独立审查并入：Security Eng F1-F14 + pre-commit 5❌ + 外部方法评审 M1-M5 + v4 聚焦核查 3❌ + v5 复核钉死机检(i)防恒真回放）→ plan 12 任务 SDD（每任务 fresh 子代理+独立审查，4 轮 R1 返工全闭环：①语义负例钉/机检混合集钉/标定边界钉/verdict 跨带钉，变异实证击杀）→ **全分支终审 APPROVE（0 must-fix，26 deferred-minor 全 triage）**。**探针真跑**（`analyze-a-surface-probe.ts`，95 测试全绿，零 src/lib 运行时 import（TRANSITIONS 内联+源文本漂移），快照副本只读，弱批 sha256 冻结 af6e590a…）：四桶 **⓪0/①9/②0/③4** 合计 13 对账平（skip9/defect4==§0 权威，metricsTruth 真实重算）；**标定干净**（强带 C-off ①复现 5/5、⓪=0、未降级——三重担保：C 标定+missingRequired 黄金测试+TRANSITIONS 漂移测试）；哨兵 ok 零违例；Step-0 全过（快照白名单+sha 锚点+join 35/35 唯一+串档 0+⓪占比前置）。**裁决=red：A 的失败 ⊆ 内容/流程不可救(③=4) ∪ seqgate 已罩(①=9)，无第二 gateable 主导群——作用面论 A 域边界落档**（红为预期主结局非白跑；机检(i)对连通真实表结构性偏紧=已知拍板后果，测试如实编码）。工程红线全程未破：生产零改动、F8 聚合数、LLM-judge 零使用。数据 results/report-a-surface-probe.md（gitignored）| 2026-09-05 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
-| （无——P10 头脑风暴下个会话开始，候选议题见规划 §9.2 P9-乙 T6 行尾与 memory 待办） | — |
+| （无——P11 探针已收官落档（red，A 无第二 gateable 主导群）；P11b 未立项（绿未触发）；A 方向后继唯一正向出口=seqgate 转正（等启动条件可分析≥20 且命中≥5）） | — |
 
 ### 📋 待办（2026-06-25 更新）
 
