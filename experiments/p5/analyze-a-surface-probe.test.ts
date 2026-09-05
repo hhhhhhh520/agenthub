@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, type Bucket } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -231,9 +231,9 @@ describe('missingRequired 等价性', () => {
 // 正例用合成表证 (i) 非恒假；负例/变异用真实表证 (i) 对真实连通表会败（预期主结局：②多呈 candidate）。
 describe('机检 (i)(ii) + confirm-state', () => {
   const reqDone = { action:'done', from:'exec', to:'done' }
+  // 合成转移表：exec 只有 execute 自环，无 done → exec→done 不可达
+  const synth: any = { exec: { execute: 'exec' } }
   it('(i) 合成表：缺失边不可达 → 通过（证非恒假）', () => {
-    // 合成转移表：exec 只有 execute 自环，无 done → exec→done 不可达
-    const synth: any = { exec: { execute: 'exec' } }
     expect(edgeCoverableFromT('exec', reqDone, synth)).toBe(false)
     expect(machineCheckIT('exec', [reqDone], synth)).toBe(true)   // 全不可覆盖 → (i) 过
   })
@@ -246,5 +246,18 @@ describe('机检 (i)(ii) + confirm-state', () => {
   })
   it('confirmState：(i)败 → candidate 不翻绿', () => {
     expect(confirmState('idle/done/x', TASKS.find(t=>t.id==='A')!.requiredEdges, 3, 'idle')).toBe('candidate')
+  })
+  // ── R1/5 审查补钉：偏绿方向变异存活缺口（every→some、count 门弱化、confirmed 分支删除）──
+  it('(i) 混合集：一不可覆盖+一可覆盖 → false（杀 every→some 变异）', () => {
+    // reqDone 在 synth 下不可覆盖；execute→exec 可覆盖 → every 必 false，some 会误 true
+    expect(machineCheckIT('exec', [reqDone, { action:'execute', from:'*', to:'exec' }], synth)).toBe(false)
+  })
+  it('confirmState count 门：(i)过 ∧ count=1 → candidate（杀 count>=2 弱化为 >=0）', () => {
+    // confirmState 硬连真实表（reqDone 从 exec 可覆盖→(i)恒败→count 门不可观测），
+    // 故经带表参的 confirmStateT 在合成表下使 (i) 过，count 门才可观测——语义即「合成表下的 confirmState」
+    expect(confirmStateT('sig', [reqDone], 1, 'exec', synth)).toBe('candidate')
+  })
+  it('confirmState confirmed 分支：(i)过 ∧ count=2 → confirmed（钉活分支，兼杀恒-candidate/整段删除变异）', () => {
+    expect(confirmStateT('sig', [reqDone], 2, 'exec', synth)).toBe('confirmed')
   })
 })
