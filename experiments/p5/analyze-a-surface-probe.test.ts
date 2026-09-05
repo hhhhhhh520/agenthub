@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, type Bucket } from './analyze-a-surface-probe'
+import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
 
@@ -203,4 +204,25 @@ describe('四桶分类器', () => {
     const entries = [{ decisionPoint:'handleOrchestratorDecision', inputState:{state:'align_arch'}, llmProposal:{action:'done'}, corrections:[{from:'done',to:'align_decompose'}], ts:'2026-09-02T10:00:00.000Z' }]
     expect(classifyBucket({ entries, appliedEdges:[{action:'execute',from:'idle',to:'exec'}], failureMode:'no-pass', failKind:'skipped-spec-edge', terminal:{state:'align_arch',action:'done'}, taskCountAtTerminal:1 })).toBe('②')
   })
+})
+
+// ── Task 7：missingRequired 与 oracle 等价性黄金测试 ──
+// 探针不 import metrics.ts 的 hasRequiredEdges（未导出且属生产文件）；等价性靠此处独立手写的参考实现对拍，防口径分家。
+describe('missingRequired 等价性', () => {
+  // 参考实现（镜像 metrics.ts:27 hasRequiredEdges 的缺失边语义，独立写以防口径分家）
+  const refMissing = (applied: any[], required: any[]) => required.filter(req => !applied.some(a => a.action === req.action && a.to === req.to && (req.from === '*' || a.from === req.from)))
+  const A = TASKS.find(t => t.id === 'A')!.requiredEdges
+  it('与参考实现逐例全等', () => {
+    const cases = [
+      [], [{ action:'done', from:'exec', to:'done' }],
+      [{ action:'align_decompose', from:'idle', to:'align_arch' }, { action:'execute', from:'align_qa', to:'exec' }, { action:'done', from:'exec', to:'done' }],
+      [{ action:'execute', from:'idle', to:'exec' }],
+    ]
+    for (const applied of cases) expect(missingRequired(applied, A)).toEqual(refMissing(applied, A))
+  })
+  it('from=* 匹配任意 from', () => expect(missingRequired([{ action:'execute', from:'align_qa', to:'exec' }], [{ action:'execute', from:'*', to:'exec' }])).toEqual([]))
+  it('done 边钉 from=exec', () => expect(missingRequired([{ action:'done', from:'idle', to:'done' }], [{ action:'done', from:'exec', to:'done' }])).toHaveLength(1))
+  // 判别力补钉（上游审查纪律：漏掉 to 匹配的变异必须红）：brief 4+2 用例的 required 边 action 互异，to 相等永不成为决定条件，
+  // 故单钉一条 to 不同 → 缺失 的边界（同 action 同 from 仅 to 异）。
+  it('to 必须相等：同 action 同 from 但 to 不同 → 缺失', () => expect(missingRequired([{ action:'done', from:'exec', to:'align_arch' }], [{ action:'done', from:'exec', to:'done' }])).toHaveLength(1))
 })

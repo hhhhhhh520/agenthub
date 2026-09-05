@@ -134,6 +134,16 @@ export function appliedEdgesOf(entries: TraceEntry[]): Array<{ action: string; f
   return out
 }
 
+/**
+ * Task 7：缺失规范边（保持 required 原顺序）。等价性黄金测试见 analyze-a-surface-probe.test.ts（独立参考实现对拍）。
+ * 口径（brief 定版）：a.action===req.action && a.to===req.to && (req.from==='*' || a.from===req.from)。
+ * 与 metrics.ts:27 hasRequiredEdges 的差异：真 oracle 另支持 to==='*' 通配；当前 TASKS 数据无 to:'*' 边，行为等价——
+ * 若 tasks.ts 未来引入 to:'*' 必须先改此处（探针禁 import metrics.ts，见设计约束 F4）。
+ */
+export function missingRequired(applied: Array<{ action: string; from: string; to: string }>, required: Array<{ action: string; from: string; to: string }>) {
+  return required.filter(req => !applied.some(a => a.action === req.action && a.to === req.to && (req.from === '*' || a.from === req.from)))
+}
+
 export type Bucket = '⓪' | '①' | '②' | '③'
 export interface ClassifyInput {
   entries: TraceEntry[]
