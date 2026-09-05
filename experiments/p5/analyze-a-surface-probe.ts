@@ -202,8 +202,12 @@ export function machineCheckIT(state: State, missingEdges: Array<{ action: strin
 export function machineCheckI(state: string, missingEdges: Array<{ action: string; from: string; to: string }>): boolean {
   return machineCheckIT(state as State, missingEdges, TRANSITIONS)
 }
+/** confirm-state 带表参变体（镜像 machineCheckIT/edgeCoverableFromT 成对模式）：(i) 结构可复现 ∧ 同签名≥2 → confirmed；否则 candidate。绿门另需跨带 presence（§2.4）。 */
+export function confirmStateT(signature: string, missingEdges: Array<{ action: string; from: string; to: string }>, count: number, terminalState: string, T: Record<State, Partial<Record<Action, State>>>): 'confirmed' | 'candidate' {
+  const passI = machineCheckIT(terminalState as State, missingEdges, T)
+  return passI && count >= 2 ? 'confirmed' : 'candidate'
+}
 /** confirm-state：(i) 结构可复现 ∧ 同签名≥2 → confirmed；否则 candidate。绿门另需跨带 presence（§2.4）。 */
 export function confirmState(signature: string, missingEdges: Array<{ action: string; from: string; to: string }>, count: number, terminalState: string): 'confirmed' | 'candidate' {
-  const passI = machineCheckI(terminalState, missingEdges)
-  return passI && count >= 2 ? 'confirmed' : 'candidate'
+  return confirmStateT(signature, missingEdges, count, terminalState, TRANSITIONS)
 }
