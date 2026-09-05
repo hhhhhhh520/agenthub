@@ -250,3 +250,30 @@ export function assertSentinel(t: BucketTally, metricsTruth: { skip: number; def
   if (warnings.length) out.warnings = warnings
   return out
 }
+
+// ── Task 11：四桶失败地图（§2.5）+ 红/绿裁决（§2.4）──
+// 裁决语义（§2.4 verbatim）：绿（唯一升级出口）= ∃ confirm-state=confirmed 的②签名，两 band 各≥1 presence
+// （presence≠配对）；红（默认）=否则。confirmed 仅单带 → 红不翻绿（跨带 presence 是硬条件）。
+// 探针只判「有没有理论未预见的 confirmed 群」；「能否验出」全交 P11b。
+export interface SigRow { band: string; arm: string; task: string; bucket: Bucket; signature: string; confirmState: 'confirmed' | 'candidate'; n: number; pct: number }
+export function verdict(rows: SigRow[]): 'green' | 'red' {
+  const conf = rows.filter(r => r.bucket === '②' && r.confirmState === 'confirmed')
+  const bands = new Set(conf.map(r => r.band))
+  return bands.size >= 2 ? 'green' : 'red'
+}
+/** §2.5：同一签名跨带分列（各自带行）——合并总数呈分布、翻绿用各 band presence（verdict 按 band 集合大小判定）。
+ *  pct = n ÷ 该 (task,band) 非⓪分母（分母计算是 Task 12 编排职责，渲染直接用传入 pct）。 */
+export function renderMap(rows: SigRow[], cal: Calibration, sent: { ok: boolean; violations: string[] }): string {
+  const L: string[] = []
+  L.push('# P11 A 方向：四桶失败地图（作用面有界预测证伪）', '')
+  L.push('> 本文件在 results/（gitignored）。可提交产物只允许聚合数字 + 裁决号（F8）。', '')
+  L.push('| band | arm | task | bucket | signature | confirm-state | n | % |')
+  L.push('|---|---|---|---|---|---|---|---|')
+  const sorted = [...rows].sort((a, b) => (a.band + a.arm + a.bucket).localeCompare(b.band + b.arm + b.bucket) || b.n - a.n)
+  for (const r of sorted) L.push(`| ${r.band} | ${r.arm} | ${r.task} | ${r.bucket} | ${r.signature} | ${r.confirmState} | ${r.n} | ${r.pct.toFixed(1)}% |`)
+  L.push('', `**裁决：${verdict(rows) === 'green' ? '绿（有界预测被证伪 → 立项 P11b）' : '红（有界预测证实 → 作用面边界落档；地图为描述性交付）'}`)
+  if (cal.degraded) L.push(`> ⚠️ 标定降级：${cal.reason}`)
+  if (!sent.ok) L.push(`> ❌ 哨兵违例：${sent.violations.join('；')}`)
+  L.push('', '> 图例：单带 presence / 亚阈值 / 仅 candidate 的②签名 → 「不足以翻色，仅呈分布」（§2.4）。')
+  return L.join('\n')
+}
