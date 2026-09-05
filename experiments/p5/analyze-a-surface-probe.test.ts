@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns } from './analyze-a-surface-probe'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
 
@@ -94,5 +94,29 @@ describe('快照+只读+白名单', () => {
     expect(all.sessions).toEqual([{ id: 's1', title: 't', projectDir: '/p', phase: 'done', createdAt: '2026-09-04', decisionTrace: null }])
     expect(all.tasks).toEqual([{ id: 't1', sessionId: 's1', createdAt: '2026-09-04' }])
     ro.close()
+  })
+})
+
+describe('join 双射与计数', () => {
+  const sess = (projectDir: string) => ({ id: 's' + projectDir, title: 'p5-x', projectDir, phase: 'done', createdAt: '', decisionTrace: '[]' })
+  const mrow = (runId: string, config='off+verify', taskId='A' as const, seed=0) => ({ runId, config, taskId, seed, pass:false, failureMode:'no-pass', failKind:'skipped-spec-edge', rounds:3, escalateCount:0, correctionCount:0, illegalProposalCount:0, totalTransitions:2, latencyMs:1 })
+  it('basename startsWith runId 正确 1:1（含同 title 不同 run）', () => {
+    // 注：两行 (config,task,seed) 必须唯一，否则触发重复键守卫——第二行 seed 0→1
+    const sessions = [sess('off+verify-A-s0-aaaaaaaa-extra'), sess('off+verify-A-s1-bbbbbbbb-extra')]
+    const rows = [mrow('off+verify-A-s0-aaaaaaaa'), mrow('off+verify-A-s1-bbbbbbbb', 'off+verify', 'A', 1)]
+    const joined = joinRuns(rows, sessions, { A: 2 })
+    expect(joined).toHaveLength(2)
+  })
+  it('计数不符 expect 抛 fail-closed', () => {
+    expect(() => joinRuns([mrow('off+verify-A-s0-aaaaaaaa')], [sess('off+verify-A-s0-aaaaaaaa-x')], { A: 15 })).toThrow(/计数/)
+  })
+  it('runId 无会话命中抛 fail-closed', () => {
+    expect(() => joinRuns([mrow('nope')], [sess('other-x')], { A: 1 })).toThrow(/唯一会话命中/)
+  })
+  it('重复 (config,task,seed) 抛 fail-closed', () => {
+    expect(() => joinRuns([mrow('r1'), mrow('r2')], [sess('r1-x'), sess('r2-x')], { A: 2 })).toThrow(/重复/)
+  })
+  it('被占用会话不可再次命中（防同会话配两个 runId）', () => {
+    expect(() => joinRuns([mrow('aaa'), mrow('aaa-x')], [sess('aaa-x')], { A: 2 })).toThrow(/唯一会话命中/)
   })
 })

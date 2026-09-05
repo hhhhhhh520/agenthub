@@ -83,3 +83,23 @@ export async function readAll(client: Client): Promise<{ journalMode: string; se
   const t = await client.execute({ sql: 'SELECT id, sessionId, createdAt FROM Task', args: [] })
   return { journalMode: String((jm.rows[0] as any)?.journal_mode ?? ''), sessions: s.rows as any, tasks: t.rows as any }
 }
+
+export interface JoinedRun { row: MetricsRow; session: SessionRow }
+export function joinRuns(rows: MetricsRow[], sessions: SessionRow[], expectCounts: Record<string, number>): JoinedRun[] {
+  const joined: JoinedRun[] = []
+  const usedSession = new Set<string>(); const seenKey = new Set<string>()
+  for (const r of rows) {
+    const hit = sessions.find(s => !usedSession.has(s.id) && basename(s.projectDir).startsWith(r.runId))
+    if (!hit) throw new Error(`[p11-probe fail-closed] runId 无唯一会话命中: ${r.runId}`)
+    usedSession.add(hit.id)
+    const key = `${r.config}|${r.taskId}|${r.seed}`
+    if (seenKey.has(key)) throw new Error(`[p11-probe fail-closed] 重复 (config,task,seed): ${key}`)
+    seenKey.add(key)
+    joined.push({ row: r, session: hit })
+  }
+  for (const [cell, exp] of Object.entries(expectCounts)) {
+    const n = joined.filter(j => j.row.taskId === cell).length
+    if (n !== exp) throw new Error(`[p11-probe fail-closed] ${cell} 会话计数 ${n} !== 期望 ${exp}`)
+  }
+  return joined
+}
