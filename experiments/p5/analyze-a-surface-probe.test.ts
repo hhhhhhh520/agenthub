@@ -267,4 +267,6 @@ describe('正对照标定（钉强带）', () => {
   it('①复现率 ≥4/5 → 校准通过', () => expect(calibrate(['①','①','①','①','①']).degraded).toBe(false))
   it('①复现率 3/5 → 降级', () => expect(calibrate(['①','①','①','②','③']).degraded).toBe(true))
   it('多⓪ → 降级并给原因', () => { const c = calibrate(['⓪','⓪','⓪','①','①']); expect(c.degraded).toBe(true); expect(c.reason).toContain('⓪') })
+  it('①复现率 恰等 4/5 → 不降级', () => expect(calibrate(['①','①','①','①','②']).degraded).toBe(false))
+  it('空数组 → fail-closed 降级', () => expect(calibrate([]).degraded).toBe(true))
 })
