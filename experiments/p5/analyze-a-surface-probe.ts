@@ -103,3 +103,28 @@ export function joinRuns(rows: MetricsRow[], sessions: SessionRow[], expectCount
   }
   return joined
 }
+
+export interface TraceEntry { decisionPoint?: string; inputState?: { state?: string }; llmProposal?: { action?: string }; corrections?: Array<{ from?: string; to?: string }>; actualTransition?: { action?: string; from?: string; to?: string; applied?: boolean; escalated?: boolean }; ts?: string }
+export function parseEntries(raw: string | null): TraceEntry[] | null {
+  if (raw == null || raw === '' || raw === '[]') return []
+  let v: unknown; try { v = JSON.parse(raw) } catch { return null }
+  return Array.isArray(v) ? (v as TraceEntry[]) : null
+}
+export function terminalDecision(entries: TraceEntry[]): { state: string; action: string } | null {
+  const dec = entries.filter(e => e?.decisionPoint === 'handleOrchestratorDecision')
+  if (!dec.length) return null
+  const last = dec[dec.length - 1]
+  const state = last.inputState?.state ?? ''; const action = last.llmProposal?.action ?? ''
+  return { state, action }
+}
+export function taskCountAtDecision(tasks: TaskRow[], ts: number): number {
+  return tasks.filter(t => Date.parse(String(t.createdAt)) <= ts).length
+}
+export function appliedEdgesOf(entries: TraceEntry[]): Array<{ action: string; from: string; to: string }> {
+  const out: Array<{ action: string; from: string; to: string }> = []
+  for (const e of entries) {
+    const at = e.actualTransition
+    if (at?.applied === true && at.action && !NON_TRANSITIONING.has(at.action as Action)) out.push({ action: at.action, from: at.from ?? '', to: at.to ?? '' })
+  }
+  return out
+}

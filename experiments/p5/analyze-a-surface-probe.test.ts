@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf } from './analyze-a-surface-probe'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
 
@@ -118,5 +118,40 @@ describe('join 双射与计数', () => {
   })
   it('被占用会话不可再次命中（防同会话配两个 runId）', () => {
     expect(() => joinRuns([mrow('aaa'), mrow('aaa-x')], [sess('aaa-x')], { A: 2 })).toThrow(/唯一会话命中/)
+  })
+})
+
+describe('签名提取', () => {
+  const E = (over: object = {}) => ({ decisionPoint: 'handleOrchestratorDecision', inputState: { state: 'idle' }, llmProposal: { action: 'done' }, corrections: [], validation: {}, actualTransition: { action: 'done', from: 'idle', to: 'done', applied: true, escalated: false }, ts: '2026-09-02T10:00:00.000Z', ...over })
+  it('parseEntries 非数组 → null', () => { expect(parseEntries('{}')).toBeNull(); expect(parseEntries('[1]')).not.toBeNull() })
+  it('parseEntries 空/null/\'[]\' → []，畸形 JSON → null（fail-closed）', () => {
+    expect(parseEntries(null)).toEqual([])
+    expect(parseEntries('')).toEqual([])
+    expect(parseEntries('[]')).toEqual([])
+    expect(parseEntries('{broken')).toBeNull()
+    expect(parseEntries('{"a":1}')).toBeNull()
+  })
+  it('terminalDecision 取最后一个决策点', () => {
+    const entries = [E({ inputState: { state: 'idle' }, llmProposal: { action: 'execute' } }), E()]
+    expect(terminalDecision(entries)).toEqual({ state: 'idle', action: 'done' })
+  })
+  it('terminalDecision 无决策点条目 → null', () => {
+    expect(terminalDecision([{ ts: '2026-09-02T10:00:00.000Z' }])).toBeNull()
+  })
+  it('taskCountAtDecision 用 Date.parse 数值比', () => {
+    const tasks = [{ id: 't1', sessionId: 's', createdAt: '2026-09-02T09:59:00.000+00:00' }, { id: 't2', sessionId: 's', createdAt: '2026-09-02T10:01:00.000+00:00' }]
+    expect(taskCountAtDecision(tasks, Date.parse('2026-09-02T10:00:00.000Z'))).toBe(1)
+  })
+  it('taskCountAtDecision 两种时间戳格式（+00:00 vs Z）数值等价、恰等时计入', () => {
+    const tasks = [{ id: 't1', sessionId: 's', createdAt: '2026-09-02T10:00:00.000Z' }]
+    expect(taskCountAtDecision(tasks, Date.parse('2026-09-02T10:00:00.000+00:00'))).toBe(1)
+  })
+  it('appliedEdgesOf 只收 applied 且非旁路', () => {
+    const entries = [E(), E({ actualTransition: { action: 'self', from: 'idle', to: 'idle', applied: true, escalated: false } })]
+    expect(appliedEdgesOf(entries)).toEqual([{ action: 'done', from: 'idle', to: 'done' }])
+  })
+  it('appliedEdgesOf 漏 applied=false / 无 actualTransition 不收', () => {
+    const entries = [E({ actualTransition: { action: 'done', from: 'idle', to: 'done', applied: false, escalated: false } }), { ts: '2026-09-02T10:00:00.000Z' }]
+    expect(appliedEdgesOf(entries)).toEqual([])
   })
 })
