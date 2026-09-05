@@ -271,7 +271,7 @@ export function renderMap(rows: SigRow[], cal: Calibration, sent: { ok: boolean;
   L.push('|---|---|---|---|---|---|---|---|')
   const sorted = [...rows].sort((a, b) => (a.band + a.arm + a.bucket).localeCompare(b.band + b.arm + b.bucket) || b.n - a.n)
   for (const r of sorted) L.push(`| ${r.band} | ${r.arm} | ${r.task} | ${r.bucket} | ${r.signature} | ${r.confirmState} | ${r.n} | ${r.pct.toFixed(1)}% |`)
-  L.push('', `**裁决：${verdict(rows) === 'green' ? '绿（有界预测被证伪 → 立项 P11b）' : '红（有界预测证实 → 作用面边界落档；地图为描述性交付）'}`)
+  L.push('', `**裁决：${verdict(rows) === 'green' ? '绿（有界预测被证伪 → 立项 P11b）' : '红（有界预测证实 → 作用面边界落档；地图为描述性交付）'}**`)
   if (cal.degraded) L.push(`> ⚠️ 标定降级：${cal.reason}`)
   if (!sent.ok) L.push(`> ❌ 哨兵违例：${sent.violations.join('；')}`)
   L.push('', '> 图例：单带 presence / 亚阈值 / 仅 candidate 的②签名 → 「不足以翻色，仅呈分布」（§2.4）。')

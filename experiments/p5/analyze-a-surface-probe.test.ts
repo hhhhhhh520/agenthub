@@ -293,7 +293,8 @@ describe('地图渲染 + 裁决', () => {
   it('无 confirmed 跨带 → 红', () => expect(verdict([row(), row({ band:'weak' })])).toBe('red'))
   it('confirmed ∧ 两带各≥1 presence → 绿', () => expect(verdict([row({ confirmState:'confirmed' }), row({ band:'weak', confirmState:'confirmed' })])).toBe('green'))
   it('confirmed 仅单带 → 红（图例注）', () => expect(verdict([row({ confirmState:'confirmed' })])).toBe('red'))
-  it('renderMap 含行末对账 + 列序', () => { const md = renderMap([row()], { degraded:false, reason:'' } as any, { ok:true, violations:[] } as any); expect(md).toContain('| band | arm | task | bucket | signature | confirm-state | n | %') })
+  it('同带两行 ②confirmed → 红（变异杀手：绿门看 band 集合 size≥2，非 confirmed 行数≥2）', () => expect(verdict([row({ confirmState:'confirmed' }), row({ confirmState:'confirmed' })])).toBe('red'))
+  it('renderMap 含行末对账 + 列序', () => { const md = renderMap([row()], { degraded:false, reason:'' } as any, { ok:true, violations:[] } as any); expect(md).toContain('| band | arm | task | bucket | signature | confirm-state | n | %'); expect(md).toMatch(/^\*\*裁决：.*\*\*$/m) })
   // ── 针对性补钉：brief 代码未覆盖的裁决分支与渲染行 ──
   it('仅①签名 confirmed 跨带 → 红（② gate：verdict 必须过滤 bucket===\'②\'）', () => expect(verdict([row({ bucket:'①', confirmState:'confirmed' }), row({ bucket:'①', confirmState:'confirmed', band:'weak' })])).toBe('red'))
   it('renderMap 标定降级横幅 + 哨兵违例行', () => {
