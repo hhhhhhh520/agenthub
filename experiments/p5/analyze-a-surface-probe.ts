@@ -177,3 +177,33 @@ export function classifyBucket(x: ClassifyInput): Bucket {
   // ② 构造性残差（兜底）
   return '②'
 }
+
+/** 从 state 出发、沿 TRANSITIONS 是否存在可达续作能走通 edge（edge.from==='*' 则 from-agnostic）。判定转移表可达性，非会话序列回放。 */
+export function edgeCoverableFromT(state: State, edge: { action: string; from: string; to: string }, T: Record<State, Partial<Record<Action, State>>>): boolean {
+  const seen = new Set<State>(); const queue: State[] = [state]
+  while (queue.length) {
+    const s = queue.shift()!
+    if (seen.has(s)) continue; seen.add(s)
+    const row = T[s] ?? {}
+    for (const [action, to] of Object.entries(row)) {
+      if (action === edge.action && to === edge.to && (edge.from === '*' || s === edge.from)) return true
+      queue.push(to as State)
+    }
+  }
+  return false
+}
+export function edgeCoverableFrom(state: string, edge: { action: string; from: string; to: string }): boolean {
+  return edgeCoverableFromT(state as State, edge, TRANSITIONS)
+}
+/** (i)：各缺失必需边均不可被转移表从末态续作覆盖 → 结构性缺口 → true */
+export function machineCheckIT(state: State, missingEdges: Array<{ action: string; from: string; to: string }>, T: Record<State, Partial<Record<Action, State>>>): boolean {
+  return missingEdges.every(e => !edgeCoverableFromT(state, e, T))
+}
+export function machineCheckI(state: string, missingEdges: Array<{ action: string; from: string; to: string }>): boolean {
+  return machineCheckIT(state as State, missingEdges, TRANSITIONS)
+}
+/** confirm-state：(i) 结构可复现 ∧ 同签名≥2 → confirmed；否则 candidate。绿门另需跨带 presence（§2.4）。 */
+export function confirmState(signature: string, missingEdges: Array<{ action: string; from: string; to: string }>, count: number, terminalState: string): 'confirmed' | 'candidate' {
+  const passI = machineCheckI(terminalState, missingEdges)
+  return passI && count >= 2 ? 'confirmed' : 'candidate'
+}
