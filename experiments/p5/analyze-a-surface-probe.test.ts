@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, type Bucket } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -225,4 +225,26 @@ describe('missingRequired 等价性', () => {
   // 判别力补钉（上游审查纪律：漏掉 to 匹配的变异必须红）：brief 4+2 用例的 required 边 action 互异，to 相等永不成为决定条件，
   // 故单钉一条 to 不同 → 缺失 的边界（同 action 同 from 仅 to 异）。
   it('to 必须相等：同 action 同 from 但 to 不同 → 缺失', () => expect(missingRequired([{ action:'done', from:'exec', to:'align_arch' }], [{ action:'done', from:'exec', to:'done' }])).toHaveLength(1))
+})
+
+// ── Task 8：机检 (i) 可达性 + (ii) 非 seqgate + confirm-state ──
+// 正例用合成表证 (i) 非恒假；负例/变异用真实表证 (i) 对真实连通表会败（预期主结局：②多呈 candidate）。
+describe('机检 (i)(ii) + confirm-state', () => {
+  const reqDone = { action:'done', from:'exec', to:'done' }
+  it('(i) 合成表：缺失边不可达 → 通过（证非恒假）', () => {
+    // 合成转移表：exec 只有 execute 自环，无 done → exec→done 不可达
+    const synth: any = { exec: { execute: 'exec' } }
+    expect(edgeCoverableFromT('exec', reqDone, synth)).toBe(false)
+    expect(machineCheckIT('exec', [reqDone], synth)).toBe(true)   // 全不可覆盖 → (i) 过
+  })
+  it('(i) 真实表：必需边可达 → 失败（模型怪癖/可跳过，变异负例）', () => {
+    for (const e of TASKS.find(t=>t.id==='A')!.requiredEdges) expect(edgeCoverableFrom('idle', e)).toBe(true)
+    expect(machineCheckI('idle', TASKS.find(t=>t.id==='A')!.requiredEdges)).toBe(false)
+  })
+  it('(ii) seqgate 谓词命中 → 非真新模式', () => {
+    expect(seqgatePredicate('idle','done',0)).toBe(true)  // 该签名应归①不进②，(ii) 对②签名恒非 seqgate
+  })
+  it('confirmState：(i)败 → candidate 不翻绿', () => {
+    expect(confirmState('idle/done/x', TASKS.find(t=>t.id==='A')!.requiredEdges, 3, 'idle')).toBe('candidate')
+  })
 })
