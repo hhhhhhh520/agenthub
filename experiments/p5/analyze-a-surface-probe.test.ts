@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, assertSentinel, type Bucket } from './analyze-a-surface-probe'
+import { TRANSITIONS, NON_TRANSITIONING, seqgatePredicate, PROBE_BATCH, loadMetricsRows, selectProbeCells, prepareSnapshot, openGuardedReadonly, assertSnapshotPath, readAll, joinRuns, parseEntries, terminalDecision, taskCountAtDecision, appliedEdgesOf, classifyBucket, missingRequired, edgeCoverableFromT, edgeCoverableFrom, machineCheckIT, machineCheckI, confirmState, confirmStateT, calibrate, assertSentinel, verdict, renderMap, type Bucket, type SigRow } from './analyze-a-surface-probe'
 import { TASKS } from './tasks'
 
 const SM_SRC = readFileSync(join(import.meta.dirname, '..', '..', 'src', 'lib', 'orchestrator', 'state-machine.ts'), 'utf8')
@@ -284,4 +284,29 @@ describe('口径锚点哨兵', () => {
   it('⓪+①+②+③≠13 → 违例（构造恒等破坏=实现 bug sanity，非口径判据）', () => expect(assertSentinel({ zero:0, one:9, two:0, three:3 }, { skip:9, defect:4 }).ok).toBe(false))
   it('①+② 出带宽[9,11] → 仅警告不阻断', () => { const r = assertSentinel({ zero:0, one:12, two:0, three:1 }, { skip:9, defect:4 }); expect(r.ok).toBe(true); expect(r.warnings?.some(w => w.includes('①+②'))).toBe(true) })
   it('带内无 warnings 字段（可选字段非恒在）', () => expect(assertSentinel({ zero:0, one:9, two:0, three:4 }, { skip:9, defect:4 }).warnings).toBeUndefined())
+})
+
+// ── Task 11：四桶失败地图渲染（§2.5）+ 红/绿裁决（§2.4）──
+// 裁决语义：绿（唯一升级出口）= ∃ confirmed 的②签名 ∧ 两 band 各≥1 presence（presence≠配对）；红（默认）=否则。
+describe('地图渲染 + 裁决', () => {
+  const row = (over: Partial<SigRow> = {}): SigRow => ({ band:'strong', arm:'off+verify', task:'A', bucket:'②', signature:'align_arch/done/E1', confirmState:'candidate', n:1, pct:10, ...over })
+  it('无 confirmed 跨带 → 红', () => expect(verdict([row(), row({ band:'weak' })])).toBe('red'))
+  it('confirmed ∧ 两带各≥1 presence → 绿', () => expect(verdict([row({ confirmState:'confirmed' }), row({ band:'weak', confirmState:'confirmed' })])).toBe('green'))
+  it('confirmed 仅单带 → 红（图例注）', () => expect(verdict([row({ confirmState:'confirmed' })])).toBe('red'))
+  it('renderMap 含行末对账 + 列序', () => { const md = renderMap([row()], { degraded:false, reason:'' } as any, { ok:true, violations:[] } as any); expect(md).toContain('| band | arm | task | bucket | signature | confirm-state | n | %') })
+  // ── 针对性补钉：brief 代码未覆盖的裁决分支与渲染行 ──
+  it('仅①签名 confirmed 跨带 → 红（② gate：verdict 必须过滤 bucket===\'②\'）', () => expect(verdict([row({ bucket:'①', confirmState:'confirmed' }), row({ bucket:'①', confirmState:'confirmed', band:'weak' })])).toBe('red'))
+  it('renderMap 标定降级横幅 + 哨兵违例行', () => {
+    const md = renderMap([row()], { degraded:true, reason:'①复现率 3/5' } as any, { ok:false, violations:['③=5 > 4'] } as any)
+    expect(md).toContain('标定降级：①复现率 3/5')
+    expect(md).toContain('哨兵违例：③=5 > 4')
+  })
+  it('renderMap 排序：band→arm→bucket、同格 n 降序', () => {
+    const md = renderMap([
+      row({ signature:'s-weak', band:'weak', n:5 }), row({ signature:'s-on', arm:'on+verify', n:3 }),
+      row({ signature:'s-b', n:2 }), row({ signature:'s-a', n:9 }),
+    ], { degraded:false, reason:'' } as any, { ok:true, violations:[] } as any)
+    const body = md.split('\n').filter(l => /^\| (strong|weak) /.test(l))
+    expect(body.map(l => l.split('|')[5]?.trim())).toEqual(['s-a', 's-b', 's-on', 's-weak'])
+  })
 })
