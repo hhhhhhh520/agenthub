@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
-import { computePollInterval } from '@/lib/poll-interval'
+import { createTaskPoller } from '@/lib/task-poller'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
 import { toast } from 'sonner'
@@ -95,44 +95,17 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
 
   useEffect(() => {
     if (!sessionId) { setTasksLoading(false); return }
-    setTasksLoading(true)
-    setTasks([])
-    let errorCount = 0
-    let firstFetch = true
-    let changedSinceLastPoll = true // 首轮按活跃节奏
-    let lastSig: string | null = null // 哨兵：首轮必视为有变化，空板不提前降频
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const controller = new AbortController()
-    const schedule = () => {
-      timer = setTimeout(run, computePollInterval({ errorCount, changedSinceLastPoll, redoFast: redoPollFast }))
-    }
-    const run = () => {
-      fetch(`/api/sessions/${sessionId}/tasks`, { signal: controller.signal })
-        .then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
-        .then(data => {
-          setTasks(prev => {
-            if (data.length !== prev.length) return data
-            const changed = data.some((t: Task, i: number) =>
-              t.status !== prev[i].status || t.trace !== prev[i].trace
-            )
-            return changed ? data : prev
-          })
-          // 节奏判定用的轻量签名（id+status+trace长度），与渲染层 diff 解耦
-          const sig = data.map((t: Task) => `${t.id}:${t.status}:${t.trace?.length ?? 0}`).join('|')
-          changedSinceLastPoll = sig !== lastSig
-          lastSig = sig
-          errorCount = 0; if (firstFetch) { setTasksLoading(false); firstFetch = false }
-        })
-        .catch((err) => {
-          if (err.name === 'AbortError') return
-          errorCount++; if (firstFetch) { setTasksLoading(false); firstFetch = false }
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) schedule() // 失败≥阈值转低频探测，成功一次即恢复，不永久停摆
-        })
-    }
-    run()
-    return () => { clearTimeout(timer); controller.abort() }
+    const poller = createTaskPoller({
+      fetchTasks: (signal) =>
+        fetch(`/api/sessions/${sessionId}/tasks`, { signal }).then((r) => {
+          if (!r.ok) throw new Error(`${r.status}`)
+          return r.json()
+        }),
+      setTasks: (updater) => setTasks((prev) => updater(prev) as Task[]),
+      setLoading: (loading) => setTasksLoading(loading),
+      redoFast: redoPollFast,
+    })
+    return () => poller.stop()
   }, [sessionId, redoPollFast])
 
   // Memoize parsed traces to avoid JSON.parse on every render
