@@ -74,8 +74,8 @@ test_agents_result.txt
 test_create_agent.json
 e2e-test-file.txt
 
-# Screenshots
-screenshots/
+# Screenshots (test-output screenshots at repo root only; docs/screenshots/ is committed for README)
+/screenshots/
 
 # Claude Code
 .claude/
