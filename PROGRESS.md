@@ -233,6 +233,8 @@
 
 | ISSUE-002 后续② 轮询状态机抽离可测 | effect 内 40 行状态机逐行搬为 `createTaskPoller`（`src/lib/task-poller.ts`，回调注入、无 React 依赖），`agent-panel` 缩为 12 行薄调用（依赖 `[sessionId, redoPollFast]` 不变，redo 切换重建循环+清空任务板语义一致；`err.name`→`err?.name` 唯一行为无关加固）；`tests/task-poller.test.ts` 8 用例（node + fake timers，不动 vitest 配置、不新增依赖）：3s/10s 换挡、失败 5 次转 30s 探测+成功恢复、redo 1s、探测期让位 30s、空闲 stop 不复活、在途 stop 落地后不排期。删 `:131` 刹车变异精确单红（在途 stop 用例 `expected 2 to be 1`）后还原。全量 84 文件 / 1086 passed / 3 skipped | 2026-09-13 |
 
+| ISSUE-022 phase 写入竞态 fail-closed | 根因=会话锁等前任最多 60s 超时直接放行（`session-lock.ts`），而锁内 LLM 决策上限 120s、Agent 执行上限 15 分钟——模型一慢 + 连发即双写 `transitionPhase`；另有放大器：chat 路由 5 处早退漏 `releaseLock`。修法：超时抛 `SessionBusyError`（code 识别）绝不放行、超时等待者断链自愈；chat/redo 回 429 + `Retry-After: 60`；chat 锁下移到廉价校验后 + 早退补释放；redo 前端补 `res.ok` 检查与 429 toast。验证：全量 84/1089/3，变异改回放行精确红 3 新用例。详见 issues/ISSUE-022-phase-write-race.md | 2026-09-13 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
