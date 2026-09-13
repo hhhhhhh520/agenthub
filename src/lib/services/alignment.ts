@@ -114,6 +114,27 @@ export async function handlePMConfirm(
   }
 }
 
+/** replan 硬停：连续拆解失败达到该轮数后不再烧 LLM 调用，直接转人工（与 MAX_CORRECTION_RETRIES 同量级）。 */
+export const MAX_REPLAN_ROUNDS = 3
+
+export interface ReplanHistoryEntry {
+  role: string
+  rawContent: unknown
+}
+
+/** 数连续 [REPLAN] 轮数：倒序走历史，首个非 [REPLAN] 的 orchestrator 消息即停（成功轮清零）。
+ * '[REPLAN-EXHAUSTED]' 刻意不命中 '[REPLAN]'——硬停后用户发新输入进来时计数清零自动恢复，不死锁。 */
+export function countConsecutiveReplans(history: ReplanHistoryEntry[]): number {
+  let n = 0
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]
+    if (m.role !== 'orchestrator') continue
+    if (typeof m.rawContent === 'string' && m.rawContent.startsWith('[REPLAN]')) n++
+    else break
+  }
+  return n
+}
+
 /**
  * 架构师拆解任务。返回 true=成功(任务全建 + phase 推进), false=0 任务或拆解超时(未写 phase,调用方应中止)。
  * P2 待办④: 0 任务时不把 phase 空转 align_arch(旧代码顶部先 transitionPhase,0 任务也停在对齐态)——
@@ -132,7 +153,16 @@ export async function handleArchitectPlan(
   // P2 待办④: 上一轮拆解 0 任务([REPLAN] 标记)时用最新 user 重述,否则用首条需求——
   // 否则重述只进 orchestrator 上下文,架构师拆的仍是冻结旧需求,无限重述零进展(审查抓出)
   const lastOrch = [...history].reverse().find(m => m.role === 'orchestrator')
-  const isReplan = lastOrch?.role === 'orchestrator' && String(lastOrch.rawContent).startsWith('[REPLAN]')
+  const lastOrchText = String(lastOrch?.rawContent ?? '')
+  // EXHAUSTED 也按重述选最新 user 消息（否则复活尝试拆的仍是冻结首条需求，重蹈 P2④覆辙）
+  const isReplan = lastOrch?.role === 'orchestrator' && (lastOrchText.startsWith('[REPLAN]') || lastOrchText.startsWith('[REPLAN-EXHAUSTED]'))
+  // replan 硬停：连续失败达上限后不再烧一次 LLM 拆解，直接转人工
+  if (countConsecutiveReplans(history) >= MAX_REPLAN_ROUNDS) {
+    await prisma.message.create({ data: { role: 'orchestrator', rawContent: `[REPLAN-EXHAUSTED]连续 ${MAX_REPLAN_ROUNDS} 次未能生成有效任务方案（需求可能超出当前能力或模型不稳定），请手动指定任务分工，或换个说法/模型后重试`, sessionId } })
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: `连续 ${MAX_REPLAN_ROUNDS} 次拆解失败，已停止自动重试。请手动指定任务分工，或换个说法/模型后重试。` })
+    sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
+    return false
+  }
   const originalRequest = isReplan
     ? [...history].reverse().find(m => m.role === 'user')?.rawContent || message
     : history.find(m => m.role === 'user')?.rawContent || message
@@ -187,6 +217,8 @@ export async function handleArchitectPlan(
     } catch (err) {
       if (err instanceof TimeoutError) {
         console.error('[TIMEOUT] handleArchitectPlan')
+        // 超时轮同样持久化 [REPLAN]：否则计数器看不见超时轮（无限超时零进展），且下一轮 isReplan 失效会拆冻结旧需求
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: '[REPLAN]架构师任务拆解超时，请重试', sessionId } })
         sendEvent({ agentId: 'orchestrator', type: 'error', content: '架构师任务拆解超时，请重试' })
         sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'replan' })
         return false
