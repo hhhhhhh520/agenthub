@@ -237,6 +237,8 @@
 
 | ISSUE-023 replan 弹跳硬停 | 根因=拆解失败只写 `[REPLAN]` 不记轮数（超时轮连标记都不落），模型侧故障时无限烧 LLM。修法：纯函数 `countConsecutiveReplans`（成功轮清零）+ 上限 3（对标 MAX_CORRECTION_RETRIES）；到顶写 `[REPLAN-EXHAUSTED]` 转人工，`return false` 契约不变；EXHAUSTED 不命中计数前缀，用户新输入自动恢复且用最新输入；超时轮补 `[REPLAN]` 标记。验证：5 新用例，全量 84/1094/3，变异精确单红。详见 issues/ISSUE-023-replan-no-hard-stop.md | 2026-09-13 |
 
+| ISSUE-024 多轮对齐 verify 缺口条件式修复 | 根因=verify 块二选一（无则建/有则跳过），第二轮新代码从未进入任何 verify 依赖。修法（已拍板条件式）：老 verify pending → 新任务去重并入依赖并重建描述，无新任务静默；终结/执行中 → 新建本轮 verify；创建逻辑抽 `createVerify` 复用，开关与分配逻辑不动。验证：改写 1 旧用例 + 新增 4 用例，全量 84/1098/3，变异精确红 2 例。详见 issues/ISSUE-024-multiround-verify-gap.md | 2026-09-13 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
