@@ -235,6 +235,8 @@
 
 | ISSUE-022 phase 写入竞态 fail-closed | 根因=会话锁等前任最多 60s 超时直接放行（`session-lock.ts`），而锁内 LLM 决策上限 120s、Agent 执行上限 15 分钟——模型一慢 + 连发即双写 `transitionPhase`；另有放大器：chat 路由 5 处早退漏 `releaseLock`。修法：超时抛 `SessionBusyError`（code 识别）绝不放行、超时等待者断链自愈；chat/redo 回 429 + `Retry-After: 60`；chat 锁下移到廉价校验后 + 早退补释放；redo 前端补 `res.ok` 检查与 429 toast。验证：全量 84/1089/3，变异改回放行精确红 3 新用例。详见 issues/ISSUE-022-phase-write-race.md | 2026-09-13 |
 
+| ISSUE-023 replan 弹跳硬停 | 根因=拆解失败只写 `[REPLAN]` 不记轮数（超时轮连标记都不落），模型侧故障时无限烧 LLM。修法：纯函数 `countConsecutiveReplans`（成功轮清零）+ 上限 3（对标 MAX_CORRECTION_RETRIES）；到顶写 `[REPLAN-EXHAUSTED]` 转人工，`return false` 契约不变；EXHAUSTED 不命中计数前缀，用户新输入自动恢复且用最新输入；超时轮补 `[REPLAN]` 标记。验证：5 新用例，全量 84/1094/3，变异精确单红。详见 issues/ISSUE-023-replan-no-hard-stop.md | 2026-09-13 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
