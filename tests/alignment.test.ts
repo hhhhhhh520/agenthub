@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockMessageCreate: vi.fn(),
   mockSessionMemberFindMany: vi.fn().mockResolvedValue([]),
+  mockSessionMemberFindUnique: vi.fn().mockResolvedValue(null),
   mockExecuteSingleAgent: vi.fn(),
   mockDecomposeTasks: vi.fn(),
   mockCallLLMForAnalysis: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('@/lib/db', () => ({
     task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst },
     session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
-    sessionMember: { findMany: mocks.mockSessionMemberFindMany },
+    sessionMember: { findMany: mocks.mockSessionMemberFindMany, findUnique: mocks.mockSessionMemberFindUnique },
   },
 }))
 
@@ -41,7 +42,8 @@ vi.mock('@/lib/services/execution', () => ({
   handleExecution: mocks.mockHandleExecution,
 }))
 
-import { transitionToExecution, handleArchitectPlan, isCodeTask, buildVerifyDescription } from '@/lib/services/alignment'
+import { transitionToExecution, handleArchitectPlan, isCodeTask, buildVerifyDescription, countConsecutiveReplans } from '@/lib/services/alignment'
+import { TimeoutError } from '@/lib/orchestrator/timeout'
 
 describe('state-machine: phase guards（原 validateDecision，P1 迁移）', () => {
   it('对齐中提议 done 被纠正（align_pm->align_decompose / arch|qa->execute）', () => {
@@ -240,6 +242,99 @@ describe('transitionToExecution — task-empty fallback', () => {
     // decomposeTasks 收到的应是最新重述而非冻结首条(旧代码: 首条 '做个网站' 不含 '带登录' → 红)
     const [req] = mocks.mockDecomposeTasks.mock.calls[0]
     expect(String(req)).toContain('带登录')
+  })
+})
+
+// ── replan 硬停：连续拆解失败封顶，不再无限烧 LLM ──
+// 上限字面量 3 与实现常量同值但不引用——改动上限数字时测试必须变红。
+describe('replan 硬停（连续失败封顶转人工）', () => {
+  const agents = [
+    { id: 'a1', name: '前端工程师', systemPrompt: '', platform: 'claude-code', expertise: '前端', model: '', baseUrl: '', apiKey: '', tools: '' },
+  ]
+  const U = (rawContent: string) => ({ role: 'user', rawContent })
+  const R = (n = '') => ({ role: 'orchestrator', rawContent: `[REPLAN]失败${n}` })
+  const lastCreated = () =>
+    mocks.mockMessageCreate.mock.calls.map((c) => c[0]?.data?.rawContent).filter(Boolean).pop()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockMessageCreate.mockResolvedValue({})
+    // clearAllMocks 不清实现：把行为 mock 全部显式覆盖默认，防止前面用例的残留实现污染
+    mocks.mockDecomposeTasks.mockResolvedValue([])
+    mocks.mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
+    mocks.mockTaskFindFirst.mockResolvedValue(null)
+    mocks.mockTaskCreate.mockResolvedValue({})
+    mocks.mockExecuteSingleAgent.mockReset()
+  })
+
+  it('计数器：空/成功轮清零/交错user照数/EXHAUSTED断链', () => {
+    expect(countConsecutiveReplans([])).toBe(0)
+    expect(countConsecutiveReplans([U('做个网站')])).toBe(0)
+    expect(countConsecutiveReplans([U('a'), R(), U('b'), R(), U('c'), R()])).toBe(3)
+    expect(countConsecutiveReplans([R(), U('b'), { role: 'orchestrator', rawContent: 'plan summary' }])).toBe(0)
+    expect(
+      countConsecutiveReplans([R(), R(), { role: 'orchestrator', rawContent: '[REPLAN-EXHAUSTED]停' }]),
+    ).toBe(0)
+  })
+
+  it('3 连败硬停：不调拆解，写 EXHAUSTED 转人工', async () => {
+    mocks.mockMessageFindMany.mockResolvedValue([U('a'), R('1'), U('b'), R('2'), U('c'), R('3')])
+
+    const result = await handleArchitectPlan('c', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(mocks.mockDecomposeTasks).not.toHaveBeenCalled()
+    expect(String(lastCreated())).toContain('[REPLAN-EXHAUSTED]')
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('连续') }),
+    )
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: '' }),
+    )
+  })
+
+  it('2 连败未到顶：继续拆解并记 fresh [REPLAN]', async () => {
+    mocks.mockMessageFindMany.mockResolvedValue([U('a'), R('1'), U('b'), R('2'), U('c')])
+    mocks.mockDecomposeTasks.mockResolvedValue([])
+
+    const result = await handleArchitectPlan('c', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(mocks.mockDecomposeTasks).toHaveBeenCalledTimes(1)
+    expect(String(lastCreated()).startsWith('[REPLAN]')).toBe(true)
+    expect(String(lastCreated())).not.toContain('EXHAUSTED')
+  })
+
+  it('超时轮持久化 [REPLAN]（计入计数，且下轮用最新重述）', async () => {
+    const archAgents = [
+      { id: 'arch1', name: '架构师', systemPrompt: 'sp', platform: 'claude-code', expertise: '架构', model: '', baseUrl: '', apiKey: '', tools: '' },
+    ]
+    mocks.mockMessageFindMany.mockResolvedValue([])
+    mocks.mockExecuteSingleAgent.mockRejectedValue(new TimeoutError(1000, 'test'))
+
+    const result = await handleArchitectPlan('做个网站', 'sess1', archAgents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(String(lastCreated()).startsWith('[REPLAN]')).toBe(true)
+  })
+
+  it('EXHAUSTED 后用户新输入：计数清零自动恢复尝试', async () => {
+    mocks.mockMessageFindMany.mockResolvedValue([
+      U('a'), R('1'), U('b'), R('2'), U('c'), R('3'),
+      { role: 'orchestrator', rawContent: '[REPLAN-EXHAUSTED]停' },
+      U('换个说法再试'),
+    ])
+    mocks.mockDecomposeTasks.mockResolvedValue([])
+
+    const result = await handleArchitectPlan('换个说法再试', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(mocks.mockDecomposeTasks).toHaveBeenCalledTimes(1)
+    // EXHAUSTED 后复活按重述处理：拆最新输入而非冻结首条
+    expect(String(mocks.mockDecomposeTasks.mock.calls[0][0])).toContain('换个说法')
+    expect(String(lastCreated()).startsWith('[REPLAN]')).toBe(true)
+    expect(String(lastCreated())).not.toContain('EXHAUSTED')
   })
 })
 
