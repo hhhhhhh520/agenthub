@@ -5,6 +5,7 @@ import { canonicalCorrect, applyTransition, stateFromSession } from '@/lib/orche
 const mocks = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskCreate: vi.fn(),
+  mockTaskUpdate: vi.fn(),
   mockTaskFindFirst: vi.fn(),
   mockSessionUpdate: vi.fn(),
   mockSessionFindUnique: vi.fn(),
@@ -21,7 +22,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst },
+    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst, update: mocks.mockTaskUpdate },
     session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findMany: mocks.mockSessionMemberFindMany, findUnique: mocks.mockSessionMemberFindUnique },
@@ -387,14 +388,15 @@ describe('ISSUE-008 — 自动创建验证任务', () => {
     expect(verifyCalls).toHaveLength(0)
   })
 
-  it('已存在 verify 任务 → 不重复创建', async () => {
+  it('已存在 pending verify 且本轮无新代码任务 → 不重复创建也不更新', async () => {
     mocks.mockDecomposeTasks.mockResolvedValue([codeTask])
-    mocks.mockTaskFindFirst.mockResolvedValue({ id: 'verify-existing' })
+    mocks.mockTaskFindFirst.mockResolvedValue({ id: 'verify-existing', status: 'pending', dependencies: '["code-1"]' })
 
     await handleArchitectPlan('做个网站', 'sess1', agents, mocks.mockSendEvent)
 
     const verifyCalls = mocks.mockTaskCreate.mock.calls.filter(([arg]) => String(arg.data.id).startsWith('verify-'))
     expect(verifyCalls).toHaveLength(0)
+    expect(mocks.mockTaskUpdate).not.toHaveBeenCalled()
   })
 
   it('无测试工程师时 assignedAgentId 为 null(executeTaskBatch 兜底匹配)', async () => {
@@ -439,6 +441,63 @@ describe('ISSUE-008 — 自动创建验证任务', () => {
       if (prev === undefined) delete process.env.EXPERIMENT_VERIFY
       else process.env.EXPERIMENT_VERIFY = prev
     }
+  })
+})
+
+// ── 多轮对齐 verify 条件式：pending 追加 / 终结新建 ──
+describe('多轮对齐 verify 条件式', () => {
+  const agents = [
+    { id: 'a1', name: '前端工程师', systemPrompt: '', platform: 'claude-code', expertise: '前端', model: '', baseUrl: '', apiKey: '', tools: '' },
+    { id: 'a3', name: '测试工程师', systemPrompt: '', platform: 'claude-code', expertise: '测试', model: '', baseUrl: '', apiKey: '', tools: '' },
+  ]
+  const codeTask2 = { id: 'code-2', description: '实现支付接口', assignedAgent: '后端工程师', dependencies: [], declaredFiles: ['src/api/pay.ts'], outputSchema: undefined, batch: 0 }
+  const oldCodeTask = { id: 'code-1', description: '实现登录接口', declaredFiles: '["src/api/login.ts"]' }
+
+  const setup = () => {
+    vi.clearAllMocks()
+    mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockMessageFindMany.mockResolvedValue([])
+    mocks.mockMessageCreate.mockResolvedValue({})
+    mocks.mockTaskCreate.mockResolvedValue({})
+    mocks.mockTaskUpdate.mockResolvedValue({})
+    mocks.mockTaskFindMany.mockResolvedValue([oldCodeTask])
+    mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
+  }
+
+  it('老 verify pending + 本轮新代码 → UPDATE 追加依赖，不新建', async () => {
+    setup()
+    mocks.mockDecomposeTasks.mockResolvedValue([codeTask2])
+    mocks.mockTaskFindFirst.mockResolvedValue({ id: 'verify-old', status: 'pending', dependencies: '["code-1"]' })
+
+    await handleArchitectPlan('加个支付功能', 'sess1', agents, mocks.mockSendEvent)
+
+    const verifyCalls = mocks.mockTaskCreate.mock.calls.filter(([arg]) => String(arg.data.id).startsWith('verify-'))
+    expect(verifyCalls).toHaveLength(0)
+    expect(mocks.mockTaskUpdate).toHaveBeenCalledTimes(1)
+    const updateArg = mocks.mockTaskUpdate.mock.calls[0][0]
+    expect(updateArg.where).toEqual({ id: 'verify-old' })
+    expect(updateArg.data.dependencies).toBe(JSON.stringify(['code-1', 'code-2']))
+    expect(updateArg.data.description).toContain('实现登录接口')
+    expect(updateArg.data.description).toContain('实现支付接口')
+    expect(updateArg.data.description).toContain('src/api/pay.ts')
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'text', content: expect.stringContaining('扩展') })
+    )
+  })
+
+  it.each(['completed', 'in_progress', 'failed'])('老 verify %s → 新建本轮 verify，不碰老的', async (st) => {
+    setup()
+    mocks.mockDecomposeTasks.mockResolvedValue([codeTask2])
+    mocks.mockTaskFindFirst.mockResolvedValue({ id: 'verify-old', status: st, dependencies: '["code-1"]' })
+
+    await handleArchitectPlan('加个支付功能', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(mocks.mockTaskUpdate).not.toHaveBeenCalled()
+    const verifyCalls = mocks.mockTaskCreate.mock.calls.filter(([arg]) => String(arg.data.id).startsWith('verify-'))
+    expect(verifyCalls).toHaveLength(1)
+    expect(verifyCalls[0][0].data.dependencies).toBe(JSON.stringify(['code-2']))
+    expect(verifyCalls[0][0].data.description).toContain('实现支付接口')
+    expect(verifyCalls[0][0].data.description).not.toContain('实现登录接口')
   })
 })
 

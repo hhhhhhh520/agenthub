@@ -258,28 +258,53 @@ export async function handleArchitectPlan(
   // ISSUE-008: 执行层强制 verify —— LLM 倾向直接 done 而非 verify,仅靠 prompt 无法改变决策。
   // 拆解出代码任务时自动追加验证任务:依赖全部代码任务,经既有依赖就绪门控在代码完成后自动执行
   // (handleExecution readyTasks 要求 deps 全 completed,verify 自然排在代码任务之后)。
-  // verify- 前缀 id 用于识别,多轮对齐时避免重复创建;redo 路径不新建——若 verify 因依赖
+  // verify- 前缀 id 用于识别;redo 路径不新建——若 verify 因依赖
   // 失败被 blocked,execution.ts 的"blocked 依赖补齐自动复活"机制会在 redo 后重新执行它。
+  // 多轮对齐条件式：老 verify 仍 pending → 把本轮新代码并入其依赖（去重）；已终结/执行中 →
+  // 新建本轮 verify（往终结任务上追加等于漏检）。无新任务时静默无操作。
   const codeTasks = scheduledTasks.filter(t => isCodeTask(t) && !t.id.startsWith('verify-'))
   // P6 T7: verify 维度实验开关——EXPERIMENT_VERIFY=off 只关自动创建(实验 harness),生产默认未设零影响。
   // done 守卫(chat-router.ts:127)天然正交:OFF 下已跳过,ON+no-verify 无 verify 可查。
   if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {
     const existingVerify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } } })
-    if (!existingVerify) {
-      const verifyAgent = agents.find(a => a.name.includes('测试'))
-      await prisma.task.create({
+    const verifyAgent = agents.find(a => a.name.includes('测试'))
+    const createVerify = (tasks: ScheduledTask[]) =>
+      prisma.task.create({
         data: {
           id: `verify-${crypto.randomUUID()}`,
-          description: buildVerifyDescription(codeTasks),
+          description: buildVerifyDescription(tasks),
           status: 'pending',
           // 优先测试工程师;无则 null,executeTaskBatch 的 findBestAgent 会按"验证/测试"关键词匹配,最终兜底到其他 agent
           assignedAgentId: verifyAgent?.id ?? null,
           sessionId,
-          dependencies: JSON.stringify(codeTasks.map(t => t.id)),
+          dependencies: JSON.stringify(tasks.map(t => t.id)),
           // 验证任务不产生文件,跳过文件校验(不误报越界);代码任务结果经 <dependency> 块注入
           declaredFiles: '[]',
         },
       })
+    if (!existingVerify) {
+      await createVerify(codeTasks)
+      sendEvent({ agentId: 'orchestrator', type: 'text', content: `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物` })
+    } else if (existingVerify.status === 'pending') {
+      const oldDeps: string[] = JSON.parse(existingVerify.dependencies || '[]')
+      const fresh = codeTasks.filter(t => !oldDeps.includes(t.id))
+      if (fresh.length > 0) {
+        const oldTasks = await prisma.task.findMany({ where: { id: { in: oldDeps } } })
+        const covered = [
+          ...oldTasks.map(t => ({ description: t.description, declaredFiles: JSON.parse(t.declaredFiles || '[]') as string[] })),
+          ...fresh,
+        ]
+        await prisma.task.update({
+          where: { id: existingVerify.id },
+          data: {
+            dependencies: JSON.stringify([...oldDeps, ...fresh.map(t => t.id)]),
+            description: buildVerifyDescription(covered),
+          },
+        })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: `验证任务已扩展：新增 ${fresh.length} 个代码任务纳入验证` })
+      }
+    } else {
+      await createVerify(codeTasks)
       sendEvent({ agentId: 'orchestrator', type: 'text', content: `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物` })
     }
   }
