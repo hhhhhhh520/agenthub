@@ -332,11 +332,18 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                   setRedoTask(null) // Close dialog immediately
                   setRedoPollFast(true) // Speed up polling
                   try {
-                    await fetch(`/api/sessions/${sessionId}/tasks/${taskToRedo.id}/redo`, {
+                    const redoRes = await fetch(`/api/sessions/${sessionId}/tasks/${taskToRedo.id}/redo`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ description: desc }),
                     })
+                    if (!redoRes.ok) {
+                      // 429 会话正忙：redo 未执行，降回慢速轮询并提示（否则 checkDone 会空转 30 次再报超时）。
+                      const busy = await redoRes.json().catch(() => null) as { error?: string } | null
+                      setRedoPollFast(false)
+                      toast.error(busy?.error || '重做请求失败')
+                      return
+                    }
                   } catch (e) {
                     console.error('Redo request failed:', e)
                     toast.error('重做请求失败')

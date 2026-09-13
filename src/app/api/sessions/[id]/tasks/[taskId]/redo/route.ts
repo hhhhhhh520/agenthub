@@ -10,7 +10,19 @@ export async function POST(
 ) {
   const { id: sessionId, taskId } = await params
 
-  const releaseLock = await acquireSessionLock(sessionId)
+  // 等锁超时 fail-closed 回 429：绝不与上一持有者并发写 phase（phase 写入竞态根因）。
+  let releaseLock: () => void
+  try {
+    releaseLock = await acquireSessionLock(sessionId)
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === 'SESSION_BUSY') {
+      return NextResponse.json(
+        { error: '会话正忙（上一请求仍在执行），请稍后重试' },
+        { status: 429, headers: { 'Retry-After': '60' } },
+      )
+    }
+    throw err
+  }
   try {
     return await handleRedo(sessionId, taskId, request)
   } finally {
