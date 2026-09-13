@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const {
   mockTaskFindUnique, mockTaskUpdate, mockTaskFindMany,
   mockSessionFindUnique, mockSessionUpdate, mockMessageFindMany, mockAgentFindMany,
-  mockSessionMemberUpdateMany, mockHandleExecution,
+  mockSessionMemberUpdateMany, mockHandleExecution, mockAcquireSessionLock,
 } = vi.hoisted(() => ({
   mockTaskFindUnique: vi.fn(),
   mockTaskUpdate: vi.fn(),
@@ -14,6 +14,7 @@ const {
   mockAgentFindMany: vi.fn().mockResolvedValue([]),
   mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
   mockHandleExecution: vi.fn().mockResolvedValue(undefined),
+  mockAcquireSessionLock: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -34,7 +35,7 @@ vi.mock('@/lib/services/execution', () => ({
 }))
 
 vi.mock('@/lib/session-lock', () => ({
-  acquireSessionLock: vi.fn().mockResolvedValue(() => {}),
+  acquireSessionLock: mockAcquireSessionLock,
 }))
 
 import { POST } from '@/app/api/sessions/[id]/tasks/[taskId]/redo/route'
@@ -56,6 +57,8 @@ const FAKE_AGENT = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // 锁默认立即放行；忙时用例用 mockRejectedValueOnce 覆盖（duck-type code，无需真实 SessionBusyError）
+  mockAcquireSessionLock.mockResolvedValue(() => {})
   // 默认会话存在且 exec 态(镜像生产):闸门放行、transitionPhase 成功;对齐/异常态用例用 once 覆盖
   mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '' })
   mockSessionUpdate.mockResolvedValue({})
@@ -298,5 +301,20 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
       expect(res.status).toBe(200)
       expect(mockHandleExecution).toHaveBeenCalledTimes(1)
     }
+  })
+
+  it('会话忙时回 429 且不执行（fail-closed，防 phase 并发写）', async () => {
+    mockAcquireSessionLock.mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'SESSION_BUSY' }))
+    mockTaskFindUnique.mockResolvedValue({
+      id: 't1', sessionId: 's1', status: 'failed',
+      description: 'x', assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json()
+    expect(body.error).toContain('正忙')
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+    expect(mockTaskUpdate).not.toHaveBeenCalled()
   })
 })

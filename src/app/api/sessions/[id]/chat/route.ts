@@ -11,8 +11,6 @@ export async function POST(
 ) {
   const { id: sessionId } = await params
 
-  const releaseLock = await acquireSessionLock(sessionId, request.signal)
-
   let message: string, mentionAll: boolean | undefined, targetAgent: string | undefined, replyToId: string | undefined, regenerate: string | undefined, attachmentIds: string[] | undefined
   try {
     ({ message, mentionAll, targetAgent, replyToId, regenerate, attachmentIds } = await request.json())
@@ -35,6 +33,21 @@ export async function POST(
     ? session.projectDir.trim()
     : process.cwd()
 
+  // 锁放在廉价校验之后拿：400/404 早退路径不再持有锁（此前漏释放会导致该会话后续请求每次都等满 60s）。
+  // 等锁超时 fail-closed 回 429：绝不与上一持有者并发写 phase（phase 写入竞态根因）。
+  let releaseLock: () => void
+  try {
+    releaseLock = await acquireSessionLock(sessionId, request.signal)
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === 'SESSION_BUSY') {
+      return Response.json(
+        { error: '会话正忙（上一请求仍在执行），请稍后重试' },
+        { status: 429, headers: { 'Retry-After': '60' } },
+      )
+    }
+    throw err
+  }
+
   // /permission command
   if (message.trim().startsWith('/permission')) {
     const args = message.trim().split(/\s+/)
@@ -53,6 +66,7 @@ export async function POST(
           controller.close()
         },
       })
+      releaseLock()
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
     } else {
       const encoder = new TextEncoder()
@@ -64,6 +78,7 @@ export async function POST(
           controller.close()
         },
       })
+      releaseLock()
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
     }
   }

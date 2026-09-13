@@ -52,17 +52,52 @@ describe('SessionLock — acquireSessionLock', () => {
     expect(order).toEqual([1, 2, 3])
   })
 
-  it('proceeds even if previous lock holder never releases (timeout)', async () => {
+  it('fails closed when previous holder never releases (no concurrent phase writes)', async () => {
     // Acquire first lock but never release
     await acquireSessionLock('timeout-test')
 
-    // Second lock should eventually succeed after the internal 60s timeout
-    // We test that it doesn't hang by using a shorter test timeout
-    // In practice, this tests the timeout mechanism exists
-    const release2 = await acquireSessionLock('timeout-test')
-    expect(typeof release2).toBe('function')
-    release2()
-  }, 70_000) // Allow 70s for the 60s timeout
+    // Second lock must reject instead of proceeding concurrently (phase-write race root cause).
+    // timeoutMs 缩到 50ms：只测"超时抛错"分支语义，不等生产 60s。
+    await expect(acquireSessionLock('timeout-test', undefined, { timeoutMs: 50 })).rejects.toMatchObject({
+      name: 'SessionBusyError',
+      code: 'SESSION_BUSY',
+    })
+  })
+
+  it('timed-out waiter unlinks itself: later waiter still chains to the real holder', async () => {
+    const releaseHolder = await acquireSessionLock('unlink-test')
+    await expect(
+      acquireSessionLock('unlink-test', undefined, { timeoutMs: 30 }),
+    ).rejects.toMatchObject({ code: 'SESSION_BUSY' })
+
+    // 持有者释放后，后续 acquire 必须立即成功——不能被超时等待者留下的死 promise 再卡 60s。
+    releaseHolder()
+    const start = Date.now()
+    const releaseNext = await acquireSessionLock('unlink-test')
+    expect(Date.now() - start).toBeLessThan(100)
+    releaseNext()
+  })
+
+  it('keeps serializing after a timed-out waiter (order preserved)', async () => {
+    const order: number[] = []
+    const releaseHolder = await acquireSessionLock('order-after-timeout')
+
+    // B 等锁超时抛错（不等 60s）
+    await expect(
+      acquireSessionLock('order-after-timeout', undefined, { timeoutMs: 30 }),
+    ).rejects.toMatchObject({ code: 'SESSION_BUSY' })
+
+    // C 在持有者释放后仍能正常串行拿到锁
+    const pC = acquireSessionLock('order-after-timeout').then((releaseC) => {
+      order.push(2)
+      releaseC()
+    })
+    await new Promise((r) => setTimeout(r, 20))
+    order.push(1)
+    releaseHolder()
+    await pC
+    expect(order).toEqual([1, 2])
+  })
 
   it('releases lock when abort signal fires', async () => {
     const controller = new AbortController()
