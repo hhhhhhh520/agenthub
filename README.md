@@ -14,6 +14,10 @@
 
 ![工作区首页](docs/screenshots/01-dashboard.png)
 
+**60 秒看懂它在干什么：**
+
+![发起 → 执行 → 复用](docs/screenshots/flow-storyboard.png)
+
 </div>
 
 ## ✨ 设计亮点

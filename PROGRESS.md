@@ -254,7 +254,7 @@
 | 🟢已解决 | ISSUE-011 架构师设计漂移 | TASK_DECOMPOSITION_PROMPT 强约束 techStack 与 declared_files 技术栈一致(声明TS则 .ts/.tsx,不得写Python)+techStack字段描述更新。仅 prompt 约束(自由文本到后缀映射硬校验易误伤混合栈);执行侧已由 contract v1 兜住 | 🟢已解决(2026-08-05) |
 | 🟢已解决 | ISSUE-008 执行层强制verify | verify action仅prompt引导无效(LLM倾向直接done)。已在 handleArchitectPlan 拆解代码任务时自动追加 verify 任务(依赖全部代码任务,经既有依赖机制代码完成后自动执行;分配给测试工程师,无则 findBestAgent 兜底)。覆盖正常/跳过对齐/redo 全入口,执行引擎零改动 | 🟢已解决(2026-08-06) |
 | 🟢已解决 | ISSUE-003 讨论JSON泄漏 | 三层修复:onChunk 过滤 status 噪音 + runDiscussion 移除 MCP 物理隔离工具 + prompt 禁工具。审查抓出并修复进程隔离回归(显式 chatSessionId+agentId 恢复独立进程)。前端忽略 status 被拒(双重语义) | 🟢已解决(2026-08-07) |
-| 🟡中 | 降级能力检查 | 备用模型能力校验（当前无备用模型配置） | 待定 |
+| 🟡中 | 演示层对标（ShrimpCrab） | 获奖项目对标：在线体验 / Agent Market / 团队画布编排 / 中英 README。代码差距分析见会话记录（2026-09-13），先补分析、后排期 | 待办 |
 | 🟢已解决 | P7-A mock 判定误判修复 | run.test.ts mock `sp.includes('架构师')` 误判 handleOrchestratorChat（其 systemPrompt 含"当前会话中的 Agent：- 架构师"字样）→ 8 条 off-C defect 伪影。已修：三分支改 `agent?.name==='…'` 精确判定，commit ad54b61（TDD +3 针对性测试）。后续重跑见「进行中」区 | 🟢已解决(2026-08-22) |
 | 🟢低 | 第三波安全清扫 | 7 个 ⚠️-S(orchestrator POST 掩码污染 / symlink 跨界 / accept 敏感列表割裂 / attachments 加固 / providerRef 空 apiKey 覆盖 / 拒绝路径无日志) — **本地单机威胁模型已评估不实施**,SaaS/多用户化时重评 | ⏸️ |
 | 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |
