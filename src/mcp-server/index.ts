@@ -19,7 +19,7 @@ const AGENT_NAME = process.env.AGENTHUB_AGENT_NAME || ''
 const WORK_DIR = resolve(process.env.AGENTHUB_WORK_DIR || '.')
 const REAL_WORK_DIR = realpathSync(WORK_DIR)
 
-import { isPathSafe as _isPathSafe } from '../lib/path-safety'
+import { isPathSafe as _isPathSafe, isListDirSafe } from '../lib/path-safety'
 
 function isPathSafe(filePath: string): boolean {
   return _isPathSafe(filePath, WORK_DIR)
@@ -56,7 +56,7 @@ server.tool(
   { dir: z.string().optional().describe('相对于项目根目录的目录路径，如 frontend/、backend/，默认列出根目录') },
   async ({ dir }) => {
     const targetDir = resolve(WORK_DIR, dir || '.')
-    if (!targetDir.startsWith(WORK_DIR)) {
+    if (!isListDirSafe(dir, WORK_DIR)) {
       return { content: [{ type: 'text', text: '错误：路径超出项目目录' }] }
     }
     try {
