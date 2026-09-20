@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { StreamChunk } from './types'
+import { assertSpawnSafe } from './arg-safety'
 
 interface ProcessEntry {
   process: ChildProcess
@@ -324,6 +325,8 @@ class ProcessRegistry {
         args.push('--disallowedTools', config.disallowedTools.join(','))
       }
     }
+
+    assertSpawnSafe(command, args)
 
     // Per-agent provider env vars (multica pattern: custom_env injection)
     const providerEnv: Record<string, string> = {}
