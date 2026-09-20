@@ -148,3 +148,38 @@ export function cleanupShadowGit(projectRoot: string, sessionId: string): void {
     fs.rmSync(shadowDir, { recursive: true, force: true })
   }
 }
+
+/**
+ * 清扫 projectRoot 下无对应 session 的孤儿影子 git 目录（roadmap §2.3）。
+ *
+ * 覆盖面（诚实口径，与启动扫描 distinct projectDir 的机制一致）：只清
+ * "session id 已失联（不在 validSessionIds）且该 projectDir 仍被 ≥1 个
+ * 存活 session 引用"的孤儿——典型成因：DELETE 时 cleanupShadowGit 失败
+ * （warn 后继续删 session）。清不了的（session 还活着但目录位置漂移，
+ * PUT 改走 projectDir / projectDir 被清空后旧目录）：id 命中 validIds 被
+ * 跳过，或旧 projectDir 不进 distinct 列表——需 DELETE/PUT 侧按旧
+ * projectDir 主动清，见 PROGRESS 待办。
+ *
+ * validSessionIds 由调用方提供（全库 Session id 集合）——本模块保持纯 FS、
+ * 无 DB 依赖。best-effort：单目录删除失败（占用/权限）不阻塞其余。
+ */
+export function cleanupOrphanShadowGits(projectRoot: string, validSessionIds: Set<string>): string[] {
+  const rootDir = path.join(projectRoot, SHADOW_GIT_REL)
+  if (!fs.existsSync(rootDir)) return []
+  // 安全收口（对齐 list-dir.ts 的 junction 先例，这里是删除原语、危害更重）：
+  // rootDir 本身若是符号链接/junction，readdirSync 会跟进目标——扫描+删除将
+  // 作用于任意位置。lstat 不跟进链接，识别后整目录跳过。
+  if (fs.lstatSync(rootDir).isSymbolicLink()) return []
+  const removed: string[] = []
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (validSessionIds.has(entry.name)) continue
+    try {
+      fs.rmSync(path.join(rootDir, entry.name), { recursive: true, force: true })
+      removed.push(entry.name)
+    } catch {
+      // 单目录失败跳过，不阻塞其余清理
+    }
+  }
+  return removed
+}
