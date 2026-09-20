@@ -241,6 +241,8 @@
 
 | 安全批次·对标 Codeg 工程质量（docs/design/roadmap-to-excellence.md，5 commit：374dbe4/700222f/cee6518/606b519/7241417） | **§2.3 卫生清零**（根目录 5 遗留文件移出跟踪 + 两处文档计数修正）＋**§2.2 注入面全收口**：① `list_files` 裸 startsWith 前缀同族绕过 → `isListDirSafe`（path-safety.ts）；② junction 泄漏收口（新增 `list-dir.ts`：`listDirTree` 手动递归不跟进符号链接；`listProjectFiles` 承载工具主体）+ `attachments/[id]` 同型缺口换 isPathSafe；③ spawn 参数注入 fail-closed（新增 `arg-safety.ts` `assertSpawnSafe`：拒绝 cmd 元字符+空白，注入实测复现后修复，128 字符扫描无绕过；含空格参数由静默截断转显式报错——仅 OpenCode 路径，Claude 路径 workDir 只作 cwd）；④ shadow-git execSync 模板串 → execFileSync 参数数组（注入机制 exec 层实测复现，Windows 端到端被 mkdirSync 闸住、POSIX 可达）；⑤ dev 绑定 127.0.0.1（拍板：不加锁，只在本机运行，README 加警告）。**审查流程**：每批 2 个独立审查 Agent（攻击者视角+声明一致性）；两次自我纠错——attachments UUID 校验误报被证伪、canary 判别力降级（mkdirSync 先闸，严重级从"Windows 实测 RCE"修正为"POSIX 可达"）。测试 1098→1137（+39 全部先红后绿） | 2026-09-20 |
 
+| 阶段一收口·§2.4+孤儿清扫+§2.1 CI（roadmap v5，4 commit） | **§2.4 invalidateCliSession 统一入口**：6 处 `cliSessionId: null` 散点（redo ×2 + execution ×4）→ `cli-session.ts` 单事务统一入口（taskData 合并后强制 null，spread 顺序兜底；不含 kill 进程——三路径均在进程退出后）；静态守卫锁定字面量仅存统一入口 + 接线（变异验证精确红→还原）。**shadow-git 孤儿清扫**：`cleanupOrphanShadowGits`（纯 FS）+ `instrumentation.ts` 启动扫描（distinct projectDir，三层 best-effort 容错）；junction rootDir 收口（lstat 跳过，审查发现删除原语不跟进链接）；覆盖面诚实口径（只清 id 失联且 projectDir 仍被引用的孤儿）+ 2 项后续待办（启动快照竞态 / PUT 改走 projectDir 的旧目录主动清）。**§2.1 CI**：`.github/workflows/ci.yml`（push=master/PR）—— vitest 全量 + build + 改动文件 lint 门禁 0 error（PR base.sha / push event.before 全零回退 HEAD~1）+ phase 架构守卫双断言（写点扫描 + STATE_PHASE 外部引用禁用，各故意违规精确红→还原；盲区清单 7 项固化注释）；tests/ no-explicit-any 放宽（实测 error 级存量 ~310）→ 全仓基线 362→**52 errors**/83 warnings；execution.ts 存量 any 清零；**审查抓出 2 个 workflow 硬伤已修**：`prisma db push --skip-generate`（Prisma 7 已移除该 flag，隔离实测必挂）、push 触发分支 main→master（origin 实际默认分支）。CI 全绿待首次 push 实测（CI 同条件全新空库全量实跑 1153/3 由审查代验）。**每项 TDD 先红后绿 + 守卫变异验证 + 2 独立审查 Agent**。测试 1137→1154 | 2026-09-21 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
@@ -262,8 +264,8 @@
 | 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |
 
 **2026-07-07 赛后优化方向**（比赛结束，目标转为"自己用 + 深入研究"，详见 memory project_agenthub_post_competition_direction）：
-- 第一梯队（高价值低成本）：monitoring 改结构化检查 + A/B 对比 / ~~清理历史残留~~ ✅2026-09-20（含根目录 5 遗留文件） / ~~MCP list_files 校验对齐 read_artifact~~ ✅2026-09-20 / cliSessionId 统一入口（待办，roadmap §2.4）
-- **对标 Codeg 阶段一（2026-09-20 立项，docs/design/roadmap-to-excellence.md）**：安全批次 5 commit ✅ 注入面全收口（spawn / list_files / junction / attachments / shadow-git）；**剩余（下会话续）**：§2.1 CI + 架构守卫（"phase 只允许在 state-machine.ts 写"）、§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）、shadow-git 孤儿目录清扫、§2.3 收尾
+- 第一梯队（高价值低成本）：monitoring 改结构化检查 + A/B 对比 / ~~清理历史残留~~ ✅2026-09-20（含根目录 5 遗留文件） / ~~MCP list_files 校验对齐 read_artifact~~ ✅2026-09-20 / ~~cliSessionId 统一入口~~ ✅2026-09-21（roadmap §2.4）
+- **对标 Codeg 阶段一（2026-09-20 立项，docs/design/roadmap-to-excellence.md）**：✅ **2026-09-21 全部收口**——安全批次 5 commit（注入面全收口）+ §2.4 invalidateCliSession 统一入口 + shadow-git 孤儿清扫 + §2.1 CI + 架构守卫 + §2.3 卫生清零。**遗留**：① CI 全绿待首次 push 实测；② 孤儿清扫启动快照竞态（多实例下新 session 影子目录可能被误删 → 敏感越界守卫静默失效；修法候选：per-id 复查 / mtime 宽限期）；③ PUT 改走/清空 projectDir 后旧影子目录需 DELETE/PUT 侧主动清（现启动扫描不可达）；④ lint 存量 52 errors 收敛（experiments/p5 集中 39，改动文件门禁会逐步逼出）；⑤ 阶段二起点 SSE 事件序号+持久化（§3.1 已拍板修彻底）
 - 第二梯队（高价值中成本）：可信度显式化 + 前端展示 / Orchestrator 显式状态机 / redo 改 SSE
 - 第三梯队（研究向）：全链路 trace 可视化 / 设计复盘文档(❌/⚠️ 修复沉淀) / 受控实验
 - 核心原则：减复杂度优于加功能；可审计性应内生而非补丁（参考镜像项目 homerail，D:\my project\homerail，拆解见 wiki-ascii/raw/sources/projects/homerail/）

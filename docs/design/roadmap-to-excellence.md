@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v4（独立审查 + 拍板 + 提交前审查后） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v5（§2.1/§2.3/§2.4 收口后） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -11,6 +11,7 @@
 | v2 | 2026-09-20 | 独立审查整改：🔴 shell 改法实测有误（会打死 Windows 主路径）→ 换修法；🔴 SSE 补发机制覆盖不了验收 → 改为待拍板；lint 门禁现状 362 errors → 改"改动文件门禁"；架构守卫改为"phase 写入唯一性"断言；认证移出阶段一（与既有威胁模型记录一致）；SDK 化降级为条件项；数字修正（31 路由 / 6 处 cliSessionId / 依赖关系纠错）；补"先证明会红"验收条款 |
 | v3 | 2026-09-20 | 拍板落地：**SSE 重放 = 修彻底**（持久化四类事件）；**E2E = 自动化**（进 CI）；**认证 = 不加锁**（前提：只在本机运行，§8#1） |
 | v4 | 2026-09-20 | 提交前 pre-commit 审查整改：v2/v3 残留回扫（5 处"待拍板"字样 + 1 处与"修彻底"冲突的退路 + 头部版本号）；`route.ts:70` → `:101` 行号修正（真实清理点在 DELETE handler）；交叉引用记法统一 |
+| v5 | 2026-09-21 | §2.1/§2.3/§2.4 收口（每项 TDD + 守卫变异验证 + 2 独立审查 Agent）：§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）；§2.3 孤儿清扫（启动时 instrumentation 扫描，junction rootDir 收口；覆盖面诚实口径 + 2 项后续待办）；§2.1 CI（vitest+build+改动文件 lint 门禁+phase 架构守卫，tests/ no-explicit-any 放宽后基线 362→52 errors）；§1 判据表/附录 A 数字同步 |
 
 ---
 
@@ -30,7 +31,7 @@
 
 | 判据 | Codeg 的样子 | AgentHub 现状 | 差距性质 |
 |---|---|---|---|
-| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | 无 `.github/`；1098 单测（2026-09-20 修复后 1137）+ E2E 仅 13 个冒烟用例；`npx eslint .` 当前 **362 errors / 83 warnings** | 有测试无门禁 |
+| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml`（vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫）；1154 单测（2026-09-21）+ E2E 仅 13 个冒烟用例（自动化待 §5）；`npx eslint .` 当前 **52 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
 | **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 与 shadow-git 注入面已守卫（2026-09-20，§2.2 第 1/4 项）；`list_files`/`attachments` 路径校验已收口（§2.2 第 2 项） | 注入面已收敛 |
 | **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
@@ -43,11 +44,11 @@
 
 目标：把无条件项清零。全部是小活，无架构决策（认证已拍板不加锁，见 §8#1）。
 
-### 2.1 上 CI（GitHub Actions）
+### 2.1 上 CI（GitHub Actions）✅ 2026-09-21 完成
 
-- `vitest` + `build` 全量 + **lint 采用"改动文件门禁"**：当前 362 errors 决定了全局 lint 门禁会从第一天全红（codeg 的 CI 跑的是 `eslint .` + `clippy -D warnings`，直接照抄不可行）。做法参照项目自己在 ISSUE-022 的口径（"eslint 0 error，剩余 warning 均为 HEAD 早有"）——只对改动文件要求 0 error，逐步收敛；tests/ 的 `no-explicit-any` 可先放宽。
-- **架构守卫（修正版）**：不要断言"redo 路由 import applyTransition"——它已经 import 了（`redo/route.ts:5`），守卫从第一天就是绿的等于没加。真正的横切面不变量是：**`phase` 字段只允许出现在 `state-machine.ts` 的写入中**。断言"路由层不得出现含 `phase` 的 `prisma.session.update*`"（当前 `state-machine.ts:254` 是唯一合法写入点，已核实）。
-- 验收：PR 上 CI 全绿；**每条守卫先证明会红**（故意违规一次，确认变红）。
+- ✅ `vitest` + `build` 全量 + **lint 采用"改动文件门禁"**（`.github/workflows/ci.yml`，push=master / PR）：PR 用 base.sha、push 用 `event.before`（全零回退 HEAD~1），ACMR 过滤 .ts/.tsx，0 error 阻塞、warning 不阻塞。**tests/ 的 `no-explicit-any` 实测为 error 级且存量 ~310 个**，已按"可先放宽"落 eslint.config.mjs（`tests/**` off）；全仓基线 362→**52 errors / 83 warnings**（experiments/p5 集中 39，收敛节奏 §9#4）。CI 里 `prisma generate`（generated 目录不跟踪）+ `prisma db push`（**Prisma 7 已移除 `--skip-generate` flag**，审查隔离实测；触发分支为 master——origin 实际默认分支，审查抓出 main 失配）。
+- ✅ **架构守卫**（tests/architecture-phase-guard.test.ts，随 vitest 进 CI）：①非 state-machine.ts 的 `prisma.session.*` 写调用参数不得含 `phase:` 字面量（平衡括号提取，跳过字符串/注释配对）②`STATE_PHASE` 不得被外部引用。**每条均做过故意违规→精确红→还原**；盲区清单（$executeRaw/交互式事务/别名导入/方括号访问等 7 项 + 字符串字面量误报向量，18 例变异探测确认均无现役实例）固化进测试注释。
+- 验收：push/PR 上 CI 全绿（**待首次 push 实测**，CI 同条件全新空库全量实跑已由审查代验 1153/3）；lint 门禁本地等效验证（脏文件 exit 1 / 干净文件 exit 0）。
 
 ### 2.2 安全修复（无条件项）
 
@@ -61,14 +62,15 @@
 ### 2.3 卫生清零（2026-09-20 部分完成）
 
 - ✅ 从 git 移除根目录 5 个遗留文件并补进 `.gitignore`（`git rm --cached`，磁盘文件保留）。
-- ⏳ **shadow-git 目录清理**：确认 `.agenthub/shadow-git/{sessionId}/` 随 session 删除清理（`sessions/[id]/route.ts:101`（DELETE handler）已有 `cleanupShadowGit` 调用），并覆盖孤儿目录清扫（现状仅按 sessionId 清理，无孤儿扫描）。
+- ✅ **shadow-git 孤儿目录清扫**（2026-09-21 完成）：`cleanupOrphanShadowGits`（shadow-git.ts，纯 FS）+ `src/instrumentation.ts` 启动扫描（distinct projectDir，nodejs runtime，best-effort 三层容错）；rootDir 为 junction/symlink 时 lstat 整目录跳过（删除原语不跟进链接，对齐 list-dir.ts 先例）。**覆盖面诚实口径**：只清"id 失联且 projectDir 仍被存活 session 引用"的孤儿；session 活着但目录漂移（PUT 改走/清空 projectDir）需 DELETE/PUT 侧按旧 projectDir 主动清——**后续待办**。启动快照竞态（多实例下 findMany 快照与扫描非原子，新 session 影子目录可能被误删→敏感越界守卫静默失效；单实例 register 阻塞启动期基本安全）——**后续待办**（per-id 复查 / mtime 宽限期）。
 - ✅ 修 `CLAUDE.md:106` 的过时端点数（16 → 31）。
 - ✅ 修 v2 决策文档的计数自相矛盾（标题"12 项" vs 实含 22 条）。
 
-### 2.4 `invalidateCliSession()` 统一入口
+### 2.4 `invalidateCliSession()` 统一入口 ✅ 2026-09-21 完成
 
-- 现状（已核实）：`cliSessionId: null` 字面量 **6 处 2 文件**——`redo/route.ts:82,96` + `execution.ts:326,333,478,483`，无统一入口。
-- 改法：抽一个带事务的函数（清 Task + SessionMember + 可选 kill 进程），6 处全部改调用。
+- ✅ 新增 `src/lib/services/cli-session.ts`：单事务清 Task + SessionMember.cliSessionId，调用方附加字段 taskData 合并后强制 `cliSessionId: null`（spread 顺序兜底，测试锁定反序变异）；**不含 kill 进程**（三条调用路径均发生在 agent 进程退出后的结果处理阶段，杀活跃进程属 process-registry 职责）。
+- ✅ 6 处散点全量替换（`redo/route.ts` ×2 + `execution.ts` ×4）；静态守卫：该字面量在 src/lib/services + src/app/api 只允许出现在统一入口 + 两调用文件必须 import（变异验证：故意改回字面量→精确红→还原）。
+- 非阻塞备注（审查记录）：守卫扫描范围暂不含 orchestrator/adapters 目录；success 路径（execution.ts:367-384）两表同写为仅存人肉复制点，未来可纳入统一入口的"赋值"变体。
 
 **阶段验收**：CI 绿 + 安全审查 2 轮无 Critical + `git status` 根目录干净 + 每项改动有针对性测试（含守卫的"先证明会红"）。
 
@@ -196,16 +198,16 @@
 | monitoring = LLM 审 | `src/lib/services/execution.ts:434/460/467` | grep |
 | 实验开关在生产热路径 | `chat-router.ts:9/94/121/160`；`state-machine.ts:133/152/178/252` | grep |
 | 根目录 5 遗留文件为 git 已跟踪 | `git ls-files` | 命令确认 |
-| 无 CI | 无 `.github/` | ls |
+| 无 CI | ~~无 `.github/`~~ → 2026-09-21 起有 `.github/workflows/ci.yml`（vitest + build + 改动文件 lint 门禁 + 架构守卫；push=master/PR） | ls |
 | API 路由 31 个、零认证 | `find src/app/api -name route.ts \| wc -l` = 31 | 命令（v1 写 32 有误） |
-| `cliSessionId: null` 6 处 2 文件 | `redo/route.ts:82,96` + `execution.ts:326,333,478,483` | grep（审查报告写 7 处，复核为 6） |
-| eslint 现状 | `npx eslint .` → 445 problems (362 errors, 83 warnings) | 实跑 |
+| `cliSessionId: null` 6 处 2 文件 | ~~`redo/route.ts:82,96` + `execution.ts:326,333,478,483`~~ → 2026-09-21 已收口至统一入口 `cli-session.ts`（守卫锁定该字面量仅存于统一入口） | grep（审查报告写 7 处，复核为 6） |
+| eslint 现状 | `npx eslint .` → **135 problems (52 errors, 83 warnings)**（2026-09-21：tests/ no-explicit-any 放宽 + execution.ts 存量 any 清零后；v2 记录 362 errors 为放宽前口径） | 实跑 |
 | SSE 无重连 | 全仓无 EventSource / Last-Event-ID；`use-chat.ts` fetch+getReader | grep |
 | 四类事件不落库 | `message.create` 只存成品消息；thinking/tool_use/tool_result 仅 chunkQueue emit | grep |
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1137 passed / 3 skipped（2026-09-20 复跑；v4 记录为 1098） | `npx vitest run` | 实跑 |
+| 单测 1154 passed / 3 skipped（2026-09-21；v4 记录 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
