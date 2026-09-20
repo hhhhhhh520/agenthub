@@ -2,8 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { PrismaClient } from '../generated/prisma/client'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
-import { readFileSync, readdirSync, statSync, realpathSync } from 'fs'
-import { join, resolve, sep } from 'path'
+import { readFileSync, realpathSync } from 'fs'
+import { resolve, sep } from 'path'
 import { z } from 'zod'
 
 // 独立 Prisma 初始化（不依赖 Next.js）
@@ -19,7 +19,8 @@ const AGENT_NAME = process.env.AGENTHUB_AGENT_NAME || ''
 const WORK_DIR = resolve(process.env.AGENTHUB_WORK_DIR || '.')
 const REAL_WORK_DIR = realpathSync(WORK_DIR)
 
-import { isPathSafe as _isPathSafe, isListDirSafe } from '../lib/path-safety'
+import { isPathSafe as _isPathSafe } from '../lib/path-safety'
+import { listProjectFiles } from '../lib/list-dir'
 
 function isPathSafe(filePath: string): boolean {
   return _isPathSafe(filePath, WORK_DIR)
@@ -55,27 +56,7 @@ server.tool(
   '列出项目目录中的文件。可指定子目录如 frontend/、backend/ 查看特定Agent的产出',
   { dir: z.string().optional().describe('相对于项目根目录的目录路径，如 frontend/、backend/，默认列出根目录') },
   async ({ dir }) => {
-    const targetDir = resolve(WORK_DIR, dir || '.')
-    if (!isListDirSafe(dir, WORK_DIR)) {
-      return { content: [{ type: 'text', text: '错误：路径超出项目目录' }] }
-    }
-    try {
-      const entries = readdirSync(targetDir, { recursive: true })
-      const files = entries
-        .filter(e => typeof e === 'string')
-        .map(e => {
-          const fp = join(targetDir, e as string)
-          try {
-            const s = statSync(fp)
-            return `${s.isDirectory() ? '[D] ' : '[F] '}${e}`
-          } catch {
-            return `[?] ${e}`
-          }
-        })
-      return { content: [{ type: 'text', text: files.join('\n') || '(空目录)' }] }
-    } catch (err) {
-      return { content: [{ type: 'text', text: `列出失败: ${err}` }] }
-    }
+    return { content: [{ type: 'text', text: listProjectFiles(dir, WORK_DIR) }] }
   }
 )
 
