@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { readFile, stat } from 'fs/promises'
 import { resolve } from 'path'
 import { prisma } from '@/lib/db'
+import { isPathSafe } from '@/lib/path-safety'
 
 const UPLOADS_DIR = resolve(process.cwd(), 'uploads')
 
@@ -16,9 +17,9 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  // Path traversal protection
+  // Path traversal protection（isPathSafe：realpath + sep 边界，拒绝前缀同族目录如 uploads-evil）
   const resolvedPath = resolve(attachment.path)
-  if (!resolvedPath.startsWith(UPLOADS_DIR)) {
+  if (!isPathSafe(resolvedPath, UPLOADS_DIR)) {
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   }
 

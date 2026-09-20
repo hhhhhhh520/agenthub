@@ -30,8 +30,10 @@ describe('MCP list_files — isListDirSafe（目录校验）', () => {
 })
 
 describe('MCP list_files — 源码守卫', () => {
-  it('mcp-server 的目录校验不得使用裸 startsWith(WORK_DIR)', () => {
-    const src = readFileSync(new URL('../src/mcp-server/index.ts', import.meta.url), 'utf-8')
-    expect(src).not.toContain('startsWith(WORK_DIR)')
+  it('目录校验与列举模块不得使用裸 startsWith 前缀判断', () => {
+    const indexSrc = readFileSync(new URL('../src/mcp-server/index.ts', import.meta.url), 'utf-8')
+    const listDirSrc = readFileSync(new URL('../src/lib/list-dir.ts', import.meta.url), 'utf-8')
+    expect(indexSrc).not.toContain('startsWith(WORK_DIR)')
+    expect(listDirSrc).not.toContain('startsWith(')
   })
 })

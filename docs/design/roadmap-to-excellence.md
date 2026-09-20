@@ -30,9 +30,9 @@
 
 | 判据 | Codeg 的样子 | AgentHub 现状 | 差距性质 |
 |---|---|---|---|
-| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | 无 `.github/`；1098 单测（2026-09-20 修复后 1103）+ E2E 仅 13 个冒烟用例；`npx eslint .` 当前 **362 errors / 83 warnings** | 有测试无门禁 |
+| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | 无 `.github/`；1098 单测（2026-09-20 修复后 1114）+ E2E 仅 13 个冒烟用例；`npx eslint .` 当前 **362 errors / 83 warnings** | 有测试无门禁 |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
-| **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 注入面（`process-registry.ts:358` shell 默认 true + 用户自填字段）；`list_files` 用 `startsWith`（`mcp-server/index.ts:59`） | 注入面未收敛 |
+| **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 注入面（`process-registry.ts:358` shell 默认 true + 用户自填字段）；`list_files`/`attachments` 路径校验已收口（2026-09-20，§2.2 第 2 项） | 注入面未收敛 |
 | **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
 | **独有杠杆** | ACP 协议 + 17 转录解析器（一次投资，永久收益） | decisionTrace / process mining 已有最小消费面（2 个 API 端点 + 231 行 analytics 页），距"可消费"完成度远 | 资产完成度低 |
 | **可信交付** | 一键安装 + docs 站 + 10 语种 README | README 已含徽章/卖点/quickstart/架构图（815f2f0、59b07dd）——**缺实验数据**；交付形态仅 `npm run dev` | 差最后一段 |
@@ -53,7 +53,7 @@
 
 1. **spawn 注入面收敛（修正版，🔴 审查抓出的关键纠错）**：v1 提议"shell 默认改 false"**会打死 Windows 主执行路径**——本机实测（Node v24.14.0）：`spawn('claude', …, {shell:false})` → ENOENT；`spawn('claude.cmd', …)` → THROW EINVAL；`shell:true` → 正常。原因：Windows 上 claude/opencode 是 npm 全局 shim（.cmd），Node ≥18.20.2 起 `shell:false` 无法启动 .cmd/.bat。且 OpenCode 适配器已显式 `shell:true`（`opencode-adapter.ts:212`），改默认值对它零收益、只伤 Claude 路径。
    **正确修法**：保持 `shell:true`，收敛可注入面——prompt 已走 stdin（`promptAsArg` 全仓无人设为 true，已核实），命令行上只剩 `--dir`(workDir) / `--model` / `--allowedTools` 三个用户自填字段：对它们做校验/转义，或用 `cmd.exe /d /s /c` 显式包裹并严格引号。注意 Node 的 DEP0190 警告（shell:true + args 数组 = 仅拼接不转义）证实了这个方向。
-2. ✅ **`list_files` 换 `isPathSafe`**（2026-09-20 完成）：新增 `isListDirSafe`（path-safety.ts）并接线，消除前缀同族目录绕过（`../project-evil`）；5 个新测试 + 源码守卫，全量 1103 passed。
+2. ✅ **`list_files` 路径校验收口**（2026-09-20 完成）：新增 `isListDirSafe`（path-safety.ts）消除前缀同族绕过（`../project-evil`）；进一步收口 junction 泄漏——新增 `src/lib/list-dir.ts`（`listDirTree` 手动递归不跟进符号链接，`listProjectFiles` 承载工具主体）；同型缺口 `attachments/[id]` 路由裸 `startsWith` 一并换 `isPathSafe`；新增测试：本批 +11（list-dir 8 + attachments 3），累计 1098→1114，全量通过。
 3. ✅ **让"只在本机运行"从意图变成事实**（2026-09-20 完成）：dev 脚本加 `-H 127.0.0.1`（实机验证：日志 `Local: http://127.0.0.1:3000`，监听仅 127.0.0.1）；README 加安全提示。访问统一用 `localhost:3000`（避免 Next 16 的 127.0.0.1 ≠ localhost 跨源坑）。
 
 ### 2.3 卫生清零（2026-09-20 部分完成）
@@ -190,7 +190,7 @@
 |---|---|---|
 | spawn `shell` 默认 true | `src/lib/adapter/process-registry.ts:358` | grep + 本机 spawn 实测（ENOENT/EINVAL/OK） |
 | Windows 上 shell:false 无法启动 claude | npm shim：`%APPDATA%\npm\claude.cmd` | node 实测复现 |
-| `list_files` 用 startsWith；`read_artifact` 用 isPathSafe | `src/mcp-server/index.ts:59` / `:40` | grep |
+| `list_files`/`attachments` 路径校验已换 isPathSafe（2026-09-20 收口，含 junction 不跟进） | `src/lib/list-dir.ts` / `src/lib/path-safety.ts` | grep + 端到端实测 |
 | monitoring = LLM 审 | `src/lib/services/execution.ts:434/460/467` | grep |
 | 实验开关在生产热路径 | `chat-router.ts:9/94/121/160`；`state-machine.ts:133/152/178/252` | grep |
 | 根目录 5 遗留文件为 git 已跟踪 | `git ls-files` | 命令确认 |
@@ -203,7 +203,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1103 passed / 3 skipped（2026-09-20 复跑；v4 记录为 1098） | `npx vitest run` | 实跑 |
+| 单测 1114 passed / 3 skipped（2026-09-20 复跑；v4 记录为 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
