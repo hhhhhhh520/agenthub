@@ -7,7 +7,7 @@
 [![Stars](https://img.shields.io/github/stars/hhhhhhh520/agenthub?style=social)](https://github.com/hhhhhhh520/agenthub)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1130%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1137%20passing-brightgreen)](tests/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
 [![Prisma](https://img.shields.io/badge/Prisma-7-2D3748)](https://www.prisma.io)
@@ -28,7 +28,7 @@
 - **会话锁 fail-closed** — 同一会话串行执行，等锁超时回 429 绝不并发写状态，杜绝 phase 写入竞态
 - **进程池 + 配置指纹** — 每（会话，Agent，配置）独立 CLI 进程，配置 hash 隔离，10 分钟空闲回收，优雅关闭
 - **双 CLI 适配层** — Claude Code + OpenCode 统一抽象，spawn 子进程 + NDJSON 流式解析，工具白名单硬限制
-- **测试质量方法论** — 1130 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）
+- **测试质量方法论** — 1137 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）
 
 ## 💬 功能
 
@@ -127,7 +127,7 @@ npm test
 E2E=1 npm run test:e2e
 ```
 
-测试现状（2026-09-20）：1130 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
+测试现状（2026-09-20）：1137 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
 
 ## 🗺 路线
 
