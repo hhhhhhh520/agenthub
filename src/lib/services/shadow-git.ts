@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -11,11 +11,22 @@ function getShadowDir(projectRoot: string, sessionId: string): string {
 }
 
 /**
- * Build git --git-dir / --work-tree flags for shadow git commands.
- * 路径用双引号包裹,兼容空格和中文字符。
+ * Build git --git-dir / --work-tree args for shadow git commands.
+ * 路径作为独立参数传递（execFileSync 无 shell），天然兼容空格、中文与
+ * shell 元字符（含双引号的注入串只会成为 git 的字面量参数），
+ * 不存在模板串拼接的命令注入面。
  */
-function gitFlags(shadowDir: string, workDir: string): string {
-  return `--git-dir="${shadowDir}" --work-tree="${workDir}"`
+function gitArgs(shadowDir: string, workDir: string, ...rest: string[]): string[] {
+  return ['--git-dir', shadowDir, '--work-tree', workDir, ...rest]
+}
+
+/** 同步执行 git（无 shell），非零退出抛错由调用方处理。 */
+function gitSync(args: string[], timeoutMs: number, ignoreOutput = false): string {
+  if (ignoreOutput) {
+    execFileSync('git', args, { stdio: 'ignore', timeout: timeoutMs })
+    return ''
+  }
+  return execFileSync('git', args, { encoding: 'utf-8', timeout: timeoutMs })
 }
 
 /**
@@ -36,9 +47,7 @@ function ensureShadowInit(shadowDir: string, workDir: string): void {
   if (fs.existsSync(path.join(shadowDir, 'HEAD'))) return
 
   fs.mkdirSync(shadowDir, { recursive: true })
-  execSync(`git init --bare "${shadowDir}"`, {
-    encoding: 'utf-8', timeout: 10_000, stdio: 'ignore',
-  })
+  gitSync(['init', '--bare', shadowDir], 10_000, true)
 
   // 排除影子 git 自身目录,避免 ls-files --others 误报。
   // info/exclude 是每个仓库的本地 ignore,不影响 workDir 自身的 .gitignore。
@@ -46,12 +55,8 @@ function ensureShadowInit(shadowDir: string, workDir: string): void {
   fs.mkdirSync(path.dirname(excludeFile), { recursive: true })
   fs.writeFileSync(excludeFile, '.agenthub/\n', { encoding: 'utf-8' })
 
-  execSync(`git ${gitFlags(shadowDir, workDir)} add -A`, {
-    encoding: 'utf-8', timeout: 30_000, stdio: 'ignore',
-  })
-  execSync(`git ${gitFlags(shadowDir, workDir)} commit -m "shadow init" --allow-empty`, {
-    encoding: 'utf-8', timeout: 10_000, stdio: 'ignore',
-  })
+  gitSync(gitArgs(shadowDir, workDir, 'add', '-A'), 30_000, true)
+  gitSync(gitArgs(shadowDir, workDir, 'commit', '-m', 'shadow init', '--allow-empty'), 10_000, true)
 }
 
 /**
@@ -94,13 +99,11 @@ export function getGitSnapshot(projectRoot: string, sessionId: string): Set<stri
   ensureShadowInit(shadowDir, projectRoot)
 
   try {
-    const modified = execSync(`git ${gitFlags(shadowDir, projectRoot)} diff --name-only HEAD`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
-    const untracked = execSync(`git ${gitFlags(shadowDir, projectRoot)} ls-files --others --exclude-standard`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
     return new Set([...modified, ...untracked])
   } catch (e) {
@@ -123,13 +126,11 @@ export function getChangedFiles(
   ensureShadowInit(shadowDir, projectRoot)
 
   try {
-    const modified = execSync(`git ${gitFlags(shadowDir, projectRoot)} diff --name-only HEAD`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
-    const untracked = execSync(`git ${gitFlags(shadowDir, projectRoot)} ls-files --others --exclude-standard`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
     const all = new Set([...modified, ...untracked])
     return [...all].filter(f => !before.has(f))
