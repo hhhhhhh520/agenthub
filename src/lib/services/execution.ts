@@ -215,8 +215,8 @@ export async function handleExecution(
           // P1: 纠偏重试时注入越界信息
           let desc = t.description
           if (t.correctionCount > 0) {
-            const trace = JSON.parse(t.trace || '[]')
-            const last = trace.filter((tr: any) => tr.event === 'correction').pop()
+            const trace = JSON.parse(t.trace || '[]') as Array<{ event?: string; message?: string }>
+            const last = trace.filter(tr => tr.event === 'correction').pop()
             if (last?.message) desc = `[上次问题] ${last.message}\n请避免重复此错误。\n\n${desc}`
           }
           return {
