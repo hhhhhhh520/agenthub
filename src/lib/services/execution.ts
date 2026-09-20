@@ -6,6 +6,7 @@ import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
 import { getChangedFiles, getGitSnapshot } from './shadow-git'
 import { pickSensitive } from './sensitive-paths'
+import { invalidateCliSession } from './cli-session'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
@@ -314,26 +315,16 @@ export async function handleExecution(
         const failTrace = appendTrace(taskForTrace?.trace || '[]', {
           ts: new Date().toISOString(), event: 'error', message: msg,
         })
-        // ⚠️-C2 修复:task + SessionMember 两表更新包事务
-        // 避免中间崩溃导致 task.cliSessionId=null 而 member.cliSessionId=旧值
-        // 下次 execution.ts:174 fallback 拿到脏 sessionId,contract v1 §1.3 护栏失效
+        // ⚠️-C2 修复:task + SessionMember 两表更新包事务(语义由统一入口承载)
+        // contract v1 §1.3 P0 (动作 7): 敏感失败清 cliSessionId,避免该 agent
+        // 进程内存里"我交付成功"的错误信念污染后续任务(roadmap §2.4)
         const agentId = taskForTrace?.assignedAgentId
-        await prisma.$transaction([
-          prisma.task.update({
-            where: { id: taskId },
-            // contract v1 §1.3 P0 (动作 7): 敏感失败清 task.cliSessionId
-            // 避免该 agent 进程内存里"我交付成功"的错误信念污染后续任务
-            data: { status: 'failed', cliSessionId: null, trace: failTrace },
-          }),
-          ...(agentId ? [
-            // contract v1 §1.3 P0 (动作 7): 同步清 SessionMember.cliSessionId
-            // 该 agent 下次接新任务时强制起新 CLI session,不带本次失败的角色记忆
-            prisma.sessionMember.updateMany({
-              where: { sessionId, agentId },
-              data: { cliSessionId: null },
-            })
-          ] : [])
-        ])
+        await invalidateCliSession({
+          taskId,
+          sessionId,
+          agentId,
+          taskData: { status: 'failed', trace: failTrace },
+        })
         if (agentId) memberSessionMap.set(agentId, null)
         if (taskForTrace) taskForTrace.status = 'failed'
         await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
@@ -470,20 +461,14 @@ export async function handleExecution(
               })
               // contract v1 §1.3 P0 (动作 7): 纠偏退回 pending 时清 cliSessionId
               // task.result 即将被推翻重写,agent 历史里"我做对了"的认知是脏数据,起新 session 重来
-              // ⚠️-C2 修复:task + SessionMember 两表更新包事务,防中间崩溃半残
+              // (两表事务语义由统一入口 invalidateCliSession 承载,roadmap §2.4)
               const agentId = taskForTrace?.assignedAgentId
-              await prisma.$transaction([
-                prisma.task.update({
-                  where: { id: taskId },
-                  data: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace, cliSessionId: null },
-                }),
-                ...(agentId ? [
-                  prisma.sessionMember.updateMany({
-                    where: { sessionId, agentId },
-                    data: { cliSessionId: null },
-                  })
-                ] : [])
-              ])
+              await invalidateCliSession({
+                taskId,
+                sessionId,
+                agentId,
+                taskData: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace },
+              })
               if (agentId) memberSessionMap.set(agentId, null)
               if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
               sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
