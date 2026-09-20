@@ -33,7 +33,7 @@
 | **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | 无 `.github/`；1098 单测 + E2E 仅 13 个冒烟用例；`npx eslint .` 当前 **362 errors / 83 warnings** | 有测试无门禁 |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
 | **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 注入面（`process-registry.ts:358` shell 默认 true + 用户自填字段）；`list_files` 用 `startsWith`（`mcp-server/index.ts:59`） | 注入面未收敛 |
-| **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账未还 |
+| **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
 | **独有杠杆** | ACP 协议 + 17 转录解析器（一次投资，永久收益） | decisionTrace / process mining 已有最小消费面（2 个 API 端点 + 231 行 analytics 页），距"可消费"完成度远 | 资产完成度低 |
 | **可信交付** | 一键安装 + docs 站 + 10 语种 README | README 已含徽章/卖点/quickstart/架构图（815f2f0、59b07dd）——**缺实验数据**；交付形态仅 `npm run dev` | 差最后一段 |
 
@@ -56,12 +56,12 @@
 2. **`list_files` 换 `isPathSafe`**：`mcp-server/index.ts:59` 的 `startsWith` 与 `read_artifact`（`:40`，已用 isPathSafe）对齐。
 3. **让"只在本机运行"从意图变成事实**（不加锁决策的前提，§8#1）：`next dev` 默认监听整个局域网（启动时打印 `Network: http://192.168.x.x:3000`）——dev 脚本加 `-H 127.0.0.1` 只允许本机访问；访问统一用 `localhost:3000`（避免 Next 16 的 127.0.0.1 ≠ localhost 跨源坑）；README 加一句"上锁前不要暴露到公网"。
 
-### 2.3 卫生清零
+### 2.3 卫生清零（2026-09-20 部分完成）
 
-- 从 git 移除根目录 5 个遗留文件并补进 `.gitignore`。
-- **shadow-git 目录清理**：确认 `.agenthub/shadow-git/{sessionId}/` 随 session 删除清理（`sessions/[id]/route.ts:101`（DELETE handler）已有 `cleanupShadowGit` 调用），并覆盖孤儿目录清扫（现状仅按 sessionId 清理，无孤儿扫描）。
-- 修 `CLAUDE.md:106` 的过时端点数（16 → 31）。
-- 修 v2 决策文档的计数自相矛盾（标题"12 项" vs 实含 22 条）。
+- ✅ 从 git 移除根目录 5 个遗留文件并补进 `.gitignore`（`git rm --cached`，磁盘文件保留）。
+- ⏳ **shadow-git 目录清理**：确认 `.agenthub/shadow-git/{sessionId}/` 随 session 删除清理（`sessions/[id]/route.ts:101`（DELETE handler）已有 `cleanupShadowGit` 调用），并覆盖孤儿目录清扫（现状仅按 sessionId 清理，无孤儿扫描）。
+- ✅ 修 `CLAUDE.md:106` 的过时端点数（16 → 31）。
+- ✅ 修 v2 决策文档的计数自相矛盾（标题"12 项" vs 实含 22 条）。
 
 ### 2.4 `invalidateCliSession()` 统一入口
 

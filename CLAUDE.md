@@ -103,7 +103,7 @@ prisma/
 - **成员列表**：agent select 排除 systemPrompt
 - **shell:true 命令注入**：ClaudeCodeAdapter/OpenCodeAdapter 使用 `shell: true`，`permissionMode`/`sessionId`/`model` 等来自用户/数据库输入，必须验证后再传入 args
 - **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
-- **所有 API 无认证**：16 个端点无任何认证/授权检查，公开部署前必须添加
+- **所有 API 无认证**：31 个端点无任何认证/授权检查，公开部署前必须添加（2026-09-20 拍板：维持缓期，前提只在本机运行——技术保障见 docs/design/roadmap-to-excellence.md §2.2 第 3 项）
 - **中文乱码检测**：`POST /api/sessions` 检测 `hasLoneSurrogates(title)` 拒绝 GBK 误编 UTF-8 的请求，返回 400
 - **附件上传安全**：10MB 文件大小限制 + mimeType 白名单 + UUID 文件名防路径遍历 + 路径遍历防护（resolved path 必须在 uploads/ 内）
 
