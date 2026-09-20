@@ -239,12 +239,14 @@
 
 | ISSUE-024 多轮对齐 verify 缺口条件式修复 | 根因=verify 块二选一（无则建/有则跳过），第二轮新代码从未进入任何 verify 依赖。修法（已拍板条件式）：老 verify pending → 新任务去重并入依赖并重建描述，无新任务静默；终结/执行中 → 新建本轮 verify；创建逻辑抽 `createVerify` 复用，开关与分配逻辑不动。验证：改写 1 旧用例 + 新增 4 用例，全量 84/1098/3，变异精确红 2 例。详见 issues/ISSUE-024-multiround-verify-gap.md | 2026-09-13 |
 
+| 安全批次·对标 Codeg 工程质量（docs/design/roadmap-to-excellence.md，5 commit：374dbe4/700222f/cee6518/606b519/7241417） | **§2.3 卫生清零**（根目录 5 遗留文件移出跟踪 + 两处文档计数修正）＋**§2.2 注入面全收口**：① `list_files` 裸 startsWith 前缀同族绕过 → `isListDirSafe`（path-safety.ts）；② junction 泄漏收口（新增 `list-dir.ts`：`listDirTree` 手动递归不跟进符号链接；`listProjectFiles` 承载工具主体）+ `attachments/[id]` 同型缺口换 isPathSafe；③ spawn 参数注入 fail-closed（新增 `arg-safety.ts` `assertSpawnSafe`：拒绝 cmd 元字符+空白，注入实测复现后修复，128 字符扫描无绕过；含空格参数由静默截断转显式报错——仅 OpenCode 路径，Claude 路径 workDir 只作 cwd）；④ shadow-git execSync 模板串 → execFileSync 参数数组（注入机制 exec 层实测复现，Windows 端到端被 mkdirSync 闸住、POSIX 可达）；⑤ dev 绑定 127.0.0.1（拍板：不加锁，只在本机运行，README 加警告）。**审查流程**：每批 2 个独立审查 Agent（攻击者视角+声明一致性）；两次自我纠错——attachments UUID 校验误报被证伪、canary 判别力降级（mkdirSync 先闸，严重级从"Windows 实测 RCE"修正为"POSIX 可达"）。测试 1098→1137（+39 全部先红后绿） | 2026-09-20 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|
 | （无——P11 探针已收官落档（red，A 无第二 gateable 主导群）；P11b 未立项（绿未触发）；A 方向后继唯一正向出口=seqgate 转正（等启动条件可分析≥20 且命中≥5）） | — |
 
-### 📋 待办（2026-06-25 更新）
+### 📋 待办（2026-09-20 更新）
 
 | 优先级 | 任务 | 说明 | 状态 |
 |--------|------|------|------|
@@ -260,7 +262,8 @@
 | 🟢低 | 第四波质量清扫 | 7 个 ⚠️-P/C(P1 stdin 锁/P2 锁外退避/P3 cleanupIdle MAX 分支/P4 permissionWaiters 不清/C4 子包 package.json/C5 中文文件名 quotePath/C6 schema-validator 嵌套字段)— 同上 | ⏸️ |
 
 **2026-07-07 赛后优化方向**（比赛结束，目标转为"自己用 + 深入研究"，详见 memory project_agenthub_post_competition_direction）：
-- 第一梯队（高价值低成本）：monitoring 改结构化检查 + A/B 对比 / 清理历史残留(backend/ 等) / MCP list_files 校验对齐 read_artifact / cliSessionId 统一入口
+- 第一梯队（高价值低成本）：monitoring 改结构化检查 + A/B 对比 / ~~清理历史残留~~ ✅2026-09-20（含根目录 5 遗留文件） / ~~MCP list_files 校验对齐 read_artifact~~ ✅2026-09-20 / cliSessionId 统一入口（待办，roadmap §2.4）
+- **对标 Codeg 阶段一（2026-09-20 立项，docs/design/roadmap-to-excellence.md）**：安全批次 5 commit ✅ 注入面全收口（spawn / list_files / junction / attachments / shadow-git）；**剩余（下会话续）**：§2.1 CI + 架构守卫（"phase 只允许在 state-machine.ts 写"）、§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）、shadow-git 孤儿目录清扫、§2.3 收尾
 - 第二梯队（高价值中成本）：可信度显式化 + 前端展示 / Orchestrator 显式状态机 / redo 改 SSE
 - 第三梯队（研究向）：全链路 trace 可视化 / 设计复盘文档(❌/⚠️ 修复沉淀) / 受控实验
 - 核心原则：减复杂度优于加功能；可审计性应内生而非补丁（参考镜像项目 homerail，D:\my project\homerail，拆解见 wiki-ascii/raw/sources/projects/homerail/）
