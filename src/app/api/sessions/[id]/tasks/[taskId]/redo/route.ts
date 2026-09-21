@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { handleExecution } from '@/lib/services/execution'
 import { invalidateCliSession } from '@/lib/services/cli-session'
+import { createEventLogger } from '@/lib/services/event-log'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { stateFromSession, applyTransition, transitionPhase } from '@/lib/orchestrator/state-machine'
 
@@ -142,11 +143,15 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
     tools: a.tools || '',
   }))
 
-  // ❌-2: noop sendEvent,HTTP fire-and-forget 模式,前端轮询拿状态
-  const noopSendEvent = () => {}
+  // ❌-2 + §3.1: noopSendEvent 退役——HTTP fire-and-forget 模式不变（前端轮询
+  // task_status），但过程事件经 persist-only logger 落库（无 stream 不推流），
+  // redo 执行过程经 GET events 流可见、可重放
+  const eventLogger = await createEventLogger(sessionId)
 
   try {
-    await handleExecution('[redo]', sessionId, agentsForHandle, noopSendEvent)
+    await handleExecution('[redo]', sessionId, agentsForHandle, eventLogger.sendEvent)
+    // 流关闭前排空持久化队列
+    await eventLogger.flush()
     // handleExecution 内部已经把 task.status 改成 completed/failed,这里只查最终状态返回
     const finalTask = await prisma.task.findUnique({ where: { id: taskId } })
     return NextResponse.json({
@@ -155,6 +160,8 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
       message: `Task redo ${finalTask?.status}`,
     })
   } catch (err) {
+    // 失败路径同样排空（已产生的执行事件不丢）
+    await eventLogger.flush()
     const errorMsg = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({
       taskId,
