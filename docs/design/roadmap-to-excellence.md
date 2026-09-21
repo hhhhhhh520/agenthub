@@ -12,6 +12,7 @@
 | v3 | 2026-09-20 | 拍板落地：**SSE 重放 = 修彻底**（持久化四类事件）；**E2E = 自动化**（进 CI）；**认证 = 不加锁**（前提：只在本机运行，§8#1） |
 | v4 | 2026-09-20 | 提交前 pre-commit 审查整改：v2/v3 残留回扫（5 处"待拍板"字样 + 1 处与"修彻底"冲突的退路 + 头部版本号）；`route.ts:70` → `:101` 行号修正（真实清理点在 DELETE handler）；交叉引用记法统一 |
 | v5 | 2026-09-21 | §2.1/§2.3/§2.4 收口（每项 TDD + 守卫变异验证 + 2 独立审查 Agent）：§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）；§2.3 孤儿清扫（启动时 instrumentation 扫描，junction rootDir 收口；覆盖面诚实口径 + 2 项后续待办）；§2.1 CI（vitest+build+改动文件 lint 门禁+phase 架构守卫，tests/ no-explicit-any 放宽后基线 362→52 errors）；§1 判据表/附录 A 数字同步 |
+| v6 | 2026-09-21 | CI 首次实测（PR#1）两轮整改后全绿：① ubuntu 上 4 测试文件红（Windows 平台假设：opencode 虚拟路径/process-registry 信号语义/shadow-git 元字符目录名）→ test job 换 windows-latest（测试跑目标运行平台）；② runner 无 git identity → CI 配 git config；③ lint-gate 按口径拦下安全批次触碰文件（process-registry.ts）4 个存量 error → 清零（门禁收敛机制首次实际生效），基线 52→48 errors；push 触发分支 main→master 审查抓出（v5 内） |
 
 ---
 
@@ -31,7 +32,7 @@
 
 | 判据 | Codeg 的样子 | AgentHub 现状 | 差距性质 |
 |---|---|---|---|
-| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml`（vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫）；1154 单测（2026-09-21）+ E2E 仅 13 个冒烟用例（自动化待 §5）；`npx eslint .` 当前 **52 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
+| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml` 实测全绿（PR#1：lint-gate 40s + test 2m29s；vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫；test job 跑 windows-latest——测试套件是 Windows 平台假设，目标运行平台）；1154 单测（2026-09-21）+ E2E 仅 13 个冒烟用例（自动化待 §5）；`npx eslint .` 当前 **48 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
 | **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 与 shadow-git 注入面已守卫（2026-09-20，§2.2 第 1/4 项）；`list_files`/`attachments` 路径校验已收口（§2.2 第 2 项） | 注入面已收敛 |
 | **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
@@ -48,7 +49,7 @@
 
 - ✅ `vitest` + `build` 全量 + **lint 采用"改动文件门禁"**（`.github/workflows/ci.yml`，push=master / PR）：PR 用 base.sha、push 用 `event.before`（全零回退 HEAD~1），ACMR 过滤 .ts/.tsx，0 error 阻塞、warning 不阻塞。**tests/ 的 `no-explicit-any` 实测为 error 级且存量 ~310 个**，已按"可先放宽"落 eslint.config.mjs（`tests/**` off）；全仓基线 362→**52 errors / 83 warnings**（experiments/p5 集中 39，收敛节奏 §9#4）。CI 里 `prisma generate`（generated 目录不跟踪）+ `prisma db push`（**Prisma 7 已移除 `--skip-generate` flag**，审查隔离实测；触发分支为 master——origin 实际默认分支，审查抓出 main 失配）。
 - ✅ **架构守卫**（tests/architecture-phase-guard.test.ts，随 vitest 进 CI）：①非 state-machine.ts 的 `prisma.session.*` 写调用参数不得含 `phase:` 字面量（平衡括号提取，跳过字符串/注释配对）②`STATE_PHASE` 不得被外部引用。**每条均做过故意违规→精确红→还原**；盲区清单（$executeRaw/交互式事务/别名导入/方括号访问等 7 项 + 字符串字面量误报向量，18 例变异探测确认均无现役实例）固化进测试注释。
-- 验收：push/PR 上 CI 全绿（**待首次 push 实测**，CI 同条件全新空库全量实跑已由审查代验 1153/3）；lint 门禁本地等效验证（脏文件 exit 1 / 干净文件 exit 0）。
+- 验收：✅ push/PR 上 CI 全绿（PR#1 实测：首跑暴露 ubuntu 平台差异 → test job 换 windows-latest + runner git identity + 门禁拦下 process-registry.ts 存量 error 清零，第二轮全绿）；lint 门禁本地等效验证（脏文件 exit 1 / 干净文件 exit 0）。
 
 ### 2.2 安全修复（无条件项）
 
@@ -201,7 +202,7 @@
 | 无 CI | ~~无 `.github/`~~ → 2026-09-21 起有 `.github/workflows/ci.yml`（vitest + build + 改动文件 lint 门禁 + 架构守卫；push=master/PR） | ls |
 | API 路由 31 个、零认证 | `find src/app/api -name route.ts \| wc -l` = 31 | 命令（v1 写 32 有误） |
 | `cliSessionId: null` 6 处 2 文件 | ~~`redo/route.ts:82,96` + `execution.ts:326,333,478,483`~~ → 2026-09-21 已收口至统一入口 `cli-session.ts`（守卫锁定该字面量仅存于统一入口） | grep（审查报告写 7 处，复核为 6） |
-| eslint 现状 | `npx eslint .` → **135 problems (52 errors, 83 warnings)**（2026-09-21：tests/ no-explicit-any 放宽 + execution.ts 存量 any 清零后；v2 记录 362 errors 为放宽前口径） | 实跑 |
+| eslint 现状 | `npx eslint .` → **131 problems (48 errors, 83 warnings)**（2026-09-21：tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 存量 any 清零后；v2 记录 362 errors 为放宽前口径） | 实跑 |
 | SSE 无重连 | 全仓无 EventSource / Last-Event-ID；`use-chat.ts` fetch+getReader | grep |
 | 四类事件不落库 | `message.create` 只存成品消息；thinking/tool_use/tool_result 仅 chunkQueue emit | grep |
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |

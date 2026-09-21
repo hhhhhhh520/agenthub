@@ -130,7 +130,7 @@ E2E=1 npm run test:e2e
 
 测试现状（2026-09-21）：1154 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
 
-CI（GitHub Actions）：vitest 全量 + `next build` + 改动文件 lint 门禁（0 error，warning 不阻塞）+ 架构守卫（`phase` 字段只允许在 state-machine.ts 写入）；存量 lint 52 errors / 83 warnings 不阻塞，逐步收敛
+CI（GitHub Actions，PR#1 实测全绿）：vitest 全量 + `next build` + 改动文件 lint 门禁（0 error，warning 不阻塞）+ 架构守卫（`phase` 字段只允许在 state-machine.ts 写入）；测试跑 windows-latest（目标运行平台）；存量 lint 48 errors / 83 warnings 不阻塞，逐步收敛
 
 ## 🗺 路线
 
