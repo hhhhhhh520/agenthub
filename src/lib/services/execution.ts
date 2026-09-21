@@ -9,6 +9,7 @@ import { pickSensitive } from './sensitive-paths'
 import { invalidateCliSession } from './cli-session'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
+import { structuredMonitorVerdict, describeSignal, isStructuredMonitorOn } from './structured-monitor'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { transitionPhase, MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
 import type { SendEvent } from './review'
@@ -54,7 +55,7 @@ export function cleanupUndeclared(
 
 interface TraceEntry {
   ts: string
-  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction'
+  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction' | 'monitor'
   agent?: string
   message?: string
   attempt?: number
@@ -442,6 +443,9 @@ export async function handleExecution(
         continue
       }
       if (taskForTrace) taskForTrace.result = result
+      // 内存 trace 同步（对齐失败路径 :323 先例）——completed 写携带 successTrace 落库，
+      // 不同步会让后续 monitor 埋点/纠偏以过期内存 trace 为基串，覆盖丢失 success 事件（审查抓出）
+      if (taskForTrace) taskForTrace.trace = successTrace
       // 同步 sessionId 到内存 memberSessionMap,供后续任务 fallback(事务外纯内存)
       if (cliSessionId && successAgentId) {
         memberSessionMap.set(successAgentId, cliSessionId)
@@ -476,78 +480,117 @@ export async function handleExecution(
         sendEvent({ agentId: 'orchestrator', type: 'text', content: schemaCheck.message })
       }
 
-      try {
-        const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
-        const orch = await getOrchestratorAgent()
-        const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
-        const { result: reviewResult } = await Promise.race([
-          executeSingleAgent(
-          {
-            name: 'Orchestrator',
-            systemPrompt: '你是代码审查专家，负责检查 Agent 输出质量。返回 JSON 格式的审查结果。',
-            platform: orch.platform,
-            model: orch.model || undefined,
-            baseUrl: orch.baseUrl || undefined,
-            apiKey: orch.apiKey || undefined,
-            sessionId: orchSessionId,
-            workDir: projectRoot,
-            permissionMode: 'auto',
-          },
-          monitoringPrompt,
-          '',
-          () => {},
-          sessionId,
-          projectRoot
-        ),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new TimeoutError(MONITORING_TIMEOUT_MS, 'monitoring')), MONITORING_TIMEOUT_MS)
-          ),
-        ])
-        const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
-        const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-        if (jsonMatch) {
-          const review = JSON.parse(jsonMatch[0])
-          if (review.needsCorrection && review.correctionNote) {
-            const correctionMsg = `Orchestrator 纠偏：任务 "${task?.description}" ${review.correctionNote}`
-            await prisma.message.create({ data: { role: 'orchestrator', rawContent: correctionMsg, sessionId } })
-            sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg })
+      // §3.4: 结构化监控信号判定（S1 git-truth 完成性 + S2 outputSchema）——纯函数。
+      // 信号命中 → Task.trace 记 event:'monitor'（低频埋点，on/off 都记：
+      // on 臂给纠偏触发样本、未设臂给反事实样本，对比数据由此聚合，三梯队第 1 项）。
+      // 基底用 successTrace（B2 落库现值）——内存 taskForTrace.trace 在 completed 写后
+      // 未同步过 success 事件，用内存值做基串会把 DB trace 覆盖成缺 success 的版本（审查抓出）。
+      const structured = structuredMonitorVerdict({ declaredFiles, changedFiles, schemaCheck })
+      if (structured.signals.length > 0) {
+        const monitorTrace = appendTrace(successTrace, {
+          ts: new Date().toISOString(), event: 'monitor',
+          message: structured.signals.map(describeSignal).join('；'),
+        })
+        // §3.2 B2 纪律：trace 追加仅当 completed 写仍成立（他人已转移则弃权埋点）
+        const traced = await prisma.task.updateMany({ where: { id: taskId, status: 'completed' }, data: { trace: monitorTrace } })
+        if (traced.count === 0) {
+          console.warn(`[execution] 任务 ${taskId} monitor 埋点被条件写拦下（状态已被其他写者转移），弃权`)
+        } else if (taskForTrace) {
+          taskForTrace.trace = monitorTrace
+        }
+      }
 
-            const retryCount = task?.correctionCount ?? 0
-            // P2: max 2 → MAX_CORRECTION_RETRIES(3)，与 review.ts 委派路径合一（§5.4）
-            if (retryCount < MAX_CORRECTION_RETRIES) {
-              const correctionTrace = appendTrace(task?.trace || '[]', {
-                ts: new Date().toISOString(), event: 'correction', message: review.correctionNote, attempt: retryCount + 1,
-              })
-              // contract v1 §1.3 P0 (动作 7): 纠偏退回 pending 时清 cliSessionId
-              // task.result 即将被推翻重写,agent 历史里"我做对了"的认知是脏数据,起新 session 重来
-              // (两表事务语义由统一入口 invalidateCliSession 承载,roadmap §2.4)
-              // §3.2 B6: expectedFrom='completed' 前置——僵尸流的晚到纠偏写不得覆盖
-              // 新流已推进的状态（新流已把任务 redo 后推进时，条件写不匹配 → 弃权）
-              const agentId = taskForTrace?.assignedAgentId
-              const inv = await invalidateCliSession({
-                taskId,
-                sessionId,
-                agentId,
-                expectedFrom: 'completed',
-                taskData: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace },
-              })
-              if (!inv.applied) {
-                console.warn(`[execution] 任务 ${taskId} 纠偏退回被条件写拦下（状态已被其他写者转移），弃权`)
-                if (task) await syncTaskStatusFromDb(task)
-              } else {
-                if (agentId) memberSessionMap.set(agentId, null)
-                if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
-                sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
-                hasProgress = true
-              }
-            } else {
-              sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 "${task?.description}" 纠偏重试已达上限(${MAX_CORRECTION_RETRIES}次)，保持完成状态` })
+      // §3.4: 纠偏统一助手——结构化触发与 LLM 触发共用同一纠偏路径
+      // （消息可见 + correctionTrace + invalidateCliSession 统一入口 + hasProgress）
+      const applyCorrection = async (correctionNote: string): Promise<void> => {
+        const correctionMsg = `Orchestrator 纠偏：任务 "${task?.description}" ${correctionNote}`
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: correctionMsg, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: correctionMsg })
+
+        const retryCount = task?.correctionCount ?? 0
+        // P2: max 2 → MAX_CORRECTION_RETRIES(3)，与 review.ts 委派路径合一（§5.4）
+        if (retryCount < MAX_CORRECTION_RETRIES) {
+          const correctionTrace = appendTrace(task?.trace || '[]', {
+            ts: new Date().toISOString(), event: 'correction', message: correctionNote, attempt: retryCount + 1,
+          })
+          // contract v1 §1.3 P0 (动作 7): 纠偏退回 pending 时清 cliSessionId
+          // task.result 即将被推翻重写,agent 历史里"我做对了"的认知是脏数据,起新 session 重来
+          // (两表事务语义由统一入口 invalidateCliSession 承载,roadmap §2.4)
+          // §3.2 B6: expectedFrom='completed' 前置——僵尸流的晚到纠偏写不得覆盖
+          // 新流已推进的状态（新流已把任务 redo 后推进时，条件写不匹配 → 弃权）
+          const agentId = taskForTrace?.assignedAgentId
+          const inv = await invalidateCliSession({
+            taskId,
+            sessionId,
+            agentId,
+            expectedFrom: 'completed',
+            taskData: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace },
+          })
+          if (!inv.applied) {
+            console.warn(`[execution] 任务 ${taskId} 纠偏退回被条件写拦下（状态已被其他写者转移），弃权`)
+            if (task) await syncTaskStatusFromDb(task)
+          } else {
+            if (agentId) memberSessionMap.set(agentId, null)
+            if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
+            sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
+            hasProgress = true
+          }
+        } else {
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 "${task?.description}" 纠偏重试已达上限(${MAX_CORRECTION_RETRIES}次)，保持完成状态` })
+        }
+      }
+
+      // §3.4: EXPERIMENT_STRUCTURED_MONITOR=on → 结构化 correction 直接触发纠偏（LLM 降级第二道）；
+      // 结构化 pass 或门控未设（生产默认=现状）→ LLM 审查照跑
+      if (isStructuredMonitorOn() && structured.verdict === 'correction') {
+        // 遏制与 LLM 臂对称：纠偏途中 prisma 异常不穿透 handleExecution（否则 SSE 断流、
+        // 剩余任务处理全部放弃、任务滞留 in_progress 等 stuck reset）
+        try {
+          await applyCorrection(structured.signals.map(describeSignal).join('；'))
+        } catch (err) {
+          if (err instanceof TimeoutError) console.error('[TIMEOUT] structured monitoring', taskId)
+          /* structured monitoring correction failed, continue */
+        }
+      } else {
+        try {
+          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
+          const orch = await getOrchestratorAgent()
+          const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
+          const { result: reviewResult } = await Promise.race([
+            executeSingleAgent(
+            {
+              name: 'Orchestrator',
+              systemPrompt: '你是代码审查专家，负责检查 Agent 输出质量。返回 JSON 格式的审查结果。',
+              platform: orch.platform,
+              model: orch.model || undefined,
+              baseUrl: orch.baseUrl || undefined,
+              apiKey: orch.apiKey || undefined,
+              sessionId: orchSessionId,
+              workDir: projectRoot,
+              permissionMode: 'auto',
+            },
+            monitoringPrompt,
+            '',
+            () => {},
+            sessionId,
+            projectRoot
+          ),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new TimeoutError(MONITORING_TIMEOUT_MS, 'monitoring')), MONITORING_TIMEOUT_MS)
+            ),
+          ])
+          const cleaned = reviewResult.replace(/```json?\s*([\s\S]*?)```/, '$1').trim()
+          const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            const review = JSON.parse(jsonMatch[0])
+            if (review.needsCorrection && review.correctionNote) {
+              await applyCorrection(review.correctionNote)
             }
           }
+        } catch (err) {
+          if (err instanceof TimeoutError) console.error('[TIMEOUT] monitoring', taskId)
+          /* monitoring failed, continue */
         }
-      } catch (err) {
-        if (err instanceof TimeoutError) console.error('[TIMEOUT] monitoring', taskId)
-        /* monitoring failed, continue */
       }
     }
 

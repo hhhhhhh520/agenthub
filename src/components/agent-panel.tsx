@@ -253,6 +253,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                         {entry.event === 'error' && `✗ 失败: ${entry.message || '未知错误'}`}
                         {entry.event === 'correction' && `↻ 纠偏 #${entry.attempt}: ${entry.message || ''}`}
                         {entry.event === 'blocked' && `⏸ 阻塞: ${entry.message || ''}`}
+                        {entry.event === 'monitor' && `🔍 结构化监控: ${entry.message || ''}`}
                       </div>
                     ))}
                   </div>
