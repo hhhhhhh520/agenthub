@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    # 测试套件在 Windows 上开发（本机即 Windows）：opencode 虚拟路径 /
+    # process-registry 信号语义 / shadow-git 目录名含 shell 元字符等均依赖
+    # Windows 行为——ubuntu 首跑 4 文件红（2026-09-21 PR#1 实测），测试跑在
+    # 目标运行平台（项目定位：只在本机 Windows 运行）。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # shadow-git 集成测试会真实 git commit；runner 无全局 git identity，不配则
+      # "shadow init" commit 失败（本地能过是因为本机有全局配置）
+      - run: |
+          git config --global user.email "ci@agenthub.local"
+          git config --global user.name "agenthub-ci"
+
+      - run: npm ci
+
+      # src/generated/prisma 在 .gitignore（不跟踪），需先生成 client
+      - run: npx prisma generate
+
+      # 测试需要带表结构的库（CI 同条件实测：全量 vitest 对全新空库 1153/3 绿）
+      # 注意：Prisma 7 CLI 已移除 --skip-generate（实测 unknown option），裸 db push 即可
+      - run: npx prisma db push
+        env:
+          DATABASE_URL: file:./dev.db
+
+      - run: npx vitest run
+
+      - run: npx next build
+        env:
+          DATABASE_URL: file:./dev.db
+
+  lint-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 改动文件门禁需要 base diff
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 改动文件门禁（ISSUE-022 口径）：只对改动文件要求 0 error，
+      # warning 不阻塞（存量 83 个为 HEAD 早有）；全局 lint 存量 362 errors，
+      # 禁止全局 -D，逐步收敛（roadmap §2.1 / §9#4）。
+      - name: Determine changed files
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          # 新分支首推/强推时 before 为全零 SHA，退回上一提交
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            BASE=$(git rev-parse HEAD~1)
+          fi
+          git diff --name-only --diff-filter=ACMR "$BASE" "$GITHUB_SHA" \
+            | grep -E '\.(ts|tsx)$' > changed.txt || true
+          echo "files=$(paste -sd ' ' changed.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: ESLint gate (changed files, 0 error)
+        if: steps.diff.outputs.files != ''
+        run: npx eslint ${{ steps.diff.outputs.files }}

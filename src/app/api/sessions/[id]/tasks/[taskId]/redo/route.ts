@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { handleExecution } from '@/lib/services/execution'
+import { invalidateCliSession } from '@/lib/services/cli-session'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { stateFromSession, applyTransition, transitionPhase } from '@/lib/orchestrator/state-machine'
 
@@ -75,11 +76,11 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
     return NextResponse.json({ error: '会话状态校验失败，无法执行重做' }, { status: 500 })
   }
 
-  // 2. ❌-2 修复:重置 task 状态 + 清 cliSessionId(让 agent 起新 session,
-  //    不带本次失败的角色感污染),同时复用 description 修改
-  const updateData: { description?: string; status: string; cliSessionId: string | null; correctionCount: number } = {
+  // 2. ❌-2 修复:重置 task 状态(同时复用 description 修改);cliSessionId 失效走
+  //    统一入口(roadmap §2.4)——重做 = 推翻重来,让 agent 起新 session,
+  //    不带本次失败的角色感污染
+  const updateData: { description?: string; status: string; correctionCount: number } = {
     status: 'pending',
-    cliSessionId: null,  // contract v1 §1.3:重做 = 推翻重来,清 cliSessionId
     correctionCount: 0,  // 重新计算纠偏次数
   }
   if (newDescription && newDescription.trim()) {
@@ -87,16 +88,13 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
   }
 
   // 3. F3 修复:task + SessionMember 两表更新包事务,保持 ⚠️-C2 一致性
-  //    (原代码注释自称"用事务"但实际未用,review 抓出 — 这里补上真事务)
-  await prisma.$transaction([
-    prisma.task.update({ where: { id: taskId }, data: updateData }),
-    ...(task.assignedAgentId ? [
-      prisma.sessionMember.updateMany({
-        where: { sessionId, agentId: task.assignedAgentId },
-        data: { cliSessionId: null },
-      })
-    ] : [])
-  ])
+  //    (事务与两表同步语义由统一入口 invalidateCliSession 承载)
+  await invalidateCliSession({
+    taskId,
+    sessionId,
+    agentId: task.assignedAgentId,
+    taskData: updateData,
+  })
 
   // 4. Unblock downstream tasks that were blocked by this task's failure
   const allTasks = await prisma.task.findMany({ where: { sessionId } })

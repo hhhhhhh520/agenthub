@@ -101,9 +101,10 @@ prisma/
 - **iframe sandbox**：`allow-scripts`（设计决策#17），不含 `allow-same-origin`
 - **WebPreview XSS 防护**：DOMPurify 清理 HTML + CSS `url()` 过滤 + CSP meta tag（`default-src 'none'; img-src data:`）+ `</script` 转义，JS 靠 CSP+sandbox 防御（JS 本身无法 sanitize）
 - **成员列表**：agent select 排除 systemPrompt
-- **shell:true 命令注入**：ClaudeCodeAdapter/OpenCodeAdapter 使用 `shell: true`，`permissionMode`/`sessionId`/`model` 等来自用户/数据库输入，必须验证后再传入 args
+- **shell:true 命令注入**：适配器使用 `shell: true`（Windows CLI 是 npm .cmd shim，`shell:false` 无法启动）；spawn 前经 `arg-safety.ts` 的 `assertSpawnSafe` fail-closed 校验（拒绝 cmd 元字符与空白），**新增适配器参数不得引入这些字符**；shadow-git 走 `execFileSync` 参数数组，**禁止 execSync 模板串拼 shell**（含 `" 的 projectDir 曾构成注入）
+- **本地运行边界**：`npm run dev` 绑定 `127.0.0.1`（拍板不加锁，只在本机运行），访问用 `http://localhost:3000`——直连 `127.0.0.1:3000` 会触发 Next16 跨源拦截
 - **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
-- **所有 API 无认证**：16 个端点无任何认证/授权检查，公开部署前必须添加
+- **所有 API 无认证**：31 个端点无任何认证/授权检查，公开部署前必须添加（2026-09-20 拍板：维持缓期，前提只在本机运行——技术保障见 docs/design/roadmap-to-excellence.md §2.2 第 3 项）
 - **中文乱码检测**：`POST /api/sessions` 检测 `hasLoneSurrogates(title)` 拒绝 GBK 误编 UTF-8 的请求，返回 400
 - **附件上传安全**：10MB 文件大小限制 + mimeType 白名单 + UUID 文件名防路径遍历 + 路径遍历防护（resolved path 必须在 uploads/ 内）
 

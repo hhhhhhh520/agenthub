@@ -88,3 +88,10 @@ test-results/
 .opencode/
 .gstack/
 code-review-report.html
+
+# 根目录遗留文件（2026-09-20 移出 git 跟踪）
+/hello.py
+/index.html
+/script.js
+/styles.css
+/test_api.py
