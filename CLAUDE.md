@@ -293,7 +293,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **`EXPERIMENT_STATE_MACHINE=off`** env 是 P5 受控实验(A方向)的状态机开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时决策点跳过 canonicalCorrect/守卫/escalate 且表外 action 保持当前态,只关 enforcement 不关 trace 记录。
 - **`EXPERIMENT_VERIFY=off`** env 是 P6 受控实验(2×2 矩阵 verify 维度)的开关,只在 `experiments/p5/` harness 里用。**生产默认必须保持未设**(行为与现状一致)。设 off 时只跳过 alignment.ts verify 自动创建块,不关状态机强制/done 守卫(chat-router 在 OFF 下已跳过、ON+no-verify 无 verify 可查,天然正交)。
 - **`EXPERIMENT_SEQGATE=on`** env 是 P9-乙 第三臂(on-seqgate)的开关,只在 harness 用,**生产默认未设**。语义=严格相等 `=== 'on'`(禁真值判断,'1'/'true' 不激活);设 on 时启用 idle 过早 done 闸门(state=idle∧action=done∧零任务→redirect align_decompose),env 经 `envForConfig('on-seqgate+verify')`→run-one 透传。跑实验必须经 `setupExperiment()`(入口 `scrubInheritedProviderEnv()` 清洗继承的 ANTHROPIC_*/CLAUDE_* env,ISSUE-013)。
-- **`EXPERIMENT_STRUCTURED_MONITOR=on`** env 是 §3.4 monitoring 结构化的开关（`src/lib/services/structured-monitor.ts` 的 `isStructuredMonitorOn`，同款严格相等语义）,**生产默认未设**（LLM 审查路径照旧）。设 on 时结构化信号（S1 git-truth 完成性/S2 outputSchema）correction 直接触发纠偏且 LLM 不跑（降级第二道），verdict=pass 仍跑 LLM（漏检率数据）；未设时信号命中仅记 Task.trace event:'monitor'（反事实对比数据）。A/B 实验待跑（三梯队第 1 项）；转正或 3 个月硬时限后移出（roadmap §6）。
+- **`EXPERIMENT_STRUCTURED_MONITOR=on`** env 是 §3.4 monitoring 结构化的开关（`src/lib/services/structured-monitor.ts` 的 `isStructuredMonitorOn`，同款严格相等语义）,**生产默认未设**（LLM 审查路径照旧）。设 on 时结构化信号（S1 git-truth 完成性/S2 outputSchema）correction 直接触发纠偏且 LLM 不跑（降级第二道），verdict=pass 仍跑 LLM（漏检率数据）；未设时信号命中仅记 Task.trace event:'monitor'（反事实对比数据）。A/B harness 已落档（experiments/p5 的 MONITOR_AB 门控跑批，commit 471af12；批跑需 GLM_API_KEY，报告效度口径见 generateMonitorReport）；转正或 3 个月硬时限后移出（roadmap §6）。
 - **新增实验测试文件必须同步扩 `experiments/p5/vitest.config.ts` 的 include** — p5 本地 config 按**文件名模式**收集(现为 `run.test.ts`/`setup.test.ts`/`analyze-cross-batch.test.ts`/`analyze-port-replay.test.ts` 四文件),vitest v4 CLI 无 include 覆盖参数,裸跑 `npx vitest run <新文件>` 报 "No test files found"(P9 丙实测)。从仓库根跑任何 p5 测试须加 `--config experiments/p5/vitest.config.ts`(根配置 include 只有 `tests/**`,直接跑 p5 文件报 no files,P9 乙实测)。先例:analyze-cross-batch.test.ts(ac5d76c)
 - **长批(>60s)偶发 vitest Temp/ssr ENOENT flake** — P8 起多次单例假红(复跑即绿);2026-09-02 T7 attempt1 升级形态:批中段 Temp 被系统清除→后续 8 run 瞬间炸(1-9ms)未执行。处置:单例失败复跑一次;**中段连炸=归档残批整批重发,勿用残批出裁决**(缺格恰可能是裁决主战场格);反复出现升 ISSUE
 - 实验相关:`experiments/p5/`(独立 vitest config + 独立 DB,产物 gitignored);设计见下方「设计文档」P5/P6 链接;实验代码不动 src/ 生产路径(state-machine/chat-router 的 `isExperimentOff()` 读 env,默认 false)
@@ -319,7 +319,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
-- **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v9):阶段一/阶段二收口记录、拍板记录、CI 门禁口径
+- **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v10):阶段一/阶段二收口记录、拍板记录、CI 门禁口径、P11 monitor A/B harness
 - **写入点清单**:`docs/design/phase2-3.2-write-points.md` — §3.2 全部状态写点的条件写语义、竞态窗口分析、"不纳入"清单（新增写点前必读）
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
