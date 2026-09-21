@@ -1,14 +1,15 @@
-import { CONFIG } from './config'
+import { CONFIG, isMonitorConfig } from './config'
 import { TASKS, type P5Task } from './tasks'
 import { appendFileSync, readFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import type { MonitorTaskId } from './tasks-monitor'
 
 export type FailKind = 'skipped-spec-edge' | 'done-but-conformance' | 'defect'
 
 export interface RunMetrics {
   runId: string
   config: (typeof CONFIG.configs)[number] // P6 T8: 4 配置 2×2 矩阵字符串（on+verify 等）
-  taskId: 'A' | 'B' | 'C'
+  taskId: 'A' | 'B' | 'C' | MonitorTaskId
   seed: number
   pass: boolean
   failureMode: 'pass' | 'escalate-exhausted' | 'stuck' | 'error' | 'no-pass'
@@ -21,10 +22,60 @@ export interface RunMetrics {
   latencyMs: number
   tracePath: string
   gateInterventionCount?: number // P9-乙：seqgate 触发数（optional 保 JSONL 兼容；仅 on-seqgate 前缀写入——区分「没开」和「开了没触发」）
+  // P11 monitor A/B（optional 保 JSONL 兼容；仅 monitor 两臂写入）——Task.trace 按 success 分段的 completion-cycle 聚合
+  monitorCycles?: number
+  monitorStructuredHits?: number // 结构化信号命中 cycle 数（= S1/S2 命中次数）
+  monitorLlmCorrections?: number // LLM 触发纠偏 cycle 数（on 臂 = 结构化 pass 后 LLM 第二道纠偏，即结构化漏检面）
+  monitorOverlap?: number        // 结构化命中 ∩ LLM 纠偏（两判据同判坏的 cycle 数）
+  monitorLlmOnly?: number        // LLM 纠偏但结构化 pass（结构化漏检）
+  monitorStructuredOnly?: number // 结构化命中但 LLM 未纠偏（误报候选；on 臂 = 结构化独立触发的纠偏）
+  monitorConverged?: boolean     // 末 cycle 无任何触发（on 臂含结构化不触发）
+}
+
+// ── P11 monitor A/B：completion-cycle 配对解析 ──────────────────────────────
+// Task.trace 以 success 事件分段；每段一个"完成-审查"周期：
+//   structuredHit = 段内存在 monitor 事件（§3.4 埋点，两臂同记）
+//   llmCorrected  = unset 臂：段内 correction 事件（纠偏恒由 LLM 驱动）
+//                   on 臂：段内 correction 且此前无 monitor 事件（结构化触发时 LLM 被短路，
+//                   correction 归结构化——生产时序 monitor 埋点恒先于纠偏写，execution.ts:495→:513）
+export type MonitorArm = 'on' | 'unset'
+
+export interface MonitorCycle { structuredHit: boolean; llmCorrected: boolean }
+
+export function parseMonitorCycles(entries: Array<{ event?: string }>, arm: MonitorArm): MonitorCycle[] {
+  const cycles: MonitorCycle[] = []
+  let cur: MonitorCycle | null = null
+  for (const e of entries) {
+    if (e.event === 'success') {
+      if (cur) cycles.push(cur)
+      cur = { structuredHit: false, llmCorrected: false }
+      continue
+    }
+    if (!cur) continue // 前导非 success 事件忽略
+    if (e.event === 'monitor') cur.structuredHit = true
+    if (e.event === 'correction' && !(arm === 'on' && cur.structuredHit)) cur.llmCorrected = true
+  }
+  if (cur) cycles.push(cur)
+  return cycles
+}
+
+/** 四象限聚合：overlap=双判据同判坏；llmOnly=结构化漏检；structuredOnly=结构化独有命中（误报候选 / on 臂独立纠偏） */
+export function aggregateMonitorConfusion(cycles: MonitorCycle[]): {
+  total: number; structuredHits: number; llmCorrections: number; overlap: number; llmOnly: number; structuredOnly: number
+} {
+  const sum = { total: cycles.length, structuredHits: 0, llmCorrections: 0, overlap: 0, llmOnly: 0, structuredOnly: 0 }
+  for (const c of cycles) {
+    if (c.structuredHit) sum.structuredHits++
+    if (c.llmCorrected) sum.llmCorrections++
+    if (c.structuredHit && c.llmCorrected) sum.overlap++
+    if (!c.structuredHit && c.llmCorrected) sum.llmOnly++
+    if (c.structuredHit && !c.llmCorrected) sum.structuredOnly++
+  }
+  return sum
 }
 
 /** oracle（Spec §4.1）：② 规范序列边存在性匹配 */
-function hasRequiredEdges(entries: any[], task: P5Task): boolean {
+function hasRequiredEdges(entries: any[], task: Pick<P5Task, 'requiredEdges'>): boolean {
   const applied = entries.filter(e => e.actualTransition?.applied === true)
   return task.requiredEdges.every(edge =>
     applied.some(a =>
@@ -92,13 +143,15 @@ export function classifyFailKind(
 }
 
 export async function collectMetrics(
-  runId: string, sessionId: string, config: (typeof CONFIG.configs)[number], taskId: 'A'|'B'|'C', seed: number,
+  runId: string, sessionId: string, config: (typeof CONFIG.configs)[number], taskId: 'A' | 'B' | 'C' | MonitorTaskId, seed: number,
   rounds: number, escalateCount: number, latencyMs: number,
   error?: boolean
 ): Promise<RunMetrics> {
   const { prisma } = await import('@/lib/db')
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
-  const task = TASKS.find(t => t.id === taskId)!
+  // P11: D-G 罐头在 MONITOR_TASKS（requiredEdges 与 legacy 同构，oracle 复用）
+  const { MONITOR_TASKS } = await import('./tasks-monitor')
+  const task = TASKS.find(t => t.id === taskId) ?? MONITOR_TASKS.find(t => t.id === taskId)!
   let entries: any[] = []
   try { entries = JSON.parse(session?.decisionTrace ?? '[]') } catch { entries = [] }
   const applied = entries.filter(e => e.actualTransition?.applied === true)
@@ -141,6 +194,39 @@ export async function collectMetrics(
     tracePath: `${CONFIG.resultsDir}/trace-${runId}.json`,
     // 仅 on-seqgate 前缀配置写入该字段（其余臂字段缺省——区分「没开」和「开了没触发」）
     ...(config.startsWith('on-seqgate') ? { gateInterventionCount } : {}),
+    // 仅 monitor 两臂附加 monitor 字段（legacy 行字段缺省，JSONL 兼容旧消费方）
+    ...(isMonitorConfig(config) ? await collectMonitorFields(sessionId, config) : {}),
+  }
+}
+
+/** P11: monitor 臂指标采集——逐任务 Task.trace → cycles（verify- 前缀任务排除：
+ *  verify 是 ISSUE-008 自动追加的验证任务，其监控行为与被测罐头无关，混入会稀释四象限口径） */
+async function collectMonitorFields(sessionId: string, config: string): Promise<Pick<RunMetrics,
+  'monitorCycles' | 'monitorStructuredHits' | 'monitorLlmCorrections' | 'monitorOverlap' | 'monitorLlmOnly' | 'monitorStructuredOnly' | 'monitorConverged'
+>> {
+  const { prisma } = await import('@/lib/db')
+  const tasks = await prisma.task.findMany({ where: { sessionId }, select: { id: true, trace: true } })
+  const arm: MonitorArm = config === 'on-monitor' ? 'on' : 'unset'
+  const cycles = tasks
+    .filter(t => !t.id.startsWith('verify-'))
+    .flatMap(t => {
+      try { return parseMonitorCycles(JSON.parse(t.trace || '[]'), arm) } catch {
+        // 坏 trace 静默归零会让混淆矩阵向"无触发"偏而无人知晓（审查 ⚠️3）——至少 warn 可见
+        console.warn(`[monitor-metrics] 任务 ${t.id}（session ${sessionId}）trace 解析失败，该任务贡献 0 cycle`)
+        return [] as MonitorCycle[]
+      }
+    })
+  const agg = aggregateMonitorConfusion(cycles)
+  const last = cycles.at(-1)
+  const converged = !!last && !last.llmCorrected && !(arm === 'on' && last.structuredHit)
+  return {
+    monitorCycles: agg.total,
+    monitorStructuredHits: agg.structuredHits,
+    monitorLlmCorrections: agg.llmCorrections,
+    monitorOverlap: agg.overlap,
+    monitorLlmOnly: agg.llmOnly,
+    monitorStructuredOnly: agg.structuredOnly,
+    monitorConverged: converged,
   }
 }
 

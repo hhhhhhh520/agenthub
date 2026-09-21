@@ -1,7 +1,94 @@
 import { createHash } from 'node:crypto'
 import type { RunMetrics } from './metrics'
 import { bootstrapCI, pairedMcNemar } from './stats'
-import { CONFIG } from './config'
+import { CONFIG, isMonitorConfig } from './config'
+
+/** ── P11 monitor A/B 报告（三梯队第 1 项收尾）────────────────────────────
+ *  两臂：on-monitor（结构化纠偏先行）vs on-llmmon（LLM 审 + 反事实埋点）。
+ *  判据配对来自 Task.trace completion-cycle（success 分段，metrics.ts parseMonitorCycles）。
+ *  效度口径段为安全审查拍板的固定文本——读报告者必读，勿删。 */
+export function generateMonitorReport(metrics: RunMetrics[]): string {
+  const lines: string[] = []
+  lines.push('# P11 Monitor A/B Report', '')
+  lines.push(`> model: ${CONFIG.model} | baseUrl: ${process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go'} | runsPerCell: ${CONFIG.runsPerCell}`)
+  lines.push('> 两臂: on-monitor（EXPERIMENT_STRUCTURED_MONITOR=on，结构化纠偏先行/LLM 降级第二道）vs on-llmmon（未设=生产默认 LLM 审，结构化信号记 monitor 事件=反事实）')
+  lines.push('> 逐 run 臂值由 metrics 行 config 列驱动；判据配对来自 Task.trace completion-cycle（success 分段），verify- 前缀任务已排除', '')
+
+  const monitor = metrics.filter(m => isMonitorConfig(m.config))
+
+  // —— 纠偏触发率（run 级）：on 臂实际触发 = structuredHits 或 llmCorrections 任一 > 0（两判据互斥）；
+  //    unset 臂实际触发 = llmCorrections > 0（structuredHits 是反事实，不算实际纠偏）——
+  const triggered = (m: RunMetrics): boolean =>
+    m.config === 'on-monitor'
+      ? (m.monitorStructuredHits ?? 0) + (m.monitorLlmCorrections ?? 0) > 0
+      : (m.monitorLlmCorrections ?? 0) > 0
+  lines.push('## 纠偏触发率（run 级，任一 cycle 实际触发即计）')
+  lines.push('| config | task | runs | 触发 | 触发率 | bootstrap CI |')
+  lines.push('|---|---|---|---|---|---|')
+  for (const config of ['on-monitor', 'on-llmmon'] as const) {
+    for (const taskId of ['D', 'E', 'F', 'G'] as const) {
+      const cell = monitor.filter(m => m.config === config && m.taskId === taskId)
+      if (cell.length === 0) continue
+      const passes = cell.map(triggered)
+      const ci = bootstrapCI(passes)
+      lines.push(`| ${config} | ${taskId} | ${cell.length} | ${passes.filter(Boolean).length} | ${(passes.filter(Boolean).length / cell.length).toFixed(2)} | ${ci.low.toFixed(2)}-${ci.high.toFixed(2)} |`)
+    }
+  }
+
+  // —— 混淆矩阵（cycle 级聚合）：unset 臂反事实配对完整（结构化命中可观测），
+  //    on 臂结构化命中即纠偏、LLM 对该 cycle 不可观测（结构性缺口，报告如实呈现）——
+  lines.push('', '## 混淆矩阵（cycle 级聚合）')
+  const aggArm = (config: 'on-monitor' | 'on-llmmon') => {
+    const cell = monitor.filter(m => m.config === config)
+    const sum = (k: 'monitorCycles' | 'monitorStructuredHits' | 'monitorLlmCorrections' | 'monitorOverlap' | 'monitorLlmOnly' | 'monitorStructuredOnly') =>
+      cell.reduce((n, m) => n + (m[k] ?? 0), 0)
+    return {
+      cycles: sum('monitorCycles'), hits: sum('monitorStructuredHits'), corr: sum('monitorLlmCorrections'),
+      overlap: sum('monitorOverlap'), llmOnly: sum('monitorLlmOnly'), structuredOnly: sum('monitorStructuredOnly'),
+      runs: cell.length,
+    }
+  }
+  const tn = (a: ReturnType<typeof aggArm>): number => Math.max(0, a.cycles - a.hits - a.corr + a.overlap)
+  for (const config of ['on-llmmon', 'on-monitor'] as const) {
+    const a = aggArm(config)
+    const kind = config === 'on-llmmon' ? '反事实配对完整面（结构化命中可观测）' : 'LLM 第二道面（结构化命中即纠偏，该 cycle LLM 不可观测）'
+    lines.push(`- ${config}（${kind}）: cycles=${a.cycles}`)
+    lines.push(`  - 双判据同判坏(overlap)=${a.overlap} | 结构化漏检(LLM纠偏而结构化pass)=${a.llmOnly} | 结构化独有命中(误报候选)=${a.structuredOnly} | 双 pass(TN)=${tn(a)}`)
+  }
+
+  // —— 跨臂配对 McNemar（同 task 同 seed：实际纠偏触发 on-monitor vs on-llmmon）——
+  lines.push('', '## 跨臂配对 McNemar（同 task 同 seed，实际纠偏触发）')
+  for (const taskId of ['D', 'E', 'F', 'G'] as const) {
+    const on = monitor.filter(m => m.config === 'on-monitor' && m.taskId === taskId).sort((x, y) => x.seed - y.seed)
+    const off = monitor.filter(m => m.config === 'on-llmmon' && m.taskId === taskId).sort((x, y) => x.seed - y.seed)
+    const pairable = Math.min(on.length, off.length)
+    if (pairable === 0) continue
+    const onArr = on.slice(0, pairable).map(triggered)
+    const offArr = off.slice(0, pairable).map(triggered)
+    const m = pairedMcNemar(offArr, onArr)
+    lines.push(`- ${taskId}: on-monitor ${onArr.filter(Boolean).length}/${pairable} vs on-llmmon ${offArr.filter(Boolean).length}/${pairable} | b=${m.b} c=${m.c} p_exact=${m.pExact.toFixed(3)}`)
+  }
+  lines.push('> n 小功效有限，p_exact 只当方向性参考（P10 口径：小样本禁用渐近式下结论）')
+
+  // —— 收敛性 ——
+  lines.push('', '## 纠偏收敛（末 cycle 无任何触发）')
+  for (const config of ['on-monitor', 'on-llmmon'] as const) {
+    const cell = monitor.filter(m => m.config === config && m.monitorConverged !== undefined)
+    const conv = cell.filter(m => m.monitorConverged).length
+    lines.push(`- ${config}: ${conv}/${cell.length}`)
+  }
+
+  // —— 效度口径（安全审查拍板固定文本，2026-09-21）——
+  lines.push('', '## 效度口径（必读）')
+  lines.push('- LLM 审返回 JSON 解析失败与"判无需纠偏"不可区分 → llmCorrected 系统性偏低方向的混淆变量')
+  lines.push('- cleanupUndeclared 先于监控审查清空 undeclared（越界文件已清理，审查看到清理后世界；E ghost 罐头下两臂观察世界不同）')
+  lines.push('- audit.declared 已修复为真实交集（commit 9c0ae4a，2026-09-21）；此前批次数据带"谎报声明交集"偏置，跨批比较需按批次切分')
+  lines.push('- on 臂结构化命中即纠偏，LLM 对该 cycle 的判断不可观测（结构性；unset 臂补全反事实面）')
+  lines.push('- 纠偏重试撞 MAX_CORRECTION_RETRIES 上限时 correction 事件不落 trace（生产既有语义）→ cycle 级 structuredOnly 含"命中但被重试上限拦截"的尝试；run 级首触发不受影响')
+  lines.push('- 监控审查超时不终止底层 CLI（生产 Promise.race 既有语义）；批 LLM 调用量约 350-500 次（决策+审查+preflight）')
+  lines.push('- 实验开关转正硬时限：可分析会话 ≥20 且结论落档，3 个月（roadmap §6，自 2026-09-21 起算）')
+  return lines.join('\n')
+}
 
 /** 同 (config, task) 格的 pass 数组，按 seed 升序（A5 消除插入序漂移；McNemar 同 seed 配对依赖排序——配对序必须是 seed 序而非插入序） */
 const bySeed = (metrics: RunMetrics[], config: string, taskId: string): boolean[] =>

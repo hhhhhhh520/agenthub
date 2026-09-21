@@ -1,20 +1,26 @@
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { CONFIG, envForConfig } from './config'
+import { CONFIG } from './config'
 import { TASKS } from './tasks'
 import { simulateUserReply } from './user-simulator'
 import { collectMetrics, appendMetrics, type RunMetrics } from './metrics'
 import type { AgentConfig } from '../../src/lib/adapter/types'
+import type { MonitorTaskId } from './tasks-monitor'
 
-export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: 'A'|'B'|'C'; seed: number }
+export type HarnessTaskId = 'A' | 'B' | 'C' | MonitorTaskId
+
+export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: HarnessTaskId; seed: number }
 
 /** P9-乙 T4: 本进程内 runOne 创建的精确 work 目录（run.test.ts afterAll 逐个 rmSync 清理；
  *  路径来自 mkdtempSync 返回值本身，无通配、删除前无需再断言前缀——审查 H 放行的首选方案） */
 export const createdWorkDirs: string[] = []
 
-/** P9-乙 T3: 三变量（F4 必办②——seqgate 臂需 EXPERIMENT_SEQGATE 隔离） */
-export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined; EXPERIMENT_SEQGATE: string | undefined }
+/** P9-乙 T3: 三变量（F4 必办②——seqgate 臂需 EXPERIMENT_SEQGATE 隔离）
+ *  P11 monitor A/B（🔴 防两臂同质化）: 第四键 EXPERIMENT_STRUCTURED_MONITOR 进快照——
+ *  缺席则 on-monitor run 的 'on' 残留进进程，后续 llmmon run 在 isStructuredMonitorOn()=true
+ *  下静默跑成同质臂（第五种静默退化，安全审查 🔴1） */
+export interface RunEnvSnapshot { EXPERIMENT_STATE_MACHINE: string | undefined; EXPERIMENT_VERIFY: string | undefined; EXPERIMENT_SEQGATE: string | undefined; EXPERIMENT_STRUCTURED_MONITOR: string | undefined }
 
 /** P6 T9: 保存 runOne 改写的实验开关 env 原值（finally 恢复用；undefined=未设=默认 on） */
 export function saveRunEnv(): RunEnvSnapshot {
@@ -22,6 +28,7 @@ export function saveRunEnv(): RunEnvSnapshot {
     EXPERIMENT_STATE_MACHINE: process.env.EXPERIMENT_STATE_MACHINE,
     EXPERIMENT_VERIFY: process.env.EXPERIMENT_VERIFY,
     EXPERIMENT_SEQGATE: process.env.EXPERIMENT_SEQGATE,
+    EXPERIMENT_STRUCTURED_MONITOR: process.env.EXPERIMENT_STRUCTURED_MONITOR,
   }
 }
 
@@ -33,20 +40,27 @@ export function restoreRunEnv(prev: RunEnvSnapshot): void {
   else process.env.EXPERIMENT_VERIFY = prev.EXPERIMENT_VERIFY
   if (prev.EXPERIMENT_SEQGATE === undefined) delete process.env.EXPERIMENT_SEQGATE
   else process.env.EXPERIMENT_SEQGATE = prev.EXPERIMENT_SEQGATE
+  if (prev.EXPERIMENT_STRUCTURED_MONITOR === undefined) delete process.env.EXPERIMENT_STRUCTURED_MONITOR
+  else process.env.EXPERIMENT_STRUCTURED_MONITOR = prev.EXPERIMENT_STRUCTURED_MONITOR
 }
 
 /**
- * P9-乙 T3（审查 D 强建议采纳）：三键透传抽成纯函数，替代 runOne 内联硬编码透传。
+ * P9-乙 T3（审查 D 强建议采纳）：透传抽成纯函数，替代 runOne 内联硬编码透传。
  * 封堵第四种静默退化路径：envForConfig 正确产出但 runOne 忘写某键的透传行 → 单测全绿、真实 run 静默跑成别的臂。
- * 三键各按 set/delete 处理：undefined → delete（未设=默认 on），否则原样写入（生产开关只认严格值 'off'/'on'）。
+ * 各键按 set/delete 处理：undefined → delete（未设=默认 on），否则原样写入（生产开关只认严格值 'off'/'on'）。
+ * P11: 第四键 optional（既有三键调用点兼容），语义与三键一致。
  */
-export function applyRunEnv(env: ReturnType<typeof envForConfig>): void {
+export interface RunEnvOverride { EXPERIMENT_STATE_MACHINE?: string | undefined; EXPERIMENT_VERIFY?: string | undefined; EXPERIMENT_SEQGATE?: string | undefined; EXPERIMENT_STRUCTURED_MONITOR?: string | undefined }
+
+export function applyRunEnv(env: RunEnvOverride): void {
   if (env.EXPERIMENT_STATE_MACHINE === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
   else process.env.EXPERIMENT_STATE_MACHINE = env.EXPERIMENT_STATE_MACHINE
   if (env.EXPERIMENT_VERIFY === undefined) delete process.env.EXPERIMENT_VERIFY
   else process.env.EXPERIMENT_VERIFY = env.EXPERIMENT_VERIFY
   if (env.EXPERIMENT_SEQGATE === undefined) delete process.env.EXPERIMENT_SEQGATE
   else process.env.EXPERIMENT_SEQGATE = env.EXPERIMENT_SEQGATE
+  if (env.EXPERIMENT_STRUCTURED_MONITOR === undefined) delete process.env.EXPERIMENT_STRUCTURED_MONITOR
+  else process.env.EXPERIMENT_STRUCTURED_MONITOR = env.EXPERIMENT_STRUCTURED_MONITOR
 }
 
 /**
@@ -54,7 +68,9 @@ export function applyRunEnv(env: ReturnType<typeof envForConfig>): void {
  * review I1：主体包 try/catch，异常落 failureMode:'error' 行再返回——防止格子 N 从 5 变 4 破坏同 seed 配对 McNemar。
  */
 export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMetrics> {
-  const task = TASKS.find(t => t.id === taskId)!
+  // P11 monitor A/B：D-G 罐头在 MONITOR_TASKS（🔴2 独立常量防撑爆 legacy 矩阵）
+  const { MONITOR_TASKS } = await import('./tasks-monitor')
+  const task = TASKS.find(t => t.id === taskId) ?? MONITOR_TASKS.find((t: { id: string }) => t.id === taskId)!
   const runId = `${config}-${taskId}-s${seed}-${randomUUID().slice(0, 8)}`
   const { prisma } = await import('@/lib/db')
   const { handleOrchestratorDecision } = await import('@/lib/services/chat-router')

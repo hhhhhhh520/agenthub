@@ -1,13 +1,14 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
 import { writeFileSync, rmSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CONFIG, isP9ArmsOnly, parseGateCell } from './config'
+import { CONFIG, isP9ArmsOnly, parseGateCell, isMonitorAbOnly, isMonitorConfig } from './config'
+import { MONITOR_TASKS, type MonitorTaskId } from './tasks-monitor'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
 import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
 import { bootstrapCI, mcnemarExact, pairedMcNemar, seedNoise } from './stats'
-import { generateReport } from './report'
+import { generateReport, generateMonitorReport } from './report'
 
 // —— vi.mock 注入（Spec §5.2，必须在 src 模块首次 import 前）——
 // 决策保留真实 LLM：getOrchestratorDecision 内部直调原 executeSingleAgent（模块内部绑定，mock 拦不到）→ 真实。
@@ -37,7 +38,9 @@ const mocks = vi.hoisted(() => {
   const DELEGATE_NEUTRAL_JSON = JSON.stringify({
     tasks: [{ id: 1, description: '拆解得出的子任务', assignedAgent: '后端工程师', dependencies: [], declared_files: [] }],
   })
-  const state = { currentTaskId: 'A' as 'A' | 'B' | 'C' }
+  // P11 monitor A/B: monitorReal = 两臂监控审查透传真实 LLM 的显式臂标记（Q2-1：判别键绝不读 env——
+  // llmmon 臂的 env 定义就是 STRUCTURED_MONITOR 未设，读 env 会让该臂静默走罐头 needsCorrection:false → 整臂作废）
+  const state = { currentTaskId: 'A' as 'A' | 'B' | 'C' | MonitorTaskId, monitorReal: false }
   const mockExecuteTaskBatch = vi.fn(async (tasks: any[]) => {
     const results = new Map<string, { result: string; sessionId?: string }>()
     for (const t of tasks) results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
@@ -48,9 +51,34 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@/lib/orchestrator', async (importOriginal) => {
   const mod = await importOriginal() as any
+  // P11 monitor A/B：罐头剧本（写真实文件进 projectDir 让影子 git 检出 + 剧本 result）。
+  // 批门控（审查 🔴1 修正）：legacy 罐头 A/B 的 declaredFiles 与 monitor D/E 相同
+  // （src/utils/math.ts、src/api/login.ts），仅按 declaredFiles 反查会劫持 legacy 批——
+  // 门控键必须是 mocks.state.currentTaskId ∈ {D,E,F,G}（Q2-1 同哲学：显式 state，不读任务内容/env）。
+  const tm = await import('./tasks-monitor')
+  const MONITOR_IDS: readonly string[] = ['D', 'E', 'F', 'G']
+  const profiledExecuteTaskBatch = vi.fn(async (tasks: Array<{ id: string; declaredFiles?: string[] }>, agents: unknown, onChunk: unknown, chatSessionId?: string, projectDir?: string, ...rest: unknown[]) => {
+    const isMonitorBatch = MONITOR_IDS.includes(mocks.state.currentTaskId)
+    const monitorTasks = tasks.filter(t => tm.profileOfTask(t) !== null)
+    if (!isMonitorBatch || monitorTasks.length === 0 || !projectDir) {
+      const legacyDelegate = mocks.mockExecuteTaskBatch as unknown as (...a: unknown[]) => ReturnType<typeof mocks.mockExecuteTaskBatch>
+      return legacyDelegate(tasks, agents, onChunk, chatSessionId, projectDir, ...rest)
+    }
+    const results = new Map<string, { result: string; sessionId?: string }>()
+    for (const t of tasks) {
+      const mt = tm.MONITOR_TASKS.find((x: { declaredFiles: string[] }) => x.declaredFiles[0] === t.declaredFiles?.[0])
+      if (mt) {
+        tm.writeProfileFiles(projectDir, mt) // 路径闸门 fail-closed（assertSafeCannedPath）
+        results.set(t.id, { result: tm.monitorResultForProfile(mt.profile), sessionId: undefined })
+      } else {
+        results.set(t.id, { result: 'SUCCESS', sessionId: undefined })
+      }
+    }
+    return { results, preloadedIds: [], failedTaskIds: [], failedTaskReasons: {} }
+  })
   return {
     ...mod,
-    executeTaskBatch: mocks.mockExecuteTaskBatch,
+    executeTaskBatch: profiledExecuteTaskBatch,
     executeSingleAgent: vi.fn(async (agent: any, prompt: string, context: string, onChunk: any, ...rest: any[]) => {
       // 0. preflight（provider 快速失败闸门，固定 prompt）→ 真实调用（审查 ❌B）
       if (typeof prompt === 'string' && prompt.includes(mocks.preflightPromptMarker)) {
@@ -60,8 +88,10 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       if (agent?.systemPrompt?.includes('决定下一步该做什么')) {
         return mod.executeSingleAgent(agent, prompt, context, onChunk, ...rest)
       }
-      // 2. monitoring（代码审查专家）→ 不纠正
+      // 2. monitoring（代码审查专家）→ monitor A/B 两臂透传真实 LLM（被测对象本身）；
+      //    其余语境维持罐头恒不纠正（P5-P10 语义不变）
       if (agent?.systemPrompt?.includes('代码审查专家')) {
+        if (mocks.state.monitorReal) return mod.executeSingleAgent(agent, prompt, context, onChunk, ...rest)
         return { result: JSON.stringify({ needsCorrection: false }) }
       }
       // P6 A2: QA 调用（handleAgentQA 对全部 session member 发问, prompt 是 buildAgentQuestionPrompt 固定模板
@@ -76,7 +106,12 @@ vi.mock('@/lib/orchestrator', async (importOriginal) => {
       //    旧 sp.includes('架构师') 曾误命中致 60-run 8 条 off-C defect 伪影（p5.db 实证）。
       //    架构师(decompose) → 按 task 罐头任务 JSON（alignment.ts:171 parseJSON 可解析建任务）；
       //    测试工程师(非 QA 兜底) → '无问题'；产品经理(PM) → 语义句（handlePMConfirm 不 JSON.parse）；其余(delegate/self) → 语义句。
-      if (agent?.name === '架构师') return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId] }
+      if (agent?.name === '架构师') {
+        // P11: monitor 罐头（D-G）从 tasks-monitor 动态构建（单一数据源，防罐头字面量与剧本漂移）
+        const mt = tm.MONITOR_TASKS.find((x: { id: string }) => x.id === mocks.state.currentTaskId)
+        if (mt) return { result: tm.buildCannedDecompose(mt) }
+        return { result: mocks.cannedTasksByTask[mocks.state.currentTaskId as 'A' | 'B' | 'C'] }
+      }
       if (agent?.name === '测试工程师') return { result: '无问题' }
       if (agent?.name === '产品经理') return { result: '已确认需求，请架构师拆解。' }
       // P7-A: delegate/self 拆开（旧唯一 return 语义句引导 execute 抹平 ON/OFF 对比）。
@@ -390,11 +425,14 @@ describe('P5 report', () => {
 describe('P6 T8: 状态机×verify 主效应矩阵', () => {
   it('CONFIG.configs 当前规模 + envForConfig 映射正确', () => {
     // P9-乙 T3：扩为 5 配置（三臂矩阵 + on-seqgate+verify）；前缀约定保 startsWith('on')/('off') 口径
-    expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'])
-    expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
-    expect(CONFIG.envForConfig('on+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined })
-    expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined })
-    expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined })
+    // P11 monitor A/B：追加 on-monitor / on-llmmon 两臂（仅 MONITOR_AB=1 跑批消费，legacy 驱动按 isMonitorConfig 跳过）
+    expect(CONFIG.configs).toEqual(['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify', 'on-monitor', 'on-llmmon'])
+    expect(CONFIG.envForConfig('on+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
+    expect(CONFIG.envForConfig('on+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
+    expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
+    expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
+    expect(CONFIG.envForConfig('on-monitor')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: 'on' })
+    expect(CONFIG.envForConfig('on-llmmon')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
   })
 
   it('generateReport: 全配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
@@ -415,6 +453,7 @@ describe('P6 T8: 状态机×verify 主效应矩阵', () => {
     // 乱序插入（verify 配置组先插、每配置 seed 倒序），验证同 seed 配对不依赖插入序
     const metrics: RunMetrics[] = []
     for (const config of CONFIG.configs) {
+      if (isMonitorConfig(config)) continue // P11: monitor 臂无 legacy fixture 数据（报告由 monitor-harness.test 覆盖）
       for (const taskId of ['A', 'B', 'C'] as const) {
         for (let seed = 4; seed >= 0; seed--) metrics.push(row(config, taskId, seed, passBy[config][seed]))
       }
@@ -492,6 +531,7 @@ describe('P6 T9: runOne env 恢复（finally 还原 EXPERIMENT_STATE_MACHINE/VER
   afterEach(() => {
     delete process.env.EXPERIMENT_STATE_MACHINE
     delete process.env.EXPERIMENT_VERIFY
+    delete process.env.EXPERIMENT_STRUCTURED_MONITOR
   })
   it('原值已设(off/off) → restore 回写为 off（不被 run 期间改写残留）', () => {
     process.env.EXPERIMENT_STATE_MACHINE = 'off'
@@ -529,6 +569,7 @@ describe('P9-乙 T3: 三臂配置矩阵', () => {
     delete process.env.EXPERIMENT_STATE_MACHINE
     delete process.env.EXPERIMENT_VERIFY
     delete process.env.EXPERIMENT_SEQGATE
+    delete process.env.EXPERIMENT_STRUCTURED_MONITOR
   })
 
   it('CONFIG.configs 含 on-seqgate+verify 且 envForConfig 三开关映射正确', () => {
@@ -633,7 +674,8 @@ describe('P9-乙 T5: 三臂门控 P9_ARMS', () => {
     expect(isP9ArmsOnly({})).toBe(false)
   })
   it('三臂 = configs 去掉 no-verify 且顺序保持（45 run 的格集合钉死）', () => {
-    expect(CONFIG.configs.filter((c) => !c.includes('no-verify'))).toEqual(['on+verify', 'off+verify', 'on-seqgate+verify'])
+    // P11: monitor 两臂归 monitor 批（驱动按 isMonitorConfig 跳过），legacy 格集合不变
+    expect(CONFIG.configs.filter((c) => !c.includes('no-verify') && !isMonitorConfig(c))).toEqual(['on+verify', 'off+verify', 'on-seqgate+verify'])
   })
   it('parseGateCell：非 P7_GATE=1 → null；默认格 on-seqgate+verify|A；参数格正确解析', () => {
     expect(parseGateCell({})).toBeNull()
@@ -689,7 +731,8 @@ describe('P10 T3-r4: buildBatchRecord 文件信号（单对象 / runs rows ts �
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
 const SEEDS = [0, 1, 2, 3, 4]
 const SENTINEL = process.env.P5_SENTINEL === '1'
-describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
+// P11 monitor A/B：MONITOR_AB=1 时本文件只跑 monitor 批（legacy pilot 整体跳过，两批互斥防 signal/metrics 混写）
+describe.skipIf(!process.env.GLM_API_KEY || SENTINEL || isMonitorAbOnly())('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
   // setupExperiment 仅 30-run 需要（建库 + 实验 agents + preflight 真 LLM 调用）。
   // harness 纯函数单测不调它——preflight 需要真实 GLM key，无 key 时只跑单测 describe
   beforeAll(async () => {
@@ -721,6 +764,7 @@ describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全
   for (const task of TASKS) {
     for (const config of CONFIG.configs) {
       if (P9_ARMS && config.includes('no-verify')) continue
+      if (isMonitorConfig(config)) continue // P11: monitor 两臂归 monitor 批（双保险，skipIf 互斥为主闸门）
       for (const seed of SEEDS) {
         if (P7_GATE && (config !== P7_GATE.config || task.id !== P7_GATE.taskId)) continue
         batchExpected++ // 过完两道过滤才算真注册了一条 LLM run（gate/matrix 模式下这个数分别是 5 / 45）
@@ -741,4 +785,43 @@ describe.skipIf(!process.env.GLM_API_KEY || SENTINEL)('P5 pilot: 受控实验全
 // P10（spec §2.2-③）：控制组哨兵——只跑 setupExperiment（含 preflight），探带批末「判环境不判模型」回归用
 describe.skipIf(!SENTINEL || !process.env.GLM_API_KEY)('P10 sentinel: preflight-only（控制组回归）', () => {
   it('setupExperiment preflight 通过', async () => { await setupExperiment() }, 5 * 60 * 1000)
+})
+
+// ── P11 monitor A/B 跑批（三梯队第 1 项收尾）：on-monitor vs on-llmmon × 4 罐头 × 5 seed = 40 runs ──
+// 门控：MONITOR_AB=1（严格相等）+ GLM_API_KEY；与 legacy pilot 互斥（skipIf 同条件）。
+// signal 文件独立（monitor-batch-last.json，run-gate check 按 runs 数对账不与 p5-batch-last.json 混淆）。
+// metrics.jsonl 由本批 beforeAll 重建（per-batch 语义与 legacy 一致）；setupExperiment 三道闸门必须复用
+// （scrubInheritedProviderEnv + assertCliConfigDir + preflight——自建 beforeAll 会复活 ISSUE-013 的 401 类）。
+const MONITOR_SIGNAL = join(CONFIG.resultsDir, 'monitor-batch-last.json')
+describe.skipIf(!process.env.GLM_API_KEY || SENTINEL || !isMonitorAbOnly())('P11 monitor A/B 跑批（两臂 × 4 罐头 × 5 seed）', () => {
+  beforeAll(async () => {
+    rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
+    await setupExperiment()
+  }, 35 * 60 * 1000)
+  let batchExpected = 0
+  afterAll(async () => {
+    const report = generateMonitorReport(loadMetrics())
+    console.log('\n===== P11 MONITOR A/B REPORT =====\n' + report)
+    console.log('[P11-BATCH] runs=' + batchExpected + ' rows=' + loadMetrics().length)
+    try {
+      writeFileSync(MONITOR_SIGNAL, buildBatchRecord(batchExpected, loadMetrics().length))
+    } catch { /* 写失败静默——check 端 fail-closed（json 缺失即 FAIL） */ }
+  }, 60 * 1000)
+
+  for (const task of MONITOR_TASKS) {
+    for (const config of ['on-monitor', 'on-llmmon'] as const) {
+      for (const seed of SEEDS) {
+        batchExpected++
+        it(`${config} ${task.id} seed=${seed}`, async () => {
+          mocks.state.currentTaskId = task.id
+          // 两臂监控审查透传真实 LLM（被测对象本身；臂行为差异由 EXPERIMENT_STRUCTURED_MONITOR env 透传承载）
+          mocks.state.monitorReal = true
+          const m = await runOne({ config, taskId: task.id, seed })
+          expect(m.runId).toBeTruthy()
+          expect(typeof m.pass).toBe('boolean')
+          expect(m.rounds).toBeGreaterThanOrEqual(0)
+        }, 35 * 60 * 1000)
+      }
+    }
+  }
 })
