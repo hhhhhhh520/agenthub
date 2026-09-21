@@ -190,24 +190,26 @@ describe('state-machine: transitionPhase', () => {
     expect(mockSessionUpdate).not.toHaveBeenCalled()
   })
 
-  it('合法 transitioning action：读 state + 写 STATE_PHASE[nextState]', async () => {
+  it('合法 transitioning action：读 state + 快照条件写 STATE_PHASE[nextState]（§3.2 CAS）', async () => {
     mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '' })
     const r = await transitionPhase('s1', 'align_confirm')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('align_pm')
-    expect(mockSessionUpdate).toHaveBeenCalledWith({
-      where: { id: 's1' },
+    expect(mockSessionUpdate).not.toHaveBeenCalled() // §3.2: 无条件写退役
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+      where: { id: 's1', phase: 'idle', phaseStep: '' },
       data: STATE_PHASE.align_pm,
     })
   })
 
-  it('exec + done：写 done', async () => {
+  it('exec + done：写 done（快照条件写）', async () => {
     mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '' })
     const r = await transitionPhase('s1', 'done')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('done')
-    expect(mockSessionUpdate).toHaveBeenCalledWith({
-      where: { id: 's1' },
+    expect(mockSessionUpdate).not.toHaveBeenCalled()
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+      where: { id: 's1', phase: 'execution', phaseStep: '' },
       data: STATE_PHASE.done,
     })
   })
@@ -256,10 +258,11 @@ describe('state-machine: transitionPhase', () => {
     const r = await transitionPhase('s1', 'align_confirm')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('align_pm')
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.align_pm })
+    expect(mockSessionUpdate).not.toHaveBeenCalled() // §3.2: 无条件写退役
     // 补记：乐观锁条件写 where 带当前 decisionTrace，data 含新条目
-    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
-    const [arg] = mockSessionUpdateMany.mock.calls[0]
+    // §3.2: updateMany 共两次——第 1 次 phase 快照条件写（where 带 phase/phaseStep），第 2 次 trace 补记
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(2)
+    const [arg] = mockSessionUpdateMany.mock.calls[1]
     expect(arg.where).toEqual({ id: 's1', decisionTrace: '[]' })
     const arr = JSON.parse(arg.data.decisionTrace)
     expect(arr).toHaveLength(1)
@@ -278,19 +281,29 @@ describe('state-machine: transitionPhase', () => {
     const r = await transitionPhase('s1', 'done', { recordTrace: false })
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('done')
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.done })
-    expect(mockSessionUpdateMany).not.toHaveBeenCalled()
+    expect(mockSessionUpdate).not.toHaveBeenCalled()
+    // §3.2: phase 走 updateMany 快照条件写恰好一次；recordTrace:false → 无 trace 补记
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+      where: { id: 's1', phase: 'execution', phaseStep: '' },
+      data: STATE_PHASE.done,
+    })
   })
 
   it('补记失败（updateMany 抛错）→ transitionPhase 照常 ok:true（trace 是 best-effort,不击穿主路径）', async () => {
     mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', decisionTrace: '[]' })
-    mockSessionUpdateMany.mockRejectedValue(new Error('db down'))
+    // §3.2: updateMany 现承担 phase 快照条件写 + trace 补记两种形态——只让 trace 形态抛错，
+    // 验证"补记失败不击穿主路径"（phase 写成功仍 ok:true）
+    mockSessionUpdateMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+      if ('decisionTrace' in where) throw new Error('db down')
+      return { count: 1 }
+    })
     const r = await transitionPhase('s1', 'align_confirm')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.nextState).toBe('align_pm')
-    expect(mockSessionUpdate).toHaveBeenCalledTimes(1) // phase 写成功,补记失败不击穿
-    // 声明vs实现 Finding 2: 必须断言 append 确实被尝试(updateMany 被调)——否则实现若"根本不补记"此测试也绿
-    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
+    expect(mockSessionUpdate).not.toHaveBeenCalled() // §3.2: 无条件写退役
+    // 声明vs实现 Finding 2: 必须断言 append 确实被尝试(updateMany trace 形态被调)——否则实现若"根本不补记"此测试也绿
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(2) // 1 次 phase 快照写 + 1 次 trace 补记（抛错）
   })
 })
 
@@ -347,7 +360,11 @@ describe('P5: applyTransitionWithOverride（状态机 off 开关）', () => {
       const r = await transitionPhase('s1', 'execute')
       expect(r.ok).toBe(true)
       if (r.ok) expect(r.nextState).toBe('align_pm') // 表外 → 当前态，不制造幻 phase
-      expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: STATE_PHASE.align_pm })
+      expect(mockSessionUpdate).not.toHaveBeenCalled()
+      expect(mockSessionUpdateMany).toHaveBeenCalledWith({
+        where: { id: 's1', phase: 'alignment', phaseStep: 'pm_confirm' },
+        data: STATE_PHASE.align_pm,
+      })
     } finally {
       if (prev === undefined) delete process.env.EXPERIMENT_STATE_MACHINE
       else process.env.EXPERIMENT_STATE_MACHINE = prev

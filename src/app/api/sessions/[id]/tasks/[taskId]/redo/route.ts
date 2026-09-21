@@ -90,14 +90,24 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
 
   // 3. F3 修复:task + SessionMember 两表更新包事务,保持 ⚠️-C2 一致性
   //    (事务与两表同步语义由统一入口 invalidateCliSession 承载)
-  await invalidateCliSession({
+  //    §3.2 B6: expectedFrom 前置条件——仅当任务仍是 failed/blocked 时重置才成立，
+  //    关闭前置 findUnique 检查与写入之间的 TOCTOU 窗口
+  const inv = await invalidateCliSession({
     taskId,
     sessionId,
     agentId: task.assignedAgentId,
+    expectedFrom: ['failed', 'blocked'],
     taskData: updateData,
   })
+  if (!inv.applied) {
+    return NextResponse.json(
+      { error: `任务状态已变化（当前不再是 failed/blocked），无法重做` },
+      { status: 409 }
+    )
+  }
 
   // 4. Unblock downstream tasks that were blocked by this task's failure
+  //    §3.2 B7: 条件写——仅当仍为 blocked 时解锁（已被他人转移则不动）
   const allTasks = await prisma.task.findMany({ where: { sessionId } })
   for (const t of allTasks) {
     if (t.status !== 'blocked') continue
@@ -108,7 +118,7 @@ async function handleRedo(sessionId: string, taskId: string, request: Request) {
       return dep?.status === 'completed'
     })
     if (otherDepsOk) {
-      await prisma.task.update({ where: { id: t.id }, data: { status: 'pending' } })
+      await prisma.task.updateMany({ where: { id: t.id, status: 'blocked' }, data: { status: 'pending' } })
     }
   }
 

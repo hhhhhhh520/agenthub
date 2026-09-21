@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url'
 
 // roadmap §2.1 架构守卫：phase 字段只允许出现在 src/lib/orchestrator/state-machine.ts
 // 的 prisma 写入中（当前唯一合法写点 state-machine.ts transitionPhase 的
-// prisma.session.update —— 附录 A 已核实）。phase 写入散落到路由/服务层曾导致
+// prisma.session.updateMany 快照条件写，§3.2 CAS 化后仍唯一）。phase 写入散落到路由/服务层曾导致
 // 写入竞态（ISSUE-022 同族风险），此后所有 phase 迁移必须经状态机。
 //
 // 两条断言互为犄角：
@@ -18,11 +18,13 @@ import { fileURLToPath } from 'url'
 // 记录不追求完备——review 是最后防线，与项目既有源码守卫同一口径）：
 // ① prisma.$executeRaw(Unsafe) 写 Session.phase（现役仅 PRAGMA/Config 表）
 // ② 交互式事务 prisma.$transaction(async tx => tx.session.update(...))
-//    ——tx 别名不命中正则（现役两处 $transaction 均数组式且不写 phase）
+//    ——tx 别名不命中正则（§3.2 后 execution.ts:409 为交互式但只写 task/sessionMember
+//    不写 phase；session 侧现役仍无交互式写点）
 // ③ 别名导入 prisma as p / 方括号访问 prisma['session']（全仓惯例直引）
 // ④ 变量携带 phase 对象传入 data（两个断言的正则面同样不可见）
 // ⑤ 扫描范围仅 src/**.ts(x)：prisma/seed.ts、experiments/、scripts/ 不可见
-// ⑥ 豁免是整文件级：state-machine.ts 内任何写都放行（现役仅 :254 经 STATE_PHASE）
+// ⑥ 豁免是整文件级：state-machine.ts 内任何写都放行（现役仅 transitionPhase 的
+//    updateMany 经 STATE_PHASE，§3.2 后写点在 :267 附近）
 // 已知误报向量（fail-noisy 方向，可接受）：callText 含字符串/注释原文，
 // 字符串值里出现 `phase:` 会假阳性（如 data: { note: 'phase: x' }）；
 // 参数内带撇号的正则字面量会使配对失败静默跳过（fail-open，静止守卫固有）。

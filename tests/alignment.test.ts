@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   mockTaskUpdate: vi.fn(),
   mockTaskFindFirst: vi.fn(),
   mockSessionUpdate: vi.fn(),
+  mockSessionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockSessionFindUnique: vi.fn(),
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockMessageCreate: vi.fn(),
@@ -23,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({
   prisma: {
     task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst, update: mocks.mockTaskUpdate },
-    session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
+    session: { update: mocks.mockSessionUpdate, updateMany: mocks.mockSessionUpdateMany, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findMany: mocks.mockSessionMemberFindMany, findUnique: mocks.mockSessionMemberFindUnique },
   },
@@ -187,7 +188,8 @@ describe('transitionToExecution — task-empty fallback', () => {
 
     await transitionToExecution('sess1', agents, mocks.mockSendEvent, '做个网站')
 
-    expect(mocks.mockSessionUpdate).toHaveBeenCalledWith(
+    // §3.2: transitionPhase 走 session.updateMany 快照条件写
+    expect(mocks.mockSessionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { phase: 'execution', phaseStep: '' } })
     )
     expect(mocks.mockSendEvent).toHaveBeenCalledWith(
@@ -204,7 +206,7 @@ describe('transitionToExecution — task-empty fallback', () => {
 
     // 不进 execute(phase 不写 execution),不调 handleExecution
     // 旧代码: 补拆 0 任务后仍 transitionPhase('execute') + handleExecution → 红
-    expect(mocks.mockSessionUpdate).not.toHaveBeenCalledWith(
+    expect(mocks.mockSessionUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: { phase: 'execution', phaseStep: '' } })
     )
     expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
@@ -218,7 +220,7 @@ describe('transitionToExecution — task-empty fallback', () => {
 
     expect(result).toBe(false)
     // phase 不空转 align_arch(旧代码顶部先 transitionPhase('align_decompose') → 红)
-    expect(mocks.mockSessionUpdate).not.toHaveBeenCalledWith(
+    expect(mocks.mockSessionUpdateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: { phase: 'alignment', phaseStep: 'architect_plan' } })
     )
     // 等用户重述

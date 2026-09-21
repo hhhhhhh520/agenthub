@@ -46,7 +46,7 @@ vi.mock('@/lib/db', () => ({
       updateMany: mockSessionUpdateMany,
     },
     message: { create: mockMessageCreate },
-    task: { findUnique: mockTaskFindUnique, findMany: mockTaskFindMany, update: mockTaskUpdate },
+    task: { findUnique: mockTaskFindUnique, findMany: mockTaskFindMany, update: mockTaskUpdate, updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     agent: { findMany: mockAgentFindMany },
     sessionMember: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     attachment: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },

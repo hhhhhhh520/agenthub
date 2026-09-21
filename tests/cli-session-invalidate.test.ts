@@ -6,15 +6,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // 2) 调用方附加字段透传合并，cliSessionId 恒为 null（即使 taskData 携带脏值也被覆盖）
 // 3) agentId 为空时只清 Task，不碰 SessionMember（redo 无 assignedAgent 路径）
 
-const { mockTaskUpdate, mockMemberUpdateMany, mockTransaction } = vi.hoisted(() => ({
-  mockTaskUpdate: vi.fn(),
+const { mockTaskUpdateMany, mockMemberUpdateMany, mockTransaction } = vi.hoisted(() => ({
+  mockTaskUpdateMany: vi.fn(),
   mockMemberUpdateMany: vi.fn(),
   mockTransaction: vi.fn(),
 }))
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { update: mockTaskUpdate },
+    task: { updateMany: mockTaskUpdateMany },
     sessionMember: { updateMany: mockMemberUpdateMany },
     $transaction: mockTransaction,
   },
@@ -24,7 +24,7 @@ import { invalidateCliSession } from '@/lib/services/cli-session'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mockTaskUpdate.mockResolvedValue({ id: 't1' })
+  mockTaskUpdateMany.mockResolvedValue({ count: 1 })
   mockMemberUpdateMany.mockResolvedValue({ count: 1 })
   mockTransaction.mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops))
 })
@@ -38,8 +38,8 @@ describe('invalidateCliSession — 统一失效入口', () => {
       taskData: { status: 'failed', trace: '[{"event":"error"}]' },
     })
 
-    expect(mockTaskUpdate).toHaveBeenCalledTimes(1)
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
+    expect(mockTaskUpdateMany).toHaveBeenCalledTimes(1)
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: 't1' },
       data: { status: 'failed', trace: '[{"event":"error"}]', cliSessionId: null },
     })
@@ -54,7 +54,7 @@ describe('invalidateCliSession — 统一失效入口', () => {
     expect(mockTransaction).toHaveBeenCalledTimes(1)
     const ops = mockTransaction.mock.calls[0][0] as Promise<unknown>[]
     expect(ops).toHaveLength(2)
-    expect(ops[0]).toBe(mockTaskUpdate.mock.results[0].value)
+    expect(ops[0]).toBe(mockTaskUpdateMany.mock.results[0].value)
     expect(ops[1]).toBe(mockMemberUpdateMany.mock.results[0].value)
   })
 
@@ -66,7 +66,7 @@ describe('invalidateCliSession — 统一失效入口', () => {
       taskData: { cliSessionId: 'dirty-session' },
     })
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: 't1' },
       data: { cliSessionId: null },
     })
@@ -75,7 +75,7 @@ describe('invalidateCliSession — 统一失效入口', () => {
   it('taskData 缺省时只清 cliSessionId', async () => {
     await invalidateCliSession({ taskId: 't1', sessionId: 's1', agentId: 'a1' })
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: 't1' },
       data: { cliSessionId: null },
     })
@@ -89,7 +89,7 @@ describe('invalidateCliSession — 统一失效入口', () => {
       taskData: { status: 'pending' },
     })
 
-    expect(mockTaskUpdate).toHaveBeenCalledWith({
+    expect(mockTaskUpdateMany).toHaveBeenCalledWith({
       where: { id: 't1' },
       data: { status: 'pending', cliSessionId: null },
     })

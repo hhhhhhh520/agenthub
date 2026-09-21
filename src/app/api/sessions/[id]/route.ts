@@ -42,7 +42,9 @@ export async function GET(
   if (stuckTasks.length > 0) {
     const stuckIds = stuckTasks.map(t => t.id)
     await prisma.task.updateMany({
-      where: { id: { in: stuckIds } },
+      // §3.2: status 前置条件——findMany 与 updateMany 之间执行流可能已把任务写 completed，
+      // 无条件重置会丢结果 + 造成 DB pending / 内存 completed 漂移（审查抓出）
+      where: { id: { in: stuckIds }, status: 'in_progress' },
       data: { status: 'pending' },
     })
     for (const task of session.tasks) {

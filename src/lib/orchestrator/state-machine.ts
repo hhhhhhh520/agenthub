@@ -224,19 +224,26 @@ function qaAlreadyAnswered(history: HistoryEntry[]): boolean {
 
 /**
  * 中央 phase 写入：读当前 state，applyTransition 校验（不含纠正--纠正在决策点），
- * 合法则写 phase+phaseStep。handler 调用（action 已经决策点校验或代码直发）。
+ * 合法则以**快照条件写**落 phase+phaseStep。handler 调用（action 已经决策点校验或代码直发）。
  *
  * - 旁路 action（self/delegate/discuss/verify）-> 不写库，直接 ok（这些 handler 不转 phase）
- * - 合法 transitioning action -> 写 STATE_PHASE[nextState]
+ * - 合法 transitioning action -> updateMany where {id, phase, phaseStep}=读时快照（§3.2 乐观锁）
+ * - 快照过期（count=0：abort 释放锁窗口的僵尸流 / 另一执行流已写 phase）-> 重读 -> 重算转移：
+ *   新态下合法则用新快照重写（至多 TRANSITION_CAS_RETRIES 次）；非法 -> **fail-closed** 拒写。
+ *   绝不无条件覆盖他人转移（决策点 trace 记 applied:true 而 DB 被覆盖 = trace 与 DB 永久不一致）。
  * - 非法（决策点快照与 DB 不一致的并发窗口，或代码直发边界）-> **fail-closed**：不写库，
  *   防把 phase 写到转移表之外的值（回退/跳步），记 warn 可见。phase 保持旧值，下次决策自愈。
- * - DB 异常（findUnique/update 抛错）-> try/catch 记 warn，返回 ok:false 不击穿调用方收尾。
+ * - DB 异常（findUnique/updateMany 抛错）-> try/catch 记 warn，返回 ok:false 不击穿调用方收尾。
  *
  * P4 T1: 写库成功后默认补记一条 trace（decisionPoint:'transitionPhase'）——代码驱动转移
  * （redo/0-task 补拆/QA 直发 exec/自动 done）不经决策点，只有这里能兜住。LLM 决策路径
  * （chat-router/handler）已由决策点记录同一条转移，传 { recordTrace: false } 防双记。
  * 补记失败（appendDecisionTrace 返回 null）不击穿主路径（trace 是 best-effort 审计）。
  */
+
+/** §3.2 快照条件写重试上限（对齐 decision-trace.ts 的 3 次乐观锁重试） */
+export const TRANSITION_CAS_RETRIES = 3
+
 export async function transitionPhase(
   sessionId: string,
   action: string,
@@ -246,34 +253,54 @@ export async function transitionPhase(
     return { ok: true }
   }
   try {
-    const session = await prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true, decisionTrace: true } })
-    if (!session) return { ok: false, reason: 'session 不存在' }
-    const state = stateFromSession(session.phase, session.phaseStep)
-    const result = applyTransitionWithOverride(state, action, isExperimentOff())
-    if (result.ok) {
-      await prisma.session.update({ where: { id: sessionId }, data: STATE_PHASE[result.nextState] })
-      if (opts?.recordTrace !== false) {
-        const entry: DecisionTraceEntry = {
-          decisionPoint: 'transitionPhase',
-          // 写前状态 = 决策时 input state（与决策点条目同构）
-          inputState: { phase: session.phase, phaseStep: session.phaseStep, state },
-          llmProposal: { action, reason: '代码驱动转移（不经决策点）' },
-          corrections: [],
-          validation: { passed: true, validator: 'transitionPhase' },
-          actualTransition: { from: state, to: result.nextState, action, applied: 'inTable' in result ? result.inTable : true, escalated: false },
-        }
-        // 审查整改(生命周期⚠️Q3): append 整体再包一层 try/catch 双保险——即使 append 内部抛错
-        // （如重试路径读库异常）也不把"phase 已写成功"误报为失败(redo 会据此 500)
-        try {
-          await appendDecisionTrace(sessionId, session.decisionTrace, entry)
-        } catch (err) {
-          console.warn(`[state-machine] 补记 trace 失败: ${err instanceof Error ? err.message : String(err)}`)
-        }
+    let base = await prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true, decisionTrace: true } })
+    if (!base) return { ok: false, reason: 'session 不存在' }
+    for (let attempt = 0; attempt < TRANSITION_CAS_RETRIES; attempt++) {
+      const state = stateFromSession(base.phase, base.phaseStep)
+      const result = applyTransitionWithOverride(state, action, isExperimentOff())
+      if (!result.ok) {
+        console.warn(`[state-machine] transitionPhase 拒绝: ${result.reason}（不写库，避免 phase 越界）`)
+        return { ok: false, reason: result.reason }
       }
-      return { ok: true, nextState: result.nextState }
+      // §3.2: 快照条件写（乐观锁）。where 携带读时 (phase, phaseStep)——双流并发时后到者
+      // count=0，重读重算，不无条件覆盖他人转移。SQLite 行级原子保证两流至多一写成功。
+      const res = await prisma.session.updateMany({
+        where: { id: sessionId, phase: base.phase, phaseStep: base.phaseStep },
+        data: STATE_PHASE[result.nextState],
+      })
+      if (res.count === 1) {
+        if (opts?.recordTrace !== false) {
+          const entry: DecisionTraceEntry = {
+            decisionPoint: 'transitionPhase',
+            // 写前状态 = 本轮尝试的读时快照（冲突重试后为重读的新快照，与实际转移一致）
+            inputState: { phase: base.phase, phaseStep: base.phaseStep, state },
+            llmProposal: { action, reason: '代码驱动转移（不经决策点）' },
+            corrections: [],
+            validation: { passed: true, validator: 'transitionPhase' },
+            actualTransition: { from: state, to: result.nextState, action, applied: 'inTable' in result ? result.inTable : true, escalated: false },
+          }
+          // 审查整改(生命周期⚠️Q3): append 整体再包一层 try/catch 双保险——即使 append 内部抛错
+          // （如重试路径读库异常）也不把"phase 已写成功"误报为失败(redo 会据此 500)
+          try {
+            await appendDecisionTrace(sessionId, base.decisionTrace, entry)
+          } catch (err) {
+            console.warn(`[state-machine] 补记 trace 失败: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+        return { ok: true, nextState: result.nextState }
+      }
+      // count=0 → 快照过期：重读最新值重算（审查整改: 重读在 try/catch 内,兑现"不抛出"契约）
+      try {
+        const fresh = await prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true, decisionTrace: true } })
+        if (!fresh) return { ok: false, reason: 'session 不存在' }
+        base = fresh
+      } catch (err) {
+        console.warn(`[state-machine] transitionPhase 冲突重读失败: ${err instanceof Error ? err.message : String(err)}`)
+        return { ok: false, reason: 'transitionPhase 数据库操作失败' }
+      }
     }
-    console.warn(`[state-machine] transitionPhase 拒绝: ${result.reason}（不写库，避免 phase 越界）`)
-    return { ok: false, reason: result.reason }
+    console.warn(`[state-machine] transitionPhase 快照冲突重试超限(${TRANSITION_CAS_RETRIES}次)，放弃写库 sessionId=${sessionId}`)
+    return { ok: false, reason: 'transitionPhase 快照冲突重试超限' }
   } catch (err) {
     console.warn(`[state-machine] transitionPhase 异常: ${err instanceof Error ? err.message : String(err)}`)
     return { ok: false, reason: 'transitionPhase 数据库操作失败' }
