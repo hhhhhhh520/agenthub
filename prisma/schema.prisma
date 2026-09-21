@@ -27,6 +27,7 @@ model Session {
   tasks       Task[]
   messages    Message[]
   attachments Attachment[]
+  processEvents AgentProcessEvent[]
 }
 
 // ─── Agent 全局池 ─────────────────────────────────────
@@ -149,6 +150,27 @@ model Attachment {
   session Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
+}
+
+// ─── Agent 过程事件（roadmap §3.1 SSE 重放）──────────
+// 四类过程事件（thinking/tool_use/tool_result/permission_request + permission_cancel）
+// 的持久化载体——此前只流式 emit，刷新/断线即丢，无法补发（拍板：修彻底）。
+// text/error 等成品消息仍由 Message 表承载（重放不重复）。
+// 容量封顶见 event-log.ts MAX_EVENTS_PER_SESSION（防无界增长，roadmap §9#5）。
+model AgentProcessEvent {
+  id        String   @id @default(uuid())
+  sessionId String
+  seq       Int                          // session 内单调递增，重放游标
+  type      String                       // thinking | tool_use | tool_result | permission_request | permission_cancel
+  agentId   String                       // agent 名称或 orchestrator
+  content   String                       // 事件内容
+  data      String   @default("{}")      // JSON：toolName/toolInput/requestId 等
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // 唯一约束自带 (sessionId, seq) 索引，不再单建 @@index（审查发现冗余）
+  @@unique([sessionId, seq])
 }
 
 // ─── 最近打开的目录 ───────────────────────────────────

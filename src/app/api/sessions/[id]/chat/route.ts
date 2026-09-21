@@ -3,6 +3,7 @@ import { executeSingleAgent } from '@/lib/orchestrator'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
+import { createEventLogger } from '@/lib/services/event-log'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -111,10 +112,15 @@ export async function POST(
     async start(controller) {
       let streamClosed = false
 
-      function sendEvent(data: { agentId: string; type: string; content: string; messageId?: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) {
-        if (streamClosed) return
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
-      }
+      // roadmap §3.1: 四类过程事件持久化 + 帧 seq 化（eventLogger.stream 即推流）。
+      // 持久化与推流解耦：streamClosed 后仍落库、只是不推流——刷新后按 seq 补发的前提。
+      const eventLogger = await createEventLogger(sessionId, {
+        stream: (event) => {
+          if (streamClosed) return
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+        },
+      })
+      const sendEvent = eventLogger.sendEvent
 
       const sseTimeout = setTimeout(() => {
         streamClosed = true
@@ -192,7 +198,10 @@ export async function POST(
         }
       } finally {
         clearTimeout(sseTimeout)
-        controller.close()
+        // §3.1: 流关闭前排空持久化写队列，保证断线补发不缺尾部
+        await eventLogger.flush()
+        // 60min 超时路径已 close 过——二次 close 抛 TypeError 会跳过锁释放（审查发现）
+        try { controller.close() } catch { /* 已关闭 */ }
         // 超时场景下后台操作可能仍在运行，用setTimeout确保锁不被阻塞
         setTimeout(() => releaseLock(), 0)
       }
