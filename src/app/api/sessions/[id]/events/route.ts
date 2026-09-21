@@ -46,11 +46,13 @@ export async function GET(
       // 清理监听必须在任何 await 之前注册（审查发现：backlog 期间客户端断开时
       // abort 已派发，后补监听器收不到 → setInterval 泄漏）；abort 先于注册
       // 触发的窗口由下方 signal.aborted 主动检查兜底。
-      let timer: ReturnType<typeof setInterval> | undefined
+      // timer 装进容器对象：声明与赋值分离且赋值前有读取（cleanup 可先触发），
+      // 直接 let 会被 prefer-const 拦（CI 实测）。
+      const poll: { timer?: ReturnType<typeof setInterval> } = {}
       const cleanup = () => {
         if (closed) return
         closed = true
-        if (timer !== undefined) clearInterval(timer)
+        if (poll.timer !== undefined) clearInterval(poll.timer)
         try { controller.close() } catch { /* 已关闭 */ }
       }
       request.signal.addEventListener('abort', cleanup)
@@ -88,7 +90,7 @@ export async function GET(
       }
 
       // 2. 增量轮询（失败静默，下一轮重试——重放是 best-effort）
-      timer = setInterval(async () => {
+      poll.timer = setInterval(async () => {
         if (closed) return
         try {
           const rows = await prisma.agentProcessEvent.findMany({
