@@ -1,5 +1,6 @@
 'use client'
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { createSeqGate, recordLastSeq, loadLastSeq } from '@/lib/events-replay'
 
 interface Attachment {
   id: string
@@ -25,6 +26,8 @@ interface SSEEvent {
   type: string
   content: string
   messageId?: string
+  seq?: number           // §3.1 持久化事件的重放游标（text/done 等成品帧无 seq）
+  replay?: boolean       // §3.1 补发帧标记（permission_request 不重新弹窗）
   data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown> }
 }
 
@@ -52,6 +55,7 @@ export function useChat(sessionId: string | null) {
   const [thinking, setThinking] = useState<Record<string, string>>({})
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const seqGateRef = useRef(createSeqGate(0))
   const streamBufferRef = useRef<Record<string, string>>({})
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -61,6 +65,151 @@ export function useChat(sessionId: string | null) {
     const data = await res.json()
     setMessages(data)
   }, [sessionId])
+
+  // §3.1: 事件分发统一入口——POST chat 流（首屏实时）与 EventSource 重放流共用。
+  // 持久化事件（带 seq）经单调门去重（双通道同帧只处理一次），游标跨刷新恢复。
+  const applyEvent = useCallback((event: SSEEvent) => {
+    if (!seqGateRef.current.accept(event.seq)) return
+    if (event.seq !== undefined && sessionId) recordLastSeq(sessionId, event.seq)
+
+    if (event.type === 'done') {
+      // Bug fix: extract message from orchestrator decision JSON if present
+      let content = event.content
+      if (event.agentId === 'orchestrator') {
+        try {
+          const parsed = JSON.parse(content)
+          if (parsed.action && parsed.message && parsed.reason) {
+            content = parsed.message
+          }
+        } catch { /* not JSON, use as-is */ }
+      }
+
+      if (event.messageId) {
+        // Regenerate: replace existing message
+        setMessages(prev => prev.map(m =>
+          m.id === event.messageId ? { ...m, rawContent: content } : m
+        ))
+      } else {
+        // New message: add to messages list
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
+          rawContent: content,
+          agentId: event.agentId === 'orchestrator' ? undefined : event.agentId,
+          createdAt: new Date().toISOString(),
+        }])
+      }
+      // Bug fix: clear streaming for this agent to prevent duplicate display
+      // Discard any buffered streaming content for this agent
+      delete streamBufferRef.current[event.agentId]
+      setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+      setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+      setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
+    } else if (event.type === 'error') {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'orchestrator',
+        rawContent: event.content,
+        createdAt: new Date().toISOString(),
+      }])
+      // 清除 streaming 状态，防止后续 text chunk 拼接到旧内容上
+      delete streamBufferRef.current[event.agentId]
+      setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+      setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
+      setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
+    } else if (event.type === 'awaiting_user_input') {
+      setAwaitingInput(event.content)
+      streamBufferRef.current = {}
+      setStreaming({})
+      setLoading(false)
+    } else if (event.type === 'phase_transition') {
+      setPhase(event.content)
+      setAwaitingInput(null)
+    } else if (event.type === 'task_status') {
+      // Task status updates are handled by the agent panel polling
+    } else if (event.type === 'session') {
+      // CLI session ID - don't display, just ignore
+    } else if (event.type === 'permission_request') {
+      // §3.1: 补发帧不重新弹确认框——执行已结束的等待方必然已 resolve（弹了是
+      // 死按钮）；执行中刷新的边界：等待方在服务端仍存活，但补发无法区分
+      // "等待中"与"已结束"，统一不弹（与改动前"事件直接丢失"等价，用户可重发）
+      if (event.replay) return
+      setPendingPermissions(prev => [...prev, {
+        requestId: event.data?.requestId || '',
+        toolName: event.data?.toolName || '',
+        toolInput: event.data?.toolInput || {},
+        agentId: event.agentId,
+      }])
+    } else if (event.type === 'permission_cancel') {
+      setPendingPermissions(prev => prev.filter(p => p.requestId !== event.data?.requestId))
+    } else if (event.type === 'thinking') {
+      // 思考过程：累积到 thinking 状态
+      setThinking(prev => ({
+        ...prev,
+        [event.agentId]: (prev[event.agentId] || '') + event.content,
+      }))
+    } else if (event.type === 'tool_use') {
+      // 工具调用：添加到 toolCalls 列表
+      const toolCall: ToolCall = {
+        id: crypto.randomUUID(),
+        agentId: event.agentId,
+        toolName: event.data?.toolName || 'unknown',
+        toolInput: event.data?.toolInput || {},
+        status: 'running',
+      }
+      setToolCalls(prev => [...prev, toolCall])
+    } else if (event.type === 'tool_result') {
+      // 工具结果：更新最后一个匹配的 toolCall
+      setToolCalls(prev => {
+        const updated = [...prev]
+        // 找到最后一个同 agent 的 running 状态的 toolCall
+        for (let i = updated.length - 1; i >= 0; i--) {
+          if (updated[i].agentId === event.agentId && updated[i].status === 'running') {
+            updated[i] = { ...updated[i], toolResult: event.content, status: 'completed' }
+            break
+          }
+        }
+        return updated
+      })
+    } else {
+      // Throttle: buffer chunks, flush every 100ms to reduce re-renders
+      streamBufferRef.current[event.agentId] =
+        (streamBufferRef.current[event.agentId] || '') + event.content
+      if (!streamTimerRef.current) {
+        streamTimerRef.current = setTimeout(() => {
+          const snapshot = { ...streamBufferRef.current }
+          streamBufferRef.current = {}
+          streamTimerRef.current = null
+          setStreaming(prev => {
+            const next = { ...prev }
+            for (const [id, buf] of Object.entries(snapshot)) {
+              next[id] = (next[id] || '') + buf
+            }
+            return next
+          })
+        }, 100)
+      }
+    }
+  }, [sessionId])
+
+  // §3.1: 游标跨刷新恢复——after=lastSeq 精准补发断线窗口（非全量历史回放）
+  useEffect(() => {
+    if (!sessionId) return
+    seqGateRef.current = createSeqGate(loadLastSeq(sessionId))
+  }, [sessionId])
+
+  // §3.1: 重放通道——连接内断线由 EventSource 原生自动重连（带 Last-Event-ID）；
+  // 页面刷新后游标经 sessionStorage 恢复（?after=）
+  useEffect(() => {
+    if (!sessionId) return
+    const es = new EventSource(`/api/sessions/${sessionId}/events?after=${seqGateRef.current.current()}`)
+    es.onmessage = (e) => {
+      try {
+        applyEvent(JSON.parse(e.data) as SSEEvent)
+      } catch { /* 非 JSON 帧忽略 */ }
+    }
+    return () => es.close()
+  }, [sessionId, applyEvent])
 
   const send = useCallback(async (content: string, mentionAll?: boolean, targetAgent?: string, replyToId?: string, regenerate?: string, attachmentIds?: string[]) => {
     if (!sessionId || (!content.trim() && !regenerate && (!attachmentIds || attachmentIds.length === 0))) return
@@ -128,120 +277,7 @@ export function useChat(sessionId: string | null) {
             continue
           }
 
-          if (event.type === 'done') {
-            // Bug fix: extract message from orchestrator decision JSON if present
-            let content = event.content
-            if (event.agentId === 'orchestrator') {
-              try {
-                const parsed = JSON.parse(content)
-                if (parsed.action && parsed.message && parsed.reason) {
-                  content = parsed.message
-                }
-              } catch { /* not JSON, use as-is */ }
-            }
-
-            if (event.messageId) {
-              // Regenerate: replace existing message
-              setMessages(prev => prev.map(m =>
-                m.id === event.messageId ? { ...m, rawContent: content } : m
-              ))
-            } else {
-              // New message: add to messages list
-              setMessages(prev => [...prev, {
-                id: crypto.randomUUID(),
-                role: event.agentId === 'orchestrator' ? 'orchestrator' : 'agent',
-                rawContent: content,
-                agentId: event.agentId === 'orchestrator' ? undefined : event.agentId,
-                createdAt: new Date().toISOString(),
-              }])
-            }
-            // Bug fix: clear streaming for this agent to prevent duplicate display
-            // Discard any buffered streaming content for this agent
-            delete streamBufferRef.current[event.agentId]
-            setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
-            setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
-            setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
-          } else if (event.type === 'error') {
-            setMessages(prev => [...prev, {
-              id: crypto.randomUUID(),
-              role: 'orchestrator',
-              rawContent: event.content,
-              createdAt: new Date().toISOString(),
-            }])
-            // 清除 streaming 状态，防止后续 text chunk 拼接到旧内容上
-            delete streamBufferRef.current[event.agentId]
-            setStreaming(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
-            setThinking(prev => { const next = { ...prev }; delete next[event.agentId]; return next })
-            setToolCalls(prev => prev.filter(tc => tc.agentId !== event.agentId))
-          } else if (event.type === 'awaiting_user_input') {
-            setAwaitingInput(event.content)
-            streamBufferRef.current = {}
-            setStreaming({})
-            setLoading(false)
-          } else if (event.type === 'phase_transition') {
-            setPhase(event.content)
-            setAwaitingInput(null)
-          } else if (event.type === 'task_status') {
-            // Task status updates are handled by the agent panel polling
-          } else if (event.type === 'session') {
-            // CLI session ID - don't display, just ignore
-          } else if (event.type === 'permission_request') {
-            setPendingPermissions(prev => [...prev, {
-              requestId: event.data?.requestId || '',
-              toolName: event.data?.toolName || '',
-              toolInput: event.data?.toolInput || {},
-              agentId: event.agentId,
-            }])
-          } else if (event.type === 'permission_cancel') {
-            setPendingPermissions(prev => prev.filter(p => p.requestId !== event.data?.requestId))
-          } else if (event.type === 'thinking') {
-            // 思考过程：累积到 thinking 状态
-            setThinking(prev => ({
-              ...prev,
-              [event.agentId]: (prev[event.agentId] || '') + event.content,
-            }))
-          } else if (event.type === 'tool_use') {
-            // 工具调用：添加到 toolCalls 列表
-            const toolCall: ToolCall = {
-              id: crypto.randomUUID(),
-              agentId: event.agentId,
-              toolName: event.data?.toolName || 'unknown',
-              toolInput: event.data?.toolInput || {},
-              status: 'running',
-            }
-            setToolCalls(prev => [...prev, toolCall])
-          } else if (event.type === 'tool_result') {
-            // 工具结果：更新最后一个匹配的 toolCall
-            setToolCalls(prev => {
-              const updated = [...prev]
-              // 找到最后一个同 agent 的 running 状态的 toolCall
-              for (let i = updated.length - 1; i >= 0; i--) {
-                if (updated[i].agentId === event.agentId && updated[i].status === 'running') {
-                  updated[i] = { ...updated[i], toolResult: event.content, status: 'completed' }
-                  break
-                }
-              }
-              return updated
-            })
-          } else {
-            // Throttle: buffer chunks, flush every 100ms to reduce re-renders
-            streamBufferRef.current[event.agentId] =
-              (streamBufferRef.current[event.agentId] || '') + event.content
-            if (!streamTimerRef.current) {
-              streamTimerRef.current = setTimeout(() => {
-                const snapshot = { ...streamBufferRef.current }
-                streamBufferRef.current = {}
-                streamTimerRef.current = null
-                setStreaming(prev => {
-                  const next = { ...prev }
-                  for (const [id, buf] of Object.entries(snapshot)) {
-                    next[id] = (next[id] || '') + buf
-                  }
-                  return next
-                })
-              }, 100)
-            }
-          }
+          applyEvent(event)
         }
       }
     } catch (err) {
@@ -258,7 +294,7 @@ export function useChat(sessionId: string | null) {
       setLoading(false)
       abortRef.current = null
     }
-  }, [sessionId])
+  }, [sessionId, applyEvent])
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
