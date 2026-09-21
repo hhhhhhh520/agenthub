@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v7（§3.1 收口后） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v9（阶段二收口） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -15,6 +15,7 @@
 | v6 | 2026-09-21 | CI 首次实测（PR#1）两轮整改后全绿：① ubuntu 上 4 测试文件红（Windows 平台假设：opencode 虚拟路径/process-registry 信号语义/shadow-git 元字符目录名）→ test job 换 windows-latest（测试跑目标运行平台）；② runner 无 git identity → CI 配 git config；③ lint-gate 按口径拦下安全批次触碰文件（process-registry.ts）4 个存量 error → 清零（门禁收敛机制首次实际生效），基线 52→48 errors；push 触发分支 main→master 审查抓出（v5 内） |
 | v7 | 2026-09-21 | §3.1 收口（2 commit，TDD +21 测试 + 2 独立审查 Agent）：四类过程事件持久化（AgentProcessEvent 表，thinking 截断 4K 拍板）+ seq 化推流 + GET events 重放端点 + 前端 EventSource 断线重连/seq 门/游标跨刷新；审查修复 🔴 abort 监听时序（interval 泄漏）、pollMs 下界、chat 锁泄漏（预存）、冗余索引；redo 改 SSE（三梯队第 7 项）一次消掉 |
 | v8 | 2026-09-21 | §3.2 收口（1 commit，TDD +14 测试 + 变异验证 4 组精确红 + 2 独立审查 Agent）：写入点清单拍板（docs/design/phase2-3.2-write-points.md）——transitionPhase 快照条件写 CAS（重读重算 3 次上限 fail-closed）+ Task 批次状态全写点条件化（B1 互斥闸门/ B2 completed 交互式事务联动弃权/ B3-B5/B7 前置条件）+ invalidateCliSession expectedFrom（redo 409 关 TOCTOU）；审查抓出 GET stuck reset updateMany 缺 status 前置一并收口；B8 修正、决策点 trace 拒绝型分歧记 ISSUE-025；范围拍板：不引入 generation 字段（状态前置条件写已覆盖全部已证实窗口，理由见清单文档 §2） |
+| v9 | 2026-09-21 | §3.4/§3.3 收口（2 commit，各 TDD + 2 独立审查 Agent + 变异精确红）：§3.4 monitoring 结构化——信号层纯函数（S1 git-truth 完成性/S2 outputSchema）+ EXPERIMENT_STRUCTURED_MONITOR 门控（on=结构化先行 LLM 降级第二道；未设=现状+反事实埋点 event:'monitor'）+ applyCorrection 统一助手（结构化/LLM 两臂同语义同遏制）+ preflight 命令红绿灯**不做**（RCE 面+schema 变更需单独拍板）；审查实证并修复 monitor 埋点丢 success trace 回归（B2 后内存 trace 未同步，基串改 successTrace + 同步补齐）；§3.3 启动 reconcile——in_progress 条件写置 pending + working 成员**无条件**清扫（审查 F1：成员残留与任务残留不必然共存）+ 周期 tick/半成品清理/phase 改动**不做**（拍板理由落档）；审查者读 Next 16.2.6 dist 源码实证 register 阻塞首个请求——启动竞态结构性闭合；A/B 数据=埋点装置就位、实验待跑（三梯队第 1 项 harness） |
 
 ---
 
@@ -99,16 +100,22 @@
 - ✅ **审查收口**：GET stuck reset 的 updateMany 补 status 前置（唯一能造成误 done 的残余写者）；决策点 trace 拒绝型分歧记 ISSUE-025（存量）。
 - 验收：✅ 回归基线 10 用例先红（现状无条件写全数击穿）；✅ 变异验证判别力 4 组（phase CAS 去条件/B1 去条件/B2 去条件/B6 忽略 expectedFrom → 各自精确红后还原全绿）；测试 1175→1189。
 
-### 3.3 执行中断恢复语义
+### 3.3 执行中断恢复语义 ✅ 2026-09-21 完成
 
-- 批次中断后能恢复，而非依赖锁超时行为。参考 codeg：reconcile tick + 以外部事实（git）为裁决 + 「半成品清理」路径。
+- ✅ **启动 reconcile**（reconcile.ts + instrumentation 接线）：in_progress 任务条件写置 pending（§3.2 纪律）+ SessionMember.working 无条件清扫（审查 F1：对齐期崩溃/GET 恢复后等场景成员残留不伴随任务残留）+ 按会话汇总留痕。审查者读 Next 16.2.6 dist 源码实证：首个 HTTP 请求阻塞至 register 完成——启动竞态窗口结构性闭合。
+- ✅ **与 GET stuck reset 的关系（评估拍板）**：启动收敛=主动无条件（单实例启动时刻必无活跃流）；运行中收敛=被动 5min 阈值+心跳保护。二者互补，周期 reconcile tick **不做**（单实例已闭环，常驻 tick 无对应场景）。
+- ✅ **半成品清理不做（拍板）**：AgentHub 无每任务 git 边界（codeg 依赖其 landed commit 结构），无法可靠区分半成品与有效产出；恢复语义=置 pending 重跑、由 agent 覆盖产出。phase 留 execution 不动（ISSUE-011 F2 有意设计）。
+- ✅ §3.1 衔接：恢复后续跑走 handleExecution→eventLogger 落库→前端 EventSource 补发（已有机制零改动）。
 
-### 3.4 monitoring 结构化（兼研究变量）
+### 3.4 monitoring 结构化（兼研究变量）✅ 2026-09-21 完成（preflight 命令红绿灯除外）
 
-- 现状（已核实）：`execution.ts:434` `executeSingleAgent` 让 Orchestrator 出 `needsCorrection`（`:460`），上限 `MAX_CORRECTION_RETRIES`（`:467`）——LLM 审 LLM。
-- 改法：git truth 完成性校验（declaredFiles 声明的文件是否真的变更）+ preflight 命令红绿灯，结构化检查前置，LLM 审查降级为可选第二道。
-- **兼研究**：结构化 vs LLM 审的纠偏触发率差异本身就是 A/B 实验（三梯队第 1 项）。
-- 注：与 §2.4 撞同一段代码（`execution.ts:471-488` 纠偏路径），排期时合并处理。
+- ✅ **信号层纯函数**（structured-monitor.ts）：S1 git-truth 完成性（declaredFiles 非空 + batch diff 非空 + 声明∩变更=空 → 声称完成但无产出；防御：diff 空=快照链路故障弃权）+ S2 outputSchema 校验（复用 validateAgainstSchema，no-schema 不参与）。
+- ✅ **门控接线**：`EXPERIMENT_STRUCTURED_MONITOR=on`（严格相等，对齐 seqgate 先例）→ 结构化 correction 直接触发纠偏（LLM 不跑，降级第二道）、verdict=pass → LLM 照跑（漏检率数据）；未设（生产默认）→ LLM 路径照旧 + 信号命中记 Task.trace event:'monitor'（反事实对比数据）。纠偏路径统一 applyCorrection 助手（两臂同语义同遏制）。
+- ✅ **A/B 埋点装置就位**：两臂信号均入 trace，纠偏触发率/重合度/漏检率可从 Task.trace 聚合——**实验本身待跑**（三梯队第 1 项 harness 消费）。
+- ⏸ **preflight 命令红绿灯不做**：LLM 输出进命令=RCE 面（spawn 注入同族）+ 需 schema 变更（verifyCommands 来源拍板）——需单独安全设计后再排期。
+- 审查实证并修复回归：monitor 埋点曾以过期内存 trace 为基串覆盖 DB 丢 success 事件（B2 后内存未同步）——基串改 successTrace + 同步补齐。
+
+**阶段验收**：断线不丢流（完整重放，含四类过程事件）✓、中断可恢复 ✓、重复执行结构性不可能 ✓（§3.2 B1 互斥闸门）、monitoring 有结构化层 ✓ + A/B 数据（装置就位、实验待跑）；每项先证明会红 ✓（基线红测试 22 用例 + 变异精确红 8 组：§3.2 四组/§3.4 两组/§3.3 两组）。
 
 **阶段验收**：断线不丢流（完整重放，含四类过程事件）、中断可恢复、重复执行结构性不可能、monitoring 有结构化层 + A/B 数据；每项先证明会红。
 
@@ -155,7 +162,7 @@
 
 - 任务板 / worktree 编排 / 移动端 / 15 agents / 多语种——产品广度，同赛道比肌肉必输。
 - SaaS、多租户、Docker 分发。
-- 实验开关留在生产热路径：现状 `applyTransitionWithOverride` / `isExperimentOff` / `idlePrematureDoneGate` 的调用点在 `chat-router.ts`（`:94/:121/:160`，`:9` 为 import 行；已核实）——seqgate 转正时移出。**加硬时限：转正条件（可分析会话 ≥20 且命中 ≥5）若 3 个月内未满足，也强制移出**，避免"两套机制并存期过长"无人触发。
+- 实验开关留在生产热路径：现状 `applyTransitionWithOverride` / `isExperimentOff` / `idlePrematureDoneGate` 的调用点在 `chat-router.ts`（`:94/:121/:160`，`:9` 为 import 行；已核实）；v9 起 `isStructuredMonitorOn` 的调用点在 `execution.ts` 监控块（§3.4，同族）——seqgate/structured-monitor 转正时移出。**加硬时限：转正条件（可分析会话 ≥20 且命中 ≥5；structured-monitor 为 A/B 实验完成且结论落档）若 3 个月内未满足，也强制移出**，避免"两套机制并存期过长"无人触发。
 
 ---
 
