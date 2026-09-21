@@ -7,7 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 测试套件在 Windows 上开发（本机即 Windows）：opencode 虚拟路径 /
+    # process-registry 信号语义 / shadow-git 目录名含 shell 元字符等均依赖
+    # Windows 行为——ubuntu 首跑 4 文件红（2026-09-21 PR#1 实测），测试跑在
+    # 目标运行平台（项目定位：只在本机 Windows 运行）。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -15,6 +19,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # shadow-git 集成测试会真实 git commit；runner 无全局 git identity，不配则
+      # "shadow init" commit 失败（本地能过是因为本机有全局配置）
+      - run: |
+          git config --global user.email "ci@agenthub.local"
+          git config --global user.name "agenthub-ci"
 
       - run: npm ci
 
