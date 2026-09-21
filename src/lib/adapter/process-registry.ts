@@ -754,9 +754,8 @@ class ProcessRegistry {
               }
             })
             this.requestIdToKey.set(requestId, key)
-            let permissionPromise: Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>
-            permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: any }>((resolve) => {
-              const wrappedResolve = (response: { behavior: 'allow' | 'deny'; updatedInput?: any }) => {
+            const permissionPromise = new Promise<{ behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }>((resolve) => {
+              const wrappedResolve = (response: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown> }) => {
                 resolve(response)
                 // 防御未来同步 short-circuit resolve 路径；当前所有调用路径都是异步的（respondPermission /
                 // respondPermissionByRequestId / control_cancel_request），守卫不拦真实回归。
