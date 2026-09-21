@@ -455,6 +455,10 @@ export async function handleExecution(
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'completed' }) })
       hasProgress = true
 
+      // 声明交集（declared∩changed，normalized 口径）：完成消息与监控 prompt 审计共用。
+      // 监控 prompt 的"实际修改的声明文件"必须填真实交集而非声明清单——
+      // 谎报会让审查 LLM 对 ghost 类缺陷（声称完成但声明文件未动）系统性漏检（monitor A/B 安全审查发现）
+      const attributed = changedFiles.filter(f => normalizedDeclared.includes(normalizePath(f)))
       // contract v1 §1.2 b: 普通越界软警告(敏感越界已在上方硬失败 + continue 处理)
       if (undeclared.length > 0) {
         const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${undeclared.join(', ')}`
@@ -465,7 +469,6 @@ export async function handleExecution(
         // changedFiles 是 batch 级快照差异,含同批其他任务的文件——此前
         // 无声明文件的任务(PRD/文档)会把同批存储层文件串报成自己的。
         // declaredFiles 为空的任务无声明范围,只发"完成"不列文件。
-        const attributed = changedFiles.filter(f => normalizedDeclared.includes(normalizePath(f)))
         const fileNote = attributed.length > 0 ? `,修改了 ${attributed.join(', ')}` : ''
         sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成${fileNote}` })
       } else {
@@ -553,7 +556,7 @@ export async function handleExecution(
         }
       } else {
         try {
-          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: declaredFiles, undeclared })
+          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: attributed, undeclared })
           const orch = await getOrchestratorAgent()
           const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
           const { result: reviewResult } = await Promise.race([
