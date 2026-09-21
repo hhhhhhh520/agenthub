@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v5（§2.1/§2.3/§2.4 收口后） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v7（§3.1 收口后） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -13,6 +13,7 @@
 | v4 | 2026-09-20 | 提交前 pre-commit 审查整改：v2/v3 残留回扫（5 处"待拍板"字样 + 1 处与"修彻底"冲突的退路 + 头部版本号）；`route.ts:70` → `:101` 行号修正（真实清理点在 DELETE handler）；交叉引用记法统一 |
 | v5 | 2026-09-21 | §2.1/§2.3/§2.4 收口（每项 TDD + 守卫变异验证 + 2 独立审查 Agent）：§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）；§2.3 孤儿清扫（启动时 instrumentation 扫描，junction rootDir 收口；覆盖面诚实口径 + 2 项后续待办）；§2.1 CI（vitest+build+改动文件 lint 门禁+phase 架构守卫，tests/ no-explicit-any 放宽后基线 362→52 errors）；§1 判据表/附录 A 数字同步 |
 | v6 | 2026-09-21 | CI 首次实测（PR#1）两轮整改后全绿：① ubuntu 上 4 测试文件红（Windows 平台假设：opencode 虚拟路径/process-registry 信号语义/shadow-git 元字符目录名）→ test job 换 windows-latest（测试跑目标运行平台）；② runner 无 git identity → CI 配 git config；③ lint-gate 按口径拦下安全批次触碰文件（process-registry.ts）4 个存量 error → 清零（门禁收敛机制首次实际生效），基线 52→48 errors；push 触发分支 main→master 审查抓出（v5 内） |
+| v7 | 2026-09-21 | §3.1 收口（2 commit，TDD +21 测试 + 2 独立审查 Agent）：四类过程事件持久化（AgentProcessEvent 表，thinking 截断 4K 拍板）+ seq 化推流 + GET events 重放端点 + 前端 EventSource 断线重连/seq 门/游标跨刷新；审查修复 🔴 abort 监听时序（interval 泄漏）、pollMs 下界、chat 锁泄漏（预存）、冗余索引；redo 改 SSE（三梯队第 7 项）一次消掉 |
 
 ---
 
@@ -81,16 +82,13 @@
 
 目标：把「研究装置」升级为「可依赖装置」。
 
-### 3.1 SSE 事件序号 + 重放（最高优先）
+### 3.1 SSE 事件序号 + 重放（最高优先）✅ 2026-09-21 完成
 
-- 现状（已核实）：POST fetch 流手动分帧，无自动重连、无 Last-Event-ID；task_status 走轮询是**显式设计**（`use-chat.ts:184` 注释"handled by the agent panel polling"），不是缺陷。
-- 改法：SSE 事件带 seq；前端重连带 Last-Event-ID；后端补发缺口。
-- **🔴 审查抓出的覆盖缺口**：thinking / tool_use / tool_result / permission_request 四类事件**不落库**（全仓只流式 emit），"从 Message 表补发"覆盖不了它们。
-- **✅ 已拍板（2026-09-20）：修彻底** —— 给四类事件加持久化（新表/新列），实现完整重放。设计要点：
-  - 容量上限与清理策略（参照 decisionTrace 的封顶模式，防无界增长）；
-  - 隐私口径（thinking 全文是否入库需确认，可考虑截断/可选开关）；
-  - 写入时序：先落库再 emit（沿用"决策先落库再派发"的既有原则）。
-- 一次消掉：刷新丢流、redo 改 SSE（三梯队第 7 项）。
+- ✅ **四类过程事件持久化**（已拍板修彻底）：新表 `AgentProcessEvent`（sessionId+seq 唯一，随 session 级联删）——thinking/tool_use/tool_result/permission_request + permission_cancel 五类；text/error 成品仍由 Message 表承载（重放不重复）。**隐私口径（2026-09-21 拍板）：thinking 截断 4K 字符入库**；封顶 500 条/session（先 trim 后 create 硬上限，首触顶 warn 对齐 decisionTrace 模式）。db push 应用（migration 历史与库早已 drift，migrate dev 会要求 reset 丢数据）。
+- ✅ **seq 化推流 + 重放端点**：chat route 持久化帧带 seq（streamClosed 后仍落库不推流——刷新补发前提）；`GET /api/sessions/[id]/events`（Last-Event-ID 优先、补发带 replay 标记 + DB 轮询增量、abort 窗口防御）；redo noopSendEvent 退役（三梯队第 7 项一次消掉）。
+- ✅ **前端断线重连**：EventSource 常驻 + seq 单调门去重（双通道）+ 游标 sessionStorage 跨刷新恢复（精准补发断线窗口）+ permission_request 补发不重新弹窗。
+- **审查抓出并修复**：🔴 events 端点 abort 监听注册晚于 backlog await（补发期间断开 → interval 泄漏至进程重启，StrictMode 可稳定触发）→ 顶部注册 + aborted 主动检查（变异验证精确红→还原）；⚠️ pollMs 无下界（钳制 50ms）；⚠️ chat finally 二次 close 跳过锁释放（预存，包 try/catch）；⚠️ 唯一约束冗余索引去除。**遗留待办**：tool_result/tool_use 单行体积无截断口径（本机自用可接受）。
+- 验收：断线不丢流（含四类过程事件）✓；测试 1175 passed / 3 skipped（+21 全部先红后绿）；2 独立审查 Agent（声明一致性 10/10）。
 
 ### 3.2 generation CAS 统一状态写入
 
@@ -208,7 +206,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1154 passed / 3 skipped（2026-09-21；v4 记录 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1175 passed / 3 skipped（2026-09-21 §3.1 后；v6 记录 1154、v4 记录 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

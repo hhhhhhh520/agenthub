@@ -8,7 +8,7 @@
 [![CI](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml/badge.svg)](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1154%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1175%20passing-brightgreen)](tests/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
 [![Prisma](https://img.shields.io/badge/Prisma-7-2D3748)](https://www.prisma.io)
@@ -29,7 +29,7 @@
 - **会话锁 fail-closed** — 同一会话串行执行，等锁超时回 429 绝不并发写状态，杜绝 phase 写入竞态
 - **进程池 + 配置指纹** — 每（会话，Agent，配置）独立 CLI 进程，配置 hash 隔离，10 分钟空闲回收，优雅关闭
 - **双 CLI 适配层** — Claude Code + OpenCode 统一抽象，spawn 子进程 + NDJSON 流式解析，工具白名单硬限制
-- **测试质量方法论** — 1154 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）+ CI 门禁（vitest 全量 + build + 改动文件 lint 0-error + phase 写入架构守卫）
+- **测试质量方法论** — 1175 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）+ CI 门禁（vitest 全量 + build + 改动文件 lint 0-error + phase 写入架构守卫）
 
 ## 💬 功能
 
@@ -128,7 +128,9 @@ npm test
 E2E=1 npm run test:e2e
 ```
 
-测试现状（2026-09-21）：1154 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
+测试现状（2026-09-21）：1175 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
+
+**断线不丢流**：四类过程事件（thinking/tool_use/tool_result/permission）持久化（thinking 截断 4K、每 session 封顶 500 条），SSE 帧带 seq，断线/刷新后 EventSource 自动重连按游标补发断线窗口。
 
 CI（GitHub Actions，PR#1 实测全绿）：vitest 全量 + `next build` + 改动文件 lint 门禁（0 error，warning 不阻塞）+ 架构守卫（`phase` 字段只允许在 state-machine.ts 写入）；测试跑 windows-latest（目标运行平台）；存量 lint 48 errors / 83 warnings 不阻塞，逐步收敛
 
