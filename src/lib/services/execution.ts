@@ -71,6 +71,16 @@ function appendTrace(existing: string, entry: TraceEntry): string {
   }
 }
 
+/** §3.2 条件写失败后的状态同步：重读 DB 真值回填内存（best-effort，不击穿批次循环） */
+async function syncTaskStatusFromDb(task: { id: string; status: string }): Promise<void> {
+  try {
+    const fresh = await prisma.task.findUnique({ where: { id: task.id }, select: { status: true } })
+    if (fresh) task.status = fresh.status
+  } catch (err) {
+    console.warn(`[execution] 任务 ${task.id} 状态重读失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 export async function handleExecution(
   message: string,
   sessionId: string,
@@ -161,8 +171,10 @@ export async function handleExecution(
       if (task.status !== 'blocked') continue
       const reviveDeps: string[] = JSON.parse(task.dependencies || '[]')
       if (reviveDeps.length > 0 && reviveDeps.every(depId => tasks.find(t2 => t2.id === depId)?.status === 'completed')) {
+        // §3.2 B5: 条件写——复活仅在仍为 blocked 时成立（他人已转移则弃权）
+        const revived = await prisma.task.updateMany({ where: { id: task.id, status: 'blocked' }, data: { status: 'pending' } })
+        if (revived.count === 0) continue
         task.status = 'pending'
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'pending' } })
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'pending' }) })
       }
     }
@@ -181,19 +193,29 @@ export async function handleExecution(
     // Create shadow-git snapshot at batch level for boundary detection
     const gitBefore = getGitSnapshot(projectRoot, sessionId)
 
+    // §3.2 B1: 互斥闸门——pending→in_progress 条件写。双流并发（abort 释放锁后的僵尸流 + 新流）
+    // 时后到者 count=0 被剔除出批：同一任务同时只有一个执行流，重复执行结构性不可能。
+    const batchTasks: typeof readyTasks = []
     for (const task of readyTasks) {
       const startTrace = appendTrace(task.trace || '[]', {
         ts: new Date().toISOString(), event: 'start', agent: agents.find(a => a.id === task.assignedAgentId)?.name,
       })
-      await prisma.task.update({ where: { id: task.id }, data: { status: 'in_progress', trace: startTrace } })
+      const mark = await prisma.task.updateMany({ where: { id: task.id, status: 'pending' }, data: { status: 'in_progress', trace: startTrace } })
+      if (mark.count === 0) {
+        // 条件写失败：状态已被其他写者转移（GET stuck reset / 另一执行流）。重读同步内存后弃权。
+        await syncTaskStatusFromDb(task)
+        console.warn(`[execution] 任务 ${task.id} 标记 in_progress 失败（状态已被其他写者转移，当前=${task.status}），本批剔除`)
+        continue
+      }
       task.status = 'in_progress'
       task.trace = startTrace
+      batchTasks.push(task)
       sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'in_progress' }) })
     }
 
     // Heartbeat: update updatedAt every 60s to prevent stuck task reset
     const heartbeats = new Map<string, NodeJS.Timeout>()
-    for (const task of readyTasks) {
+    for (const task of batchTasks) {
       const heartbeat = setInterval(async () => {
         try { await prisma.task.update({ where: { id: task.id }, data: { updatedAt: new Date() } }) }
         catch {}
@@ -210,8 +232,12 @@ export async function handleExecution(
     // 甚至被审查 LLM 置回 pending 触发无界重执行(见 A方向规划 3.3 主修法)
     let preloadedIds = new Set<string>()
     try {
+      // §3.2 B1: 全部任务被互斥闸门剔除时不发起批次执行（另一流正在执行这些任务）
+      if (batchTasks.length === 0) {
+        results = new Map()
+      } else {
       const batchOutcome = await executeTaskBatch(
-        readyTasks.map(t => {
+        batchTasks.map(t => {
           // P1: 纠偏重试时注入越界信息
           let desc = t.description
           if (t.correctionCount > 0) {
@@ -253,12 +279,19 @@ export async function handleExecution(
       batchFailedIds = batchOutcome.failedTaskIds
       batchFailedReasons = batchOutcome.failedTaskReasons ?? {}
       preloadedIds = new Set(batchOutcome.preloadedIds ?? [])
+      }
     } catch (err) {
-      for (const task of readyTasks) {
+      for (const task of batchTasks) {
         const failTrace = appendTrace(task.trace || '[]', {
           ts: new Date().toISOString(), event: 'error', message: err instanceof Error ? err.message : 'Task batch execution failed',
         })
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'failed', trace: failTrace } })
+        // §3.2 B3: 条件写——仅当任务仍在本流 in_progress 时成立
+        const failed = await prisma.task.updateMany({ where: { id: task.id, status: 'in_progress' }, data: { status: 'failed', trace: failTrace } })
+        if (failed.count === 0) {
+          console.warn(`[execution] 任务 ${task.id} failed 条件写失败（状态已被其他写者转移），弃权`)
+          await syncTaskStatusFromDb(task)
+          continue
+        }
         task.status = 'failed'
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
       }
@@ -278,7 +311,13 @@ export async function handleExecution(
         const failTrace = appendTrace(task.trace || '[]', {
           ts: new Date().toISOString(), event: 'error', message: failReason,
         })
-        await prisma.task.update({ where: { id: taskId }, data: { status: 'failed', trace: failTrace } })
+        // §3.2 B3: 条件写——仅当任务仍在本流 in_progress 时成立
+        const failed = await prisma.task.updateMany({ where: { id: taskId, status: 'in_progress' }, data: { status: 'failed', trace: failTrace } })
+        if (failed.count === 0) {
+          console.warn(`[execution] 任务 ${taskId} failed 条件写失败（状态已被其他写者转移），弃权`)
+          await syncTaskStatusFromDb(task)
+          continue
+        }
         task.status = 'failed'
         task.trace = failTrace  // 内存同步,与 DB 一致(失败任务 trace 供后续读取时不留缺 error 事件的旧值)
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
@@ -318,15 +357,21 @@ export async function handleExecution(
         // ⚠️-C2 修复:task + SessionMember 两表更新包事务(语义由统一入口承载)
         // contract v1 §1.3 P0 (动作 7): 敏感失败清 cliSessionId,避免该 agent
         // 进程内存里"我交付成功"的错误信念污染后续任务(roadmap §2.4)
+        // §3.2 B6: expectedFrom 前置条件——仅当任务仍在本流 in_progress 时失效写才成立
         const agentId = taskForTrace?.assignedAgentId
-        await invalidateCliSession({
+        const inv = await invalidateCliSession({
           taskId,
           sessionId,
           agentId,
+          expectedFrom: 'in_progress',
           taskData: { status: 'failed', trace: failTrace },
         })
+        if (!inv.applied) {
+          // 任务已被其他写者转移（新流已重置/推进），本流的失效写弃权，只保留可见警告
+          console.warn(`[execution] 任务 ${taskId} 敏感越界失效写被条件写拦下（状态已被其他写者转移），弃权`)
+        }
         if (agentId) memberSessionMap.set(agentId, null)
-        if (taskForTrace) taskForTrace.status = 'failed'
+        if (taskForTrace && inv.applied) taskForTrace.status = 'failed'
         await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
         sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
@@ -364,9 +409,14 @@ export async function handleExecution(
       // F10 修复:task + SessionMember 两表更新包事务,保持 ⚠️-C2 一致性
       // (C2 只修了 failure/correction 路径,success 路径同源风险被遗漏 — review 抓出)
       const successAgentId = taskForTrace?.assignedAgentId
-      await prisma.$transaction([
-        prisma.task.update({
-          where: { id: taskId },
+      // §3.2 B2: completed 条件写 + member 联动（交互式事务）——仅当任务仍在本流
+      // in_progress 时完成写才成立；count=0（被 GET stuck reset / 其他流转移）→ 弃权：
+      // result 不落库、member 不写（防"任务被拒但 member 记了新 session"的脏 fallback，
+      // 正是动作 7 防的状态污染方向）。
+      let completed = true
+      await prisma.$transaction(async (tx) => {
+        const res = await tx.task.updateMany({
+          where: { id: taskId, status: 'in_progress' },
           data: {
             status: 'completed',
             correctionCount: 0,
@@ -374,14 +424,23 @@ export async function handleExecution(
             result,
             ...(cliSessionId ? { cliSessionId } : {}),
           },
-        }),
-        ...(cliSessionId && successAgentId ? [
-          prisma.sessionMember.updateMany({
+        })
+        if (res.count === 0) {
+          completed = false
+          return
+        }
+        if (cliSessionId && successAgentId) {
+          await tx.sessionMember.updateMany({
             where: { sessionId, agentId: successAgentId },
             data: { cliSessionId },
           })
-        ] : [])
-      ])
+        }
+      })
+      if (!completed) {
+        console.warn(`[execution] 任务 ${taskId} completed 条件写失败（状态已被其他写者转移），弃权本次结果与 monitoring`)
+        if (taskForTrace) await syncTaskStatusFromDb(taskForTrace)
+        continue
+      }
       if (taskForTrace) taskForTrace.result = result
       // 同步 sessionId 到内存 memberSessionMap,供后续任务 fallback(事务外纯内存)
       if (cliSessionId && successAgentId) {
@@ -462,17 +521,25 @@ export async function handleExecution(
               // contract v1 §1.3 P0 (动作 7): 纠偏退回 pending 时清 cliSessionId
               // task.result 即将被推翻重写,agent 历史里"我做对了"的认知是脏数据,起新 session 重来
               // (两表事务语义由统一入口 invalidateCliSession 承载,roadmap §2.4)
+              // §3.2 B6: expectedFrom='completed' 前置——僵尸流的晚到纠偏写不得覆盖
+              // 新流已推进的状态（新流已把任务 redo 后推进时，条件写不匹配 → 弃权）
               const agentId = taskForTrace?.assignedAgentId
-              await invalidateCliSession({
+              const inv = await invalidateCliSession({
                 taskId,
                 sessionId,
                 agentId,
+                expectedFrom: 'completed',
                 taskData: { status: 'pending', correctionCount: retryCount + 1, trace: correctionTrace },
               })
-              if (agentId) memberSessionMap.set(agentId, null)
-              if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
-              sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
-              hasProgress = true
+              if (!inv.applied) {
+                console.warn(`[execution] 任务 ${taskId} 纠偏退回被条件写拦下（状态已被其他写者转移），弃权`)
+                if (task) await syncTaskStatusFromDb(task)
+              } else {
+                if (agentId) memberSessionMap.set(agentId, null)
+                if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
+                sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })
+                hasProgress = true
+              }
             } else {
               sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 "${task?.description}" 纠偏重试已达上限(${MAX_CORRECTION_RETRIES}次)，保持完成状态` })
             }
@@ -495,7 +562,9 @@ export async function handleExecution(
         const blockedTrace = appendTrace(task.trace || '[]', {
           ts: new Date().toISOString(), event: 'blocked', message: '依赖任务失败',
         })
-        await prisma.task.update({ where: { id: task.id }, data: { status: 'blocked', trace: blockedTrace } })
+        // §3.2 B4: 条件写——blocked 只从 pending 级联；已被他人转移（如另一流已标 in_progress）则弃权
+        const blocked = await prisma.task.updateMany({ where: { id: task.id, status: 'pending' }, data: { status: 'blocked', trace: blockedTrace } })
+        if (blocked.count === 0) { await syncTaskStatusFromDb(task); continue }
         task.status = 'blocked'
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'blocked' }) })
       }

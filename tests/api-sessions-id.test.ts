@@ -85,8 +85,10 @@ describe('GET /api/sessions/[id]', () => {
     const json = await res.json()
     expect(json.recoveredTaskCount).toBe(1)
     expect(json.tasks[0].status).toBe('pending') // 返回数据中也更新了
+    // §3.2: where 补 status 前置——findMany 与 updateMany 之间执行流可能已写 completed，
+    // 无条件重置会丢结果 + 造成 DB pending/内存 completed 漂移（变异锚点：去 status 必红）
     expect(mockTaskUpdateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['t1'] } },
+      where: { id: { in: ['t1'] }, status: 'in_progress' },
       data: { status: 'pending' },
     })
   })

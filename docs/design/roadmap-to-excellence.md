@@ -14,6 +14,7 @@
 | v5 | 2026-09-21 | §2.1/§2.3/§2.4 收口（每项 TDD + 守卫变异验证 + 2 独立审查 Agent）：§2.4 invalidateCliSession 统一入口（6 处散点→1 函数）；§2.3 孤儿清扫（启动时 instrumentation 扫描，junction rootDir 收口；覆盖面诚实口径 + 2 项后续待办）；§2.1 CI（vitest+build+改动文件 lint 门禁+phase 架构守卫，tests/ no-explicit-any 放宽后基线 362→52 errors）；§1 判据表/附录 A 数字同步 |
 | v6 | 2026-09-21 | CI 首次实测（PR#1）两轮整改后全绿：① ubuntu 上 4 测试文件红（Windows 平台假设：opencode 虚拟路径/process-registry 信号语义/shadow-git 元字符目录名）→ test job 换 windows-latest（测试跑目标运行平台）；② runner 无 git identity → CI 配 git config；③ lint-gate 按口径拦下安全批次触碰文件（process-registry.ts）4 个存量 error → 清零（门禁收敛机制首次实际生效），基线 52→48 errors；push 触发分支 main→master 审查抓出（v5 内） |
 | v7 | 2026-09-21 | §3.1 收口（2 commit，TDD +21 测试 + 2 独立审查 Agent）：四类过程事件持久化（AgentProcessEvent 表，thinking 截断 4K 拍板）+ seq 化推流 + GET events 重放端点 + 前端 EventSource 断线重连/seq 门/游标跨刷新；审查修复 🔴 abort 监听时序（interval 泄漏）、pollMs 下界、chat 锁泄漏（预存）、冗余索引；redo 改 SSE（三梯队第 7 项）一次消掉 |
+| v8 | 2026-09-21 | §3.2 收口（1 commit，TDD +14 测试 + 变异验证 4 组精确红 + 2 独立审查 Agent）：写入点清单拍板（docs/design/phase2-3.2-write-points.md）——transitionPhase 快照条件写 CAS（重读重算 3 次上限 fail-closed）+ Task 批次状态全写点条件化（B1 互斥闸门/ B2 completed 交互式事务联动弃权/ B3-B5/B7 前置条件）+ invalidateCliSession expectedFrom（redo 409 关 TOCTOU）；审查抓出 GET stuck reset updateMany 缺 status 前置一并收口；B8 修正、决策点 trace 拒绝型分歧记 ISSUE-025；范围拍板：不引入 generation 字段（状态前置条件写已覆盖全部已证实窗口，理由见清单文档 §2） |
 
 ---
 
@@ -90,10 +91,13 @@
 - **审查抓出并修复**：🔴 events 端点 abort 监听注册晚于 backlog await（补发期间断开 → interval 泄漏至进程重启，StrictMode 可稳定触发）→ 顶部注册 + aborted 主动检查（变异验证精确红→还原）；⚠️ pollMs 无下界（钳制 50ms）；⚠️ chat finally 二次 close 跳过锁释放（预存，包 try/catch）；⚠️ 唯一约束冗余索引去除。**遗留待办**：tool_result/tool_use 单行体积无截断口径（本机自用可接受）。
 - 验收：断线不丢流（含四类过程事件）✓；测试 1175 passed / 3 skipped（+21 全部先红后绿）；2 独立审查 Agent（声明一致性 10/10）。
 
-### 3.2 generation CAS 统一状态写入
+### 3.2 generation CAS 统一状态写入 ✅ 2026-09-21 完成
 
-- 把 decisionTrace 的乐观锁模式推广到所有 phase / 批次写入，消除竞态类问题的结构性成因。
-- 验收：**先建回归基线 + 变异验证判别力**（项目自己在 ISSUE-022 用过这套：改回 fail-open → 精确红 3 个新用例）。
+- ✅ **写入点清单先行**（docs/design/phase2-3.2-write-points.md）：全景 A1-A4/B1-B10/C1-C2 逐点评估 + 窗口分析（abort 提前释放锁的僵尸流双写窗口实证）+ 范围拍板（不引入 generation 字段：状态前置条件写已结构性覆盖，generation 的增量价值只在 §3.3 需要批次纪元时再评估）。
+- ✅ **phase 写入 CAS**：transitionPhase 改快照条件写（updateMany where {id, phase, phaseStep}=读时快照）+ 冲突重读重算（3 次上限）+ 仍冲突/非法 fail-closed 拒写；trace 条目用最终成功轮的快照。
+- ✅ **Task 批次状态条件化**：B1 pending→in_progress 互斥闸门（count=0 剔除出批+重读同步——重复执行结构性不可能）；B2 completed 交互式事务（count=0 时 result 不落、member 不写、跳过 monitoring）；B3/B4/B5/B7 前置条件写；B6 invalidateCliSession 加 expectedFrom（敏感='in_progress'/纠偏='completed'/redo=['failed','blocked']→409 关 TOCTOU）。
+- ✅ **审查收口**：GET stuck reset 的 updateMany 补 status 前置（唯一能造成误 done 的残余写者）；决策点 trace 拒绝型分歧记 ISSUE-025（存量）。
+- 验收：✅ 回归基线 10 用例先红（现状无条件写全数击穿）；✅ 变异验证判别力 4 组（phase CAS 去条件/B1 去条件/B2 去条件/B6 忽略 expectedFrom → 各自精确红后还原全绿）；测试 1175→1189。
 
 ### 3.3 执行中断恢复语义
 

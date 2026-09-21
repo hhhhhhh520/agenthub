@@ -12,6 +12,7 @@ const {
   mockTaskUpdateMany,
   mockSessionFindUnique,
   mockSessionUpdate,
+  mockSessionUpdateMany,
   mockMessageFindMany,
   mockMessageCreate,
   mockSessionMemberFindMany,
@@ -22,14 +23,15 @@ const {
   mockTaskUpdateMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockSessionUpdate: vi.fn(),
+  mockSessionUpdateMany: vi.fn(),
   mockMessageFindMany: vi.fn(),
   mockMessageCreate: vi.fn(),
   mockSessionMemberFindMany: vi.fn(),
   mockSessionMemberUpdateMany: vi.fn(),
 }))
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db', () => {
+  const prisma = {
     task: {
       findMany: mockTaskFindMany,
       update: mockTaskUpdate,
@@ -38,6 +40,7 @@ vi.mock('@/lib/db', () => ({
     session: {
       findUnique: mockSessionFindUnique,
       update: mockSessionUpdate,
+      updateMany: mockSessionUpdateMany,
     },
     message: {
       findMany: mockMessageFindMany,
@@ -48,9 +51,14 @@ vi.mock('@/lib/db', () => ({
       updateMany: mockSessionMemberUpdateMany,
     },
     // F10:execution.ts success 路径用 $transaction 包两表
-    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
-  },
-}))
+    // §3.2: 双形态 shim——数组式（invalidateCliSession）+ 交互式（success 路径 completed 条件写，tx 即 prisma mock 本身）
+    $transaction: (opsOrFn: unknown) =>
+      typeof opsOrFn === 'function'
+        ? (opsOrFn as (tx: typeof prisma) => unknown)(prisma)
+        : Promise.all(opsOrFn as Promise<unknown>[]),
+  }
+  return { prisma }
+})
 
 vi.mock('@/lib/orchestrator', () => ({
   executeTaskBatch: vi.fn(),
@@ -90,6 +98,12 @@ describe('contract v1 §1.1: task.result 持久化', () => {
     mockMessageFindMany.mockResolvedValue([])
     mockMessageCreate.mockResolvedValue({})
     mockSessionUpdate.mockResolvedValue({})
+    mockSessionUpdateMany.mockResolvedValue({ count: 1 })
+    // §3.2: 状态写经 task.updateMany 条件写——转发记录到 mockTaskUpdate，复用既有调用形状断言
+    mockTaskUpdateMany.mockImplementation(async ({ where, data }: { where: { id?: string }; data: Record<string, unknown> }) => {
+      mockTaskUpdate({ where: { id: where?.id }, data })
+      return { count: 1 }
+    })
     mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
     mockSessionMemberFindMany.mockResolvedValue([])
     mockSessionMemberUpdateMany.mockResolvedValue({ count: 0 })

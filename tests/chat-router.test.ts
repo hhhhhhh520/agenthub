@@ -198,10 +198,11 @@ describe('handleOrchestratorDecision', () => {
     // 回归守卫:必须经 transitionPhase(先读 state 再写),回退为裸 prisma.session.update 必红
     // P4 T1: transitionPhase 读 select 含 decisionTrace(补记代码驱动转移需读当前值)
     expect(mockSessionFindUnique).toHaveBeenCalledWith({ where: { id: 's1' }, select: { phase: true, phaseStep: true, decisionTrace: true } })
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 's1' }), data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
-    // P4 T1: 决策点记 done(1 次 updateMany) + transitionPhase recordTrace:false 抑制 → 不双记,总恰 1 次
-    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(1)
+    // P4 T1: 决策点记 done(1 次 updateMany) + transitionPhase recordTrace:false 抑制 trace → 不双记
+    // §3.2: transitionPhase 的 phase 写也走 updateMany（快照条件写）→ 共 2 次（1 trace + 1 phase）
+    expect(mockSessionUpdateMany).toHaveBeenCalledTimes(2)
   })
 
   it('getOrchestratorDecision throws → falls back to handleOrchestratorChat', async () => {
@@ -269,7 +270,7 @@ describe('handleOrchestratorDecision', () => {
     mockSessionFindUnique.mockResolvedValueOnce({ phase: 'execution', phaseStep: '' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 's1' }), data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写
   })
 
   it('P2 回归守卫 T2: exec + done + verify 任务 blocked → 不关闭会话,redirect execute', async () => {
@@ -280,7 +281,7 @@ describe('handleOrchestratorDecision', () => {
     // 旧代码: blocked 不在 unfinished → 直接 done;新代码: verify 未 completed → redirect execute
     expect(mockTransitionToExecution).toHaveBeenCalled()
     // P3 起 session.update 会被 decisionTrace 写入调用——只断言"没写 done phase"（trace 写是设计内行为）
-    expect(mockSessionUpdate).not.toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(mockSessionUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({ data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写
     // P3 声明vs实现审查 F5: verify-blocked 变体的 corrections 内容断言
     const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
     expect(JSON.parse(traceCall![0].data.decisionTrace)[0].corrections)
@@ -294,7 +295,7 @@ describe('handleOrchestratorDecision', () => {
     mockSessionFindUnique.mockResolvedValueOnce({ phase: 'execution', phaseStep: '' })
     await handleOrchestratorDecision('hello', 's1', agents, sendEvent, exec)
     expect(mockTransitionToExecution).not.toHaveBeenCalled()
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 's1' }), data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写
   })
 
   // ── P3 新增:决策输入 trace 回归守卫（§5.6 六字段,回退 trace 钩子必红）──
@@ -584,7 +585,7 @@ describe('P9-乙 seqgate 决策点接线', () => {
     expect(entry.corrections).toEqual([]) // 未拦
     expect(entry.actualTransition.action).toBe('done')
     expect(mockHandleArchitectPlan).not.toHaveBeenCalled()
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } }) // done handler 正常走
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 's1' }), data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写 // done handler 正常走
   })
 
   it('SEQGATE 未设 + 同输入 → 行为与 HEAD 完全一致（生产行为不变对照）', async () => {
@@ -597,7 +598,7 @@ describe('P9-乙 seqgate 决策点接线', () => {
     const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
     expect(entry.corrections).toEqual([]) // 现状：idle+done 表内容错边直通
     expect(entry.actualTransition.action).toBe('done')
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'done', phaseStep: '' } })
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: 's1' }), data: { phase: 'done', phaseStep: '' } })) // §3.2: 快照条件写
     expect(countSpy).not.toHaveBeenCalled() // 短路结构：未设开关不产生任何 task.count 查询
   })
 

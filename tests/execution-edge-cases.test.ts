@@ -4,31 +4,46 @@ import * as path from 'path'
 import * as os from 'os'
 
 // ── Mock declarations ──────────────────────────────────────────────
-const mocks = vi.hoisted(() => ({
-  mockSessionFindUnique: vi.fn(),
-  mockSessionUpdate: vi.fn(),
-  mockTaskFindMany: vi.fn(),
-  mockTaskUpdate: vi.fn(),
-  mockTaskCount: vi.fn(),
-  mockMessageFindMany: vi.fn().mockResolvedValue([]),
-  mockMessageCreate: vi.fn(),
-  mockExecuteTaskBatch: vi.fn(),
-  mockCallLLMForAnalysis: vi.fn(),
-  mockExecuteSingleAgent: vi.fn(),
-  mockGetOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' }),
-  mockGetChangedFiles: vi.fn().mockReturnValue([]),
-  mockGetGitSnapshot: vi.fn().mockReturnValue(new Set()),
-  mockBuildMonitoringPrompt: vi.fn().mockReturnValue('monitor prompt'),
-  mockBuildContextFromHistory: vi.fn().mockReturnValue(''),
-  mockEnforceFileOverlap: vi.fn(),
-  mockSessionMemberFindMany: vi.fn().mockResolvedValue([]),
-  mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
-}))
+const mocks = vi.hoisted(() => {
+  const mockSessionFindUnique = vi.fn()
+  const mockSessionUpdate = vi.fn()
+  const mockSessionUpdateMany = vi.fn().mockResolvedValue({ count: 1 })
+  const mockTaskFindMany = vi.fn()
+  const mockTaskUpdate = vi.fn()
+  const mockTaskCount = vi.fn()
+  // §3.2: 状态写经 task.updateMany 条件写——默认转发记录到 mockTaskUpdate（复用既有调用形状断言）+ count:1
+  const mockTaskUpdateMany = vi.fn().mockImplementation(async ({ where, data }: { where?: { id?: string }; data?: Record<string, unknown> }) => {
+    mockTaskUpdate({ where: { id: where?.id }, data })
+    return { count: 1 }
+  })
+  return {
+    mockSessionFindUnique,
+    mockSessionUpdate,
+    mockSessionUpdateMany,
+    mockTaskFindMany,
+    mockTaskUpdate,
+    mockTaskUpdateMany,
+    mockTaskCount,
+    mockMessageFindMany: vi.fn().mockResolvedValue([]),
+    mockMessageCreate: vi.fn(),
+    mockExecuteTaskBatch: vi.fn(),
+    mockCallLLMForAnalysis: vi.fn(),
+    mockExecuteSingleAgent: vi.fn(),
+    mockGetOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' }),
+    mockGetChangedFiles: vi.fn().mockReturnValue([]),
+    mockGetGitSnapshot: vi.fn().mockReturnValue(new Set()),
+    mockBuildMonitoringPrompt: vi.fn().mockReturnValue('monitor prompt'),
+    mockBuildContextFromHistory: vi.fn().mockReturnValue(''),
+    mockEnforceFileOverlap: vi.fn(),
+    mockSessionMemberFindMany: vi.fn().mockResolvedValue([]),
+    mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
+  }
+})
 
-vi.mock('@/lib/db', () => ({
-  prisma: {
-    session: { findUnique: mocks.mockSessionFindUnique, update: mocks.mockSessionUpdate },
-    task: { findMany: mocks.mockTaskFindMany, update: mocks.mockTaskUpdate, count: mocks.mockTaskCount },
+vi.mock('@/lib/db', () => {
+  const prisma = {
+    session: { findUnique: mocks.mockSessionFindUnique, update: mocks.mockSessionUpdate, updateMany: mocks.mockSessionUpdateMany },
+    task: { findMany: mocks.mockTaskFindMany, update: mocks.mockTaskUpdate, updateMany: mocks.mockTaskUpdateMany, count: mocks.mockTaskCount },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findMany: mocks.mockSessionMemberFindMany, updateMany: mocks.mockSessionMemberUpdateMany },
     // ⚠️-C2 修复:$transaction 接 promise 数组,逐项 await
@@ -36,9 +51,14 @@ vi.mock('@/lib/db', () => ({
     // 因为 .update() 已经立即 invoke mockTaskUpdate 了。
     // 所以测试里调用 prisma.$transaction([prisma.task.update(...), ...])
     // 等价于"逐项调 fn,收集 promise,然后 await all"——这正是 mock 行为
-    $transaction: (ops: Promise<unknown>[]) => Promise.all(ops),
-  },
-}))
+    // §3.2: 双形态 shim——数组式（invalidateCliSession）+ 交互式（success 路径 completed 条件写，tx 即 prisma mock 本身）
+    $transaction: (opsOrFn: unknown) =>
+      typeof opsOrFn === 'function'
+        ? (opsOrFn as (tx: typeof prisma) => unknown)(prisma)
+        : Promise.all(opsOrFn as Promise<unknown>[]),
+  }
+  return { prisma }
+})
 
 vi.mock('@/lib/orchestrator', () => ({
   executeTaskBatch: mocks.mockExecuteTaskBatch,
@@ -456,7 +476,8 @@ describe('Execution — safety limits', () => {
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
 
-    expect(mocks.mockSessionUpdate).toHaveBeenCalledWith(
+    // §3.2: transitionPhase 走 session.updateMany 快照条件写（无条件 update 退役）
+    expect(mocks.mockSessionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { phase: 'done', phaseStep: '' } })
     )
   })
@@ -1026,9 +1047,11 @@ describe('Execution — git diff boundary detection', () => {
     let txCallCount = 0
     const dbMod = await import('@/lib/db') as unknown as { prisma: { $transaction: (ops: Promise<unknown>[]) => Promise<unknown[]> } }
     const originalTx = dbMod.prisma.$transaction
-    dbMod.prisma.$transaction = vi.fn(async (ops: Promise<unknown>[]) => {
+    // §3.2: 双形态——success 路径交互式事务（回调）+ invalidateCliSession 数组式
+    dbMod.prisma.$transaction = vi.fn(async (opsOrFn: unknown) => {
       txCallCount++
-      return Promise.all(ops)
+      if (typeof opsOrFn === 'function') return (opsOrFn as (tx: unknown) => unknown)(dbMod.prisma)
+      return Promise.all(opsOrFn as Promise<unknown>[])
     })
 
     try {

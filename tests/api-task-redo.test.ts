@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const {
-  mockTaskFindUnique, mockTaskUpdate, mockTaskFindMany,
-  mockSessionFindUnique, mockSessionUpdate, mockMessageFindMany, mockAgentFindMany,
+  mockTaskFindUnique, mockTaskUpdate, mockTaskFindMany, mockTaskUpdateMany,
+  mockSessionFindUnique, mockSessionUpdate, mockSessionUpdateMany, mockMessageFindMany, mockAgentFindMany,
   mockSessionMemberUpdateMany, mockHandleExecution, mockAcquireSessionLock,
 } = vi.hoisted(() => ({
   mockTaskFindUnique: vi.fn(),
   mockTaskUpdate: vi.fn(),
+  mockTaskUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockTaskFindMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockSessionUpdate: vi.fn(),
+  mockSessionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockAgentFindMany: vi.fn().mockResolvedValue([]),
   mockSessionMemberUpdateMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -19,8 +21,8 @@ const {
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { findUnique: mockTaskFindUnique, update: mockTaskUpdate, findMany: mockTaskFindMany },
-    session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate },
+    task: { findUnique: mockTaskFindUnique, update: mockTaskUpdate, updateMany: mockTaskUpdateMany, findMany: mockTaskFindMany },
+    session: { findUnique: mockSessionFindUnique, update: mockSessionUpdate, updateMany: mockSessionUpdateMany },
     message: { findMany: mockMessageFindMany },
     agent: { findMany: mockAgentFindMany },
     sessionMember: { updateMany: mockSessionMemberUpdateMany },
@@ -69,6 +71,11 @@ beforeEach(() => {
   }])
   mockSessionMemberUpdateMany.mockResolvedValue({ count: 0 })
   mockHandleExecution.mockResolvedValue(undefined)
+  // §3.2: invalidateCliSession / 下游解锁走 task.updateMany 条件写——转发记录到 mockTaskUpdate，复用调用形状断言
+  mockTaskUpdateMany.mockImplementation(async ({ where, data }: { where: { id?: string }; data: Record<string, unknown> }) => {
+    mockTaskUpdate({ where: { id: where?.id }, data })
+    return { count: 1 }
+  })
 })
 
 describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
@@ -207,6 +214,43 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
     expect(unblock).toBeDefined()
   })
 
+  it('§3.2 B7: 下游解锁走条件写 where status=blocked（变异锚点：去条件必红）', async () => {
+    mockTaskFindUnique
+      .mockResolvedValueOnce({
+        id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+        assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+      })
+      .mockResolvedValueOnce({ id: 't1', status: 'completed' })
+    mockTaskFindMany.mockResolvedValue([
+      { id: 't2', status: 'blocked', dependencies: '["t1"]' },
+    ])
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(200)
+
+    // 解锁写必须是 updateMany 且 where 带 status:'blocked' 前置（invalidate 的 t1 写 where.id='t1' 不混入）
+    const unblockWrite = mockTaskUpdateMany.mock.calls.find(
+      c => c[0].data?.status === 'pending' && c[0].where?.id === 't2'
+    )
+    expect(unblockWrite).toBeTruthy()
+    expect(unblockWrite![0].where).toEqual({ id: 't2', status: 'blocked' })
+  })
+
+  it('§3.2 B6: 任务状态已变化（invalidate applied=false）→ 409 不重做', async () => {
+    mockTaskFindUnique.mockResolvedValue({
+      id: 't1', sessionId: 's1', status: 'failed', description: 'x',
+      assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+    mockSessionFindUnique.mockResolvedValue({ phase: 'execution', phaseStep: '' })
+    mockTaskFindMany.mockResolvedValue([])
+    // invalidate 的条件写不匹配（任务已被其他写者推进）→ applied:false → 409
+    mockTaskUpdateMany.mockResolvedValueOnce({ count: 0 })
+
+    const res = await POST(makeReq(), params)
+    expect(res.status).toBe(409)
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+  })
+
   it('P2 回归守卫 T4: redo 在 align_pm(需求确认)阶段 → 400 拒绝,不调 handleExecution', async () => {
     mockTaskFindUnique.mockResolvedValueOnce({
       id: 't1', sessionId: 's1', status: 'failed', description: 'x',
@@ -224,8 +268,7 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
     expect(mockHandleExecution).not.toHaveBeenCalled()
   })
 
-  it('P2 T4: redo 在合法 phase(exec) → 先 transitionPhase 进 exec,再调 handleExecution', async () => {
-    mockTaskFindUnique
+  it('P2 T4: redo 在合法 phase(exec) → 先 transitionPhase 进 exec,再调 handleExecution', async () => {    mockTaskFindUnique
       .mockResolvedValueOnce({
         id: 't1', sessionId: 's1', status: 'failed', description: 'x',
         assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
@@ -240,7 +283,8 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
     const res = await POST(makeReq(), params)
     expect(res.status).toBe(200)
     // transitionPhase('execute') 写了 exec 态,确保 handleExecution 结束的 done 转移合法
-    expect(mockSessionUpdate).toHaveBeenCalledWith({ where: { id: 's1' }, data: { phase: 'execution', phaseStep: '' } })
+    // §3.2: transitionPhase 走 session.updateMany 快照条件写（无条件 update 退役）
+    expect(mockSessionUpdateMany).toHaveBeenCalledWith({ where: { id: 's1', phase: 'execution', phaseStep: '' }, data: { phase: 'execution', phaseStep: '' } })
     expect(mockHandleExecution).toHaveBeenCalled()
   })
 
