@@ -8,7 +8,17 @@ export const envForConfig = (config: string) => ({
   EXPERIMENT_STATE_MACHINE: config.startsWith('off') ? 'off' : undefined,
   EXPERIMENT_VERIFY: config.includes('no-verify') ? 'off' : undefined,
   EXPERIMENT_SEQGATE: config.startsWith('on-seqgate') ? 'on' : undefined,
+  // monitor A/B 第四键（严格值 'on'，isStructuredMonitorOn 只认 ==='on'）：
+  // on-monitor = 结构化纠偏先行；on-llmmon = 未设（生产默认 LLM 审 + 反事实埋点）
+  EXPERIMENT_STRUCTURED_MONITOR: config === 'on-monitor' ? 'on' : undefined,
 })
+
+/** monitor A/B 两臂判别（legacy 臂 false，报告/驱动按此分流） */
+export const isMonitorConfig = (config: string): boolean => config === 'on-monitor' || config === 'on-llmmon'
+
+/** monitor 跑批门控（F4 口径：严格相等，仅 '1' 激活；与 P9_ARMS/P7_GATE 同款纪律）。
+ *  参数收 Partial<ProcessEnv>：钉子测试传裸 env 字面量（isP9ArmsOnly 的 ProcessEnv 全量签名是其存量 tsc 错误来源，新代码不走老路） */
+export const isMonitorAbOnly = (env: Partial<NodeJS.ProcessEnv> = process.env): boolean => env.MONITOR_AB === '1'
 
 /** P9-乙 T5: 全矩阵三臂选择门控——P9 拍板「verify 砍掉固定 on」（45 run = 三臂×ABC×5），
  *  但 configs 数组保留 5 配置以维持 P6 2×2 harness 语义；P9_ARMS='1'（严格相等，同 F4）时
@@ -31,7 +41,8 @@ export const CONFIG = {
   model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
   // P9-乙 T3: 三臂矩阵——on-seqgate+verify = ON 臂 + seqgate 守卫（idle 过早 done 拦截）；前缀约定保 ON 口径
-  configs: ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'] as const,
+  // P11 monitor A/B: 追加 on-monitor / on-llmmon 两臂（仅 MONITOR_AB=1 跑批模式消费，legacy 跑批按 isMonitorConfig 跳过）
+  configs: ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify', 'on-monitor', 'on-llmmon'] as const,
   envForConfig, // P6 T8：CONFIG.envForConfig 与独立导出同源（run-one 透传消费，同 seed 配对两两正交）
   runsPerCell: 5,
   escalateLimit: 3,
