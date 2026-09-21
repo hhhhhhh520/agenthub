@@ -28,3 +28,11 @@ export function isPathSafe(filePath: string, workDir: string): boolean {
     return resolved === resolvedWorkDir || resolved.startsWith(resolvedWorkDir + sep)
   }
 }
+
+/**
+ * list_files 目录校验：dir 相对 workDir 解析后必须落在 workDir 内。
+ * 与裸 startsWith(WORK_DIR) 的区别：拒绝前缀同族目录（如 /a/b-evil 对 /a/b）。
+ */
+export function isListDirSafe(dir: string | undefined, workDir: string): boolean {
+  return isPathSafe(resolve(workDir, dir || '.'), workDir)
+}

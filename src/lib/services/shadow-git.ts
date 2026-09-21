@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -11,11 +11,22 @@ function getShadowDir(projectRoot: string, sessionId: string): string {
 }
 
 /**
- * Build git --git-dir / --work-tree flags for shadow git commands.
- * 路径用双引号包裹,兼容空格和中文字符。
+ * Build git --git-dir / --work-tree args for shadow git commands.
+ * 路径作为独立参数传递（execFileSync 无 shell），天然兼容空格、中文与
+ * shell 元字符（含双引号的注入串只会成为 git 的字面量参数），
+ * 不存在模板串拼接的命令注入面。
  */
-function gitFlags(shadowDir: string, workDir: string): string {
-  return `--git-dir="${shadowDir}" --work-tree="${workDir}"`
+function gitArgs(shadowDir: string, workDir: string, ...rest: string[]): string[] {
+  return ['--git-dir', shadowDir, '--work-tree', workDir, ...rest]
+}
+
+/** 同步执行 git（无 shell），非零退出抛错由调用方处理。 */
+function gitSync(args: string[], timeoutMs: number, ignoreOutput = false): string {
+  if (ignoreOutput) {
+    execFileSync('git', args, { stdio: 'ignore', timeout: timeoutMs })
+    return ''
+  }
+  return execFileSync('git', args, { encoding: 'utf-8', timeout: timeoutMs })
 }
 
 /**
@@ -36,9 +47,7 @@ function ensureShadowInit(shadowDir: string, workDir: string): void {
   if (fs.existsSync(path.join(shadowDir, 'HEAD'))) return
 
   fs.mkdirSync(shadowDir, { recursive: true })
-  execSync(`git init --bare "${shadowDir}"`, {
-    encoding: 'utf-8', timeout: 10_000, stdio: 'ignore',
-  })
+  gitSync(['init', '--bare', shadowDir], 10_000, true)
 
   // 排除影子 git 自身目录,避免 ls-files --others 误报。
   // info/exclude 是每个仓库的本地 ignore,不影响 workDir 自身的 .gitignore。
@@ -46,12 +55,8 @@ function ensureShadowInit(shadowDir: string, workDir: string): void {
   fs.mkdirSync(path.dirname(excludeFile), { recursive: true })
   fs.writeFileSync(excludeFile, '.agenthub/\n', { encoding: 'utf-8' })
 
-  execSync(`git ${gitFlags(shadowDir, workDir)} add -A`, {
-    encoding: 'utf-8', timeout: 30_000, stdio: 'ignore',
-  })
-  execSync(`git ${gitFlags(shadowDir, workDir)} commit -m "shadow init" --allow-empty`, {
-    encoding: 'utf-8', timeout: 10_000, stdio: 'ignore',
-  })
+  gitSync(gitArgs(shadowDir, workDir, 'add', '-A'), 30_000, true)
+  gitSync(gitArgs(shadowDir, workDir, 'commit', '-m', 'shadow init', '--allow-empty'), 10_000, true)
 }
 
 /**
@@ -94,13 +99,11 @@ export function getGitSnapshot(projectRoot: string, sessionId: string): Set<stri
   ensureShadowInit(shadowDir, projectRoot)
 
   try {
-    const modified = execSync(`git ${gitFlags(shadowDir, projectRoot)} diff --name-only HEAD`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
-    const untracked = execSync(`git ${gitFlags(shadowDir, projectRoot)} ls-files --others --exclude-standard`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
     return new Set([...modified, ...untracked])
   } catch (e) {
@@ -123,13 +126,11 @@ export function getChangedFiles(
   ensureShadowInit(shadowDir, projectRoot)
 
   try {
-    const modified = execSync(`git ${gitFlags(shadowDir, projectRoot)} diff --name-only HEAD`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
-    const untracked = execSync(`git ${gitFlags(shadowDir, projectRoot)} ls-files --others --exclude-standard`, {
-      encoding: 'utf-8', timeout: 10_000,
-    }).trim().split('\n').filter(Boolean)
+    const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
+      .trim().split('\n').filter(Boolean)
 
     const all = new Set([...modified, ...untracked])
     return [...all].filter(f => !before.has(f))
@@ -146,4 +147,39 @@ export function cleanupShadowGit(projectRoot: string, sessionId: string): void {
   if (fs.existsSync(shadowDir)) {
     fs.rmSync(shadowDir, { recursive: true, force: true })
   }
+}
+
+/**
+ * 清扫 projectRoot 下无对应 session 的孤儿影子 git 目录（roadmap §2.3）。
+ *
+ * 覆盖面（诚实口径，与启动扫描 distinct projectDir 的机制一致）：只清
+ * "session id 已失联（不在 validSessionIds）且该 projectDir 仍被 ≥1 个
+ * 存活 session 引用"的孤儿——典型成因：DELETE 时 cleanupShadowGit 失败
+ * （warn 后继续删 session）。清不了的（session 还活着但目录位置漂移，
+ * PUT 改走 projectDir / projectDir 被清空后旧目录）：id 命中 validIds 被
+ * 跳过，或旧 projectDir 不进 distinct 列表——需 DELETE/PUT 侧按旧
+ * projectDir 主动清，见 PROGRESS 待办。
+ *
+ * validSessionIds 由调用方提供（全库 Session id 集合）——本模块保持纯 FS、
+ * 无 DB 依赖。best-effort：单目录删除失败（占用/权限）不阻塞其余。
+ */
+export function cleanupOrphanShadowGits(projectRoot: string, validSessionIds: Set<string>): string[] {
+  const rootDir = path.join(projectRoot, SHADOW_GIT_REL)
+  if (!fs.existsSync(rootDir)) return []
+  // 安全收口（对齐 list-dir.ts 的 junction 先例，这里是删除原语、危害更重）：
+  // rootDir 本身若是符号链接/junction，readdirSync 会跟进目标——扫描+删除将
+  // 作用于任意位置。lstat 不跟进链接，识别后整目录跳过。
+  if (fs.lstatSync(rootDir).isSymbolicLink()) return []
+  const removed: string[] = []
+  for (const entry of fs.readdirSync(rootDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (validSessionIds.has(entry.name)) continue
+    try {
+      fs.rmSync(path.join(rootDir, entry.name), { recursive: true, force: true })
+      removed.push(entry.name)
+    } catch {
+      // 单目录失败跳过，不阻塞其余清理
+    }
+  }
+  return removed
 }
