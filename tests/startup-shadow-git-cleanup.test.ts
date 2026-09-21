@@ -19,6 +19,12 @@ vi.mock('@/lib/services/shadow-git', () => ({
   cleanupOrphanShadowGits: mockCleanupOrphan,
 }))
 
+// §3.3: reconcile 被 instrumentation 接线调用——本文件 mock 掉它（对齐 startup-reconcile.test.ts），
+// 防真实模块在本文件残缺的 db mock（无 task 模型）上走异常路径（声明一致性审查建议）
+vi.mock('@/lib/services/reconcile', () => ({
+  reconcileInterruptedSessions: vi.fn().mockResolvedValue(0),
+}))
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.resetModules()
