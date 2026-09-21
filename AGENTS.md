@@ -4,7 +4,11 @@
 
 1. 读 `CLAUDE.md` 了解项目结构和关键规则
 2. 读 `issues/` 目录了解已知踩坑
-3. Prisma 操作前确认 v7 API（不是 v5/v6）
+3. Prisma 操作前确认 v7 API（不是 v5/v6）；schema 变更用 `npx prisma db push`（勿跑 migrate dev，会要求 reset 丢数据）
+
+## CI 门禁（GitHub Actions）
+
+改动的 .ts/.tsx 必须过 eslint 0-error（tests/ 的 no-explicit-any 已放宽）；phase 写入架构守卫会拦截绕过 state-machine 的写法。test job 跑 windows-latest（测试是 Windows 平台假设）。详见 `CLAUDE.md`「CI 门禁」节与 `.github/workflows/ci.yml`。
 
 ## 禁止行为
 

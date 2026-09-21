@@ -51,11 +51,19 @@ src/
 │   └── utils.ts               # cn/maskApiKey/hasLoneSurrogates
 └── generated/prisma/          # Prisma 生成（gitignore）
 prisma/
-├── schema.prisma              # Session/Agent/Task/Message/Attachment 模型
-└── migrations/
+├── schema.prisma              # Session/Agent/Task/Message/Attachment/AgentProcessEvent 模型
+└── migrations/                # ⚠️ 历史 drift：Task/Message 索引从未进 migrations——
+                               #    schema 变更用 `npx prisma db push`（勿跑 migrate dev，会要求 reset 丢 dev.db 数据）
 ```
 
 ## 关键规则
+
+### CI 门禁（GitHub Actions，push=master / PR）
+
+- **改动文件 lint 0-error**（ISSUE-022 口径）：触碰的 .ts/.tsx 必须无 eslint error（warning 不阻塞）；tests/ 的 no-explicit-any 已放宽（off），src/ 仍是 error 级——存量 48 errors 在 experiments/p5 等，改到哪清到哪
+- **架构守卫**（tests/architecture-phase-guard.test.ts，随 vitest 进 CI）：`phase:` 字面量只允许出现在 state-machine.ts 的 prisma 写入 + `STATE_PHASE` 不得被外部引用——绕过守卫写 phase 会被 CI 拦
+- **test job 跑 windows-latest**（测试套件是 Windows 平台假设：opencode 虚拟路径/信号语义/元字符目录名），runner 已配 git identity
+- workflow：`.github/workflows/ci.yml`（npm ci → prisma generate → db push → vitest run → next build）
 
 ### Prisma v7（踩坑高发）
 
@@ -75,6 +83,7 @@ prisma/
 - **SessionMember**：`status`（`idle`|`working`|`done`|`error`）per-session 状态，不写 Agent.status；`cliSessionId` 存储 CLI session ID 用于会话恢复
 - **Message**：`isPinned`（Pin 消息作为长期上下文，每会话最多 10 条）
 - **Attachment**：用户上传的图片/文件（`messageId` 可空，先上传后关联；`sessionId` 方便孤儿清理；`onDelete: Cascade` 只删 DB 记录，需 `cleanupAttachmentFiles()` 删磁盘文件）
+- **AgentProcessEvent**：四类过程事件（thinking/tool_use/tool_result/permission_request + permission_cancel）持久化，`seq` 每 session 单调（SSE 重放游标）；每 session 封顶 500 条（event-log.ts 先 trim 后 create）；thinking 截断 4K 字符；text/error 成品仍由 Message 表承载（重放不重复）
 
 ### Next.js 16
 
@@ -171,7 +180,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - `align_decompose` — 架构师拆任务 + 持久化 Task 记录，等用户确认方案
 - `align_qa` — Agent 对方案提问澄清，等用户回答
 - `execute` — 对齐完成，开始执行任务
-- `verify` — 验证产出物：有 target 委派验证，无 target Orchestrator 自验证（chat-router 已接线）。**执行层强制**：代码任务拆解时 handleArchitectPlan 自动追加 verify 任务（依赖全部代码任务，代码完成后自动执行，分配给测试工程师或兜底），见 ISSUE-008（已解决 2026-08-06）
+- `verify` — 验证产出物：有 target 委派验证，无 target Orchestrator 自验证（chat-router 已接线）。**执行层强制**：代码任务拆解时 handleArchitectPlan 自动追加 verify 任务（依赖全部代码任务，代码完成后自动执行，分配给测试工程师或兜底）
 - `done` — 任务完成
 
 编排原则：用户提开发任务 → align_confirm → align_decompose → align_qa 或 execute → execute。简单任务可跳步。Orchestrator 看对话历史自主判断下一步。
@@ -209,6 +218,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **StreamChunk.type**：`'text' | 'thinking' | 'tool_use' | 'tool_result' | 'status' | 'error' | 'session' | 'permission_request' | 'permission_cancel'`
 - **Claude Code 事件**：`assistant` 消息中的 `text`/`thinking`/`tool_use` block，`user` 消息中的 `tool_result` block
 - **OpenCode 事件**：`type: 'tool_use'` 事件包含 `part.tool`（工具名）、`part.state.input`（输入）、`part.state.output`（输出，内嵌在同一事件中）
+- **SSE 帧字段（§3.1）**：持久化事件（上五类）帧带 `seq`（重放游标），成品帧（text/done）不带；`GET /api/sessions/[id]/events` 补发帧带 `replay: true`（前端 permission 补发不重新弹窗）；前端 seq 门在 `src/lib/events-replay.ts`，游标存 sessionStorage
 - **前端展示**：`thinking` → 灰色斜体，`tool_use` → 代码块（⚙️），`tool_result` → 代码块（✅）
 
 ### 工作区与权限模式
@@ -250,7 +260,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - 越界判定分级(契约 §1.2 b):敏感路径(`.env` / `package.json` / `prisma/schema.prisma` 等,详见 `src/lib/services/sensitive-paths.ts`)→ 任务硬失败 + 下游 blocked;普通越界 → 自动清理越界文件(保留其他批次声明的文件) + 任务仍 completed;`declaredFiles` 为空 → 跳过校验
 - outputSchema 软校验(契约 §1.2 a):从 `task.result` 末尾提取 JSON 块比对字段名,缺字段只发警告不阻断
 - **prompt 注入防御** — `<dependency>` / `<authoritative_input>` 标签内嵌的所有外部内容(upstream result / task.description / declaredFiles / dep name / outputSchema)必须先过 `escapeContractTags()`(`src/lib/orchestrator/prompts.ts`),否则字面 `</dependency>` 可闭合包装注入伪指令。regex 容忍标签内空白(`</dependency \n >` 也挡)。**JSON.stringify 不转义 `<>`,attr 值同样需要 escape**
-- **cliSessionId 跨表更新必须用 `prisma.$transaction`** — `task.cliSessionId` 与 `SessionMember.cliSessionId` 两表写入必须原子,中间崩溃半残会让 fallback 拿脏 sessionId 污染下次执行。成功 / 纠偏 / 敏感失败三条路径都包事务。**正常完成路径**:CLI 没返回 sessionId 时用 `...(cliSessionId ? { cliSessionId } : {})` 跳过更新(保留旧值),不用 `|| null` 覆盖
+- **cliSessionId 失效必须走统一入口 `invalidateCliSession()`**（`src/lib/services/cli-session.ts`，§2.4）——任何"清 Task + SessionMember 两表 cliSessionId"的写法禁止内联 `prisma.$transaction` 手写（静态守卫锁定该场景下 `cliSessionId: null` 字面量只允许出现在统一入口；绕过会被 CI 拦）。成功路径是赋值不是失效，不走此入口；CLI 没返回 sessionId 时跳过更新（保留旧值），不用 `|| null` 覆盖
 - **redo 路径走主链路** — `POST /api/sessions/[id]/tasks/[taskId]/redo` 只负责"重置 task 状态 + 解锁下游 + 调 `handleExecution`",**不直接调 `executeSingleAgent`**。否则 contract v1 全部保护(result 持久化 / dependency 注入 / authoritative_input 包装 / 敏感校验 / outputSchema 校验 / cliSessionId invalidate)在 redo 路径都失效。重置时清 task + sessionMember 的 cliSessionId,同样包事务
 - 实现:`src/lib/services/shadow-git.ts` / `sensitive-paths.ts` / `schema-validator.ts` / `orchestrator/prompts.ts`(escapeContractTags)
 - 设计源文档:`docs/discussions/agenthub-contract-v1.md`
@@ -270,7 +280,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **讨论阶段(`runDiscussion`)不注入 MCP,但必须显式传 `chatSessionId` + `agentId: agent.name`** — ISSUE-003(2026-08-07):讨论只交换观点,不读文件/查库,connect 不传 `mcpConfig`;但**进程隔离靠显式 agentId**——移除 MCP 后这是唯一隔离维度,不传会撞 `default:default:<cwd>` 同进程串话(攻击者+生命周期审查 ❌ 修复)
 - **`handleExecution` 不重跑已完成任务** — P0(2026-08-10):`executeTaskBatch` 返回 `preloadedIds`(priorResults 中本批未执行的历史任务),success 循环开头 `if (preloadedIds.has(taskId)) continue`。删此守卫会让 redo/续跑/多批执行重跑旧任务 monitoring+重复写库,`correctionCount` 每批重置致 max-2 失效→无界重执行
-- **phase/phaseStep 写入必须经 `transitionPhase`(`src/lib/orchestrator/state-machine.ts`),禁止散点 `prisma.session.update({ phase })`** — P1(2026-08-11):6 处散点写入已收归中央转移表校验(applyTransition 查 TRANSITIONS,非法 fail-closed 不写)。裸写 phase 绕过转移表,可把 phase 写到转移表之外的值。新增 phase 写入点必须走 transitionPhase;LLM 提议 action 校验在 chat-router 决策点(纠正→守卫→applyTransition→非法 escalate 不静默)
+- **phase/phaseStep 写入必须经 `transitionPhase`(`src/lib/orchestrator/state-machine.ts`),禁止散点 `prisma.session.update({ phase })`** — P1(2026-08-11):6 处散点写入已收归中央转移表校验(applyTransition 查 TRANSITIONS,非法 fail-closed 不写)。裸写 phase 绕过转移表,可把 phase 写到转移表之外的值。新增 phase 写入点必须走 transitionPhase;LLM 提议 action 校验在 chat-router 决策点(纠正→守卫→applyTransition→非法 escalate 不静默)。**CI 架构守卫自动拦截**违规写法（tests/architecture-phase-guard.test.ts）
 - **idle→execute 跳步必须过 `idleExecuteGate` 确定性闸门,exec→done 必须有 verify 任务 completed(若有代码任务)** — P2(2026-08-11):idle 态 LLM 提议 execute 时查"有任务且全非代码"(isCodeTask)才放行,否则 redirect align_decompose——跳步不是"LLM 说简单就简单"(ISSUE-008 同构);done 守卫在 unfinished 检查后补 verify-completed(blocked 计入 allDone 会漏,§5.3)。改闸门/守卫必须同步 chat-router 决策点与 tests
 - **redo 路由必须经状态机闸门(`applyTransition(state,'execute')`),align_pm/未知态 fail-closed 拒绝** — P2(2026-08-11,待办③):redo/route.ts 调 handleExecution 前校验 phase,非法(align_pm 需求确认中)400、未知/脏 phase 400(HTTP 变更接口不做 idle 兜底放行),`transitionPhase('execute')` 前置且判返回值(失败 500)。绕过闸门=phase 不对时硬跑 handleExecution,allDone→done 转移可能 fail-closed 拒写
 - **每轮 LLM 决策必须写 `Session.decisionTrace`(先落库再派发 handler)** — P3(2026-08-11):handleOrchestratorDecision 记决策输入 6 字段(llmProposal/corrections/validation/actualTransition/inputState/decisionPoint),escalate 也记(escalated=true)。删 trace 钩子 → 审计数据断供 + P4 可视化/B 流程挖掘无数据。append 走 `appendDecisionTrace`(safe-parse + 乐观锁 updateMany where decisionTrace + 3 次重读重试),别裸 prisma.session.update 追加
@@ -307,11 +317,10 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
+- **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v7):阶段一/§3.1 收口记录、拍板记录、CI 门禁口径
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
-- **P5 受控实验 spec/plan**:`docs/superpowers/specs/2026-08-13-p5-controlled-experiment-design.md` + `docs/superpowers/plans/2026-08-13-p5-controlled-experiment.md` — A方向 C 实验(状态机 vs LLM 自由推进),harness 在 `experiments/p5/`
-- **P6 全矩阵 spec**:`docs/superpowers/specs/2026-08-15-p6-full-matrix-design.md` — P5 残留 6 项修复 + 2×2 矩阵(状态机 × verify),60 run
-- **P9 作用面×模型矩阵 spec**:`docs/superpowers/specs/2026-08-23-p9-surface-matrix-design.md` — 三臂(OFF/ON/on-seqgate)×强弱模型,含跨批分析(`analyze-cross-batch.ts`,报告 `experiments/p5/results/report-cross-batch.md`)与安全审查 F1-F8
+- **受控实验 spec 系列(P5/P6/P9)**:`docs/superpowers/specs/`(A方向状态机/2×2矩阵/三臂×强弱模型),harness 在 `experiments/p5/`,报告在 `experiments/p5/results/`
 - 参考资料:`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`
 - **新增功能前必须先看 contract v1**(它定义了 Agent 协作的"应然"),再看 v2 设计决策(早期架构)
 
@@ -324,7 +333,8 @@ Orchestrator 自主决定流程，支持 9 种 action：
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | GET/POST/PUT/DELETE | `/api/sessions` | 会话 CRUD |
-| POST | `/api/sessions/[id]/chat` | SSE 流式聊天（per-session lock） |
+| POST | `/api/sessions/[id]/chat` | SSE 流式聊天（per-session lock，持久化事件帧带 seq） |
+| GET | `/api/sessions/[id]/events` | SSE 重放端点（Last-Event-ID 补发 + 轮询增量） |
 | POST | `/api/sessions/[id]/permission` | 权限交互回应 |
 | GET/POST/PUT/DELETE | `/api/agents` | Agent CRUD |
 | GET/POST | `/api/providers` | 服务商列表/导入 |
