@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v9（阶段二收口） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v10（P11 monitor A/B harness 落档） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -16,6 +16,7 @@
 | v7 | 2026-09-21 | §3.1 收口（2 commit，TDD +21 测试 + 2 独立审查 Agent）：四类过程事件持久化（AgentProcessEvent 表，thinking 截断 4K 拍板）+ seq 化推流 + GET events 重放端点 + 前端 EventSource 断线重连/seq 门/游标跨刷新；审查修复 🔴 abort 监听时序（interval 泄漏）、pollMs 下界、chat 锁泄漏（预存）、冗余索引；redo 改 SSE（三梯队第 7 项）一次消掉 |
 | v8 | 2026-09-21 | §3.2 收口（1 commit，TDD +14 测试 + 变异验证 4 组精确红 + 2 独立审查 Agent）：写入点清单拍板（docs/design/phase2-3.2-write-points.md）——transitionPhase 快照条件写 CAS（重读重算 3 次上限 fail-closed）+ Task 批次状态全写点条件化（B1 互斥闸门/ B2 completed 交互式事务联动弃权/ B3-B5/B7 前置条件）+ invalidateCliSession expectedFrom（redo 409 关 TOCTOU）；审查抓出 GET stuck reset updateMany 缺 status 前置一并收口；B8 修正、决策点 trace 拒绝型分歧记 ISSUE-025；范围拍板：不引入 generation 字段（状态前置条件写已覆盖全部已证实窗口，理由见清单文档 §2） |
 | v9 | 2026-09-21 | §3.4/§3.3 收口（2 commit，各 TDD + 2 独立审查 Agent + 变异精确红）：§3.4 monitoring 结构化——信号层纯函数（S1 git-truth 完成性/S2 outputSchema）+ EXPERIMENT_STRUCTURED_MONITOR 门控（on=结构化先行 LLM 降级第二道；未设=现状+反事实埋点 event:'monitor'）+ applyCorrection 统一助手（结构化/LLM 两臂同语义同遏制）+ preflight 命令红绿灯**不做**（RCE 面+schema 变更需单独拍板）；审查实证并修复 monitor 埋点丢 success trace 回归（B2 后内存 trace 未同步，基串改 successTrace + 同步补齐）；§3.3 启动 reconcile——in_progress 条件写置 pending + working 成员**无条件**清扫（审查 F1：成员残留与任务残留不必然共存）+ 周期 tick/半成品清理/phase 改动**不做**（拍板理由落档）；审查者读 Next 16.2.6 dist 源码实证 register 阻塞首个请求——启动竞态结构性闭合；A/B 数据=埋点装置就位、实验待跑（三梯队第 1 项 harness） |
+| v10 | 2026-09-21 | 三梯队第 1 项装置收尾（2 commit：9c0ae4a/471af12，方案安全审查+攻击者+声明一致性三视角闭环）：**生产修复**（用户拍板）——监控 prompt 的 audit.declared 曾传声明清单而非真实交集（ghost 场景谎报"声明已修改"系统性压低审查 LLM 检出），改传 attributed（declared∩changed）；**P11 monitor A/B harness**——p5 原地扩臂（MONITOR_AB='1' 门控与 legacy 批互斥），两臂 on-monitor/on-llmmon × 4 罐头（clean/ghost-S1/schema-S2/plausible-wrong）× 5 seed，mock 剧本写真实文件（assertSafeCannedPath 三断言 fail-closed）+ 监控审查透传真实 LLM（臂判别 mocks.state.monitorReal 显式标记）+ env 快照第四键（防两臂同质化）+ parseMonitorCycles 按 success 分段配对两判据 + generateMonitorReport（含效度口径段）；变异精确红 2 组（on 臂归因/legacy 劫持门）；**批跑待 GLM_API_KEY**（用户侧），跑完按 §6 时限判定转正或移出 |
 
 ---
 
