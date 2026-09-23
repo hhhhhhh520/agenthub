@@ -10,6 +10,7 @@ import { invalidateCliSession } from './cli-session'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { validateAgainstSchema } from './schema-validator'
 import { structuredMonitorVerdict, describeSignal, isStructuredMonitorOn } from './structured-monitor'
+import { isPreflightVerifyOn, detectVerifyCommands, runVerifyCommands } from './preflight-verify'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { transitionPhase, MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
 import type { SendEvent } from './review'
@@ -55,7 +56,7 @@ export function cleanupUndeclared(
 
 interface TraceEntry {
   ts: string
-  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction' | 'monitor'
+  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction' | 'monitor' | 'preflight'
   agent?: string
   message?: string
   attempt?: number
@@ -593,6 +594,34 @@ export async function handleExecution(
         } catch (err) {
           if (err instanceof TimeoutError) console.error('[TIMEOUT] monitoring', taskId)
           /* monitoring failed, continue */
+        }
+      }
+
+      // §3.4 S3: preflight 命令红绿灯（1A/2A/3A 拍板，2026-09-22）——约定探测 package.json
+      // scripts.{test,build,lint}，`npm run <key>` 执行：命令头与参数均由白名单常量构造，
+      // script 内容不进参数（npm 自身 shell 执行，信任边界=项目作者）；Windows npm 为 .cmd shim
+      // 必须 shell 执行，注入面由 来源钉死(1A)+键白名单+assertVerifyKey 三层收口。
+      // exit≠0 仅记 event:'preflight' 采数据（3A：不纠偏）。门控 EXPERIMENT_PREFLIGHT_VERIFY=on
+      // （生产默认未设，roadmap §6）。被纠偏置 pending 的任务跳过——重做后会有新 completion 再采。
+      if (isPreflightVerifyOn() && taskForTrace?.status === 'completed') {
+        try {
+          const keys = await detectVerifyCommands(projectRoot)
+          if (keys.length > 0) {
+            const outcomes = await runVerifyCommands(projectRoot, keys)
+            const pfTrace = appendTrace(taskForTrace.trace || '[]', {
+              ts: new Date().toISOString(), event: 'preflight',
+              message: outcomes.map(o => `npm run ${o.key} → ${o.status}${o.exitCode !== undefined ? ` (exit ${o.exitCode})` : ''} (${o.durationMs}ms)`).join('；'),
+            })
+            const tracedPf = await prisma.task.updateMany({ where: { id: taskId, status: 'completed' }, data: { trace: pfTrace } })
+            if (tracedPf.count === 0) {
+              console.warn(`[execution] 任务 ${taskId} preflight 埋点被条件写拦下（状态已被其他写者转移），弃权`)
+            } else {
+              taskForTrace.trace = pfTrace
+            }
+          }
+        } catch (err) {
+          // 采集失败不穿透 handleExecution（同监控遏制先例——SSE 断流/剩余任务放弃代价更高）
+          console.warn(`[execution] 任务 ${taskId} preflight 采集失败（不穿透）: ${err instanceof Error ? err.message : String(err)}`)
         }
       }
     }
