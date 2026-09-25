@@ -244,6 +244,40 @@ function qaAlreadyAnswered(history: HistoryEntry[]): boolean {
 /** §3.2 快照条件写重试上限（对齐 decision-trace.ts 的 3 次乐观锁重试） */
 export const TRANSITION_CAS_RETRIES = 3
 
+/** ISSUE-025: 拒绝回执条目——决策点预记 applied:true 后 transitionPhase fail-closed 拒写时补记，
+ *  消灭"trace 全绿而 DB 未动"的拒绝型分歧。casRejected 标记使 checkConformance 独立成桶
+ *  （绝不伪装 escalated=true：合法转移被拒会被误标 escalate_but_legal 代码漂移，污染 ON 口径 oracle）。 */
+function rejectEntry(
+  base: { phase: string; phaseStep: string; decisionTrace: string | null },
+  state: State,
+  action: string,
+  validation: { passed: boolean; reason?: string }
+): DecisionTraceEntry {
+  return {
+    decisionPoint: 'transitionPhase',
+    inputState: { phase: base.phase, phaseStep: base.phaseStep, state },
+    llmProposal: { action, reason: 'transitionPhase 拒绝回执' },
+    corrections: [],
+    validation: { passed: validation.passed, validator: 'transitionPhase', reason: validation.reason },
+    actualTransition: { from: state, to: state, action, applied: false, escalated: false, casRejected: true },
+  }
+}
+
+/** 拒绝回执补记（best-effort：append 异常不穿透，拒绝本身已由 ok:false + console.warn 承载） */
+async function appendRejectTrace(
+  sessionId: string,
+  base: { phase: string; phaseStep: string; decisionTrace: string | null },
+  state: State,
+  action: string,
+  validation: { passed: boolean; reason?: string }
+): Promise<void> {
+  try {
+    await appendDecisionTrace(sessionId, base.decisionTrace, rejectEntry(base, state, action, validation))
+  } catch (err) {
+    console.warn(`[state-machine] 拒绝回执补记失败: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 export async function transitionPhase(
   sessionId: string,
   action: string,
@@ -260,6 +294,9 @@ export async function transitionPhase(
       const result = applyTransitionWithOverride(state, action, isExperimentOff())
       if (!result.ok) {
         console.warn(`[state-machine] transitionPhase 拒绝: ${result.reason}（不写库，避免 phase 越界）`)
+        // ISSUE-025: 合法性翻转拒绝（决策点快照合法预记 applied:true，DB 状态已被并发改写）——
+        // 补记拒绝回执，checkConformance 才能看见这次拒绝（recordTrace:false 不抑制回执）
+        await appendRejectTrace(sessionId, base, state, action, { passed: false, reason: result.reason })
         return { ok: false, reason: result.reason }
       }
       // §3.2: 快照条件写（乐观锁）。where 携带读时 (phase, phaseStep)——双流并发时后到者
@@ -300,6 +337,8 @@ export async function transitionPhase(
       }
     }
     console.warn(`[state-machine] transitionPhase 快照冲突重试超限(${TRANSITION_CAS_RETRIES}次)，放弃写库 sessionId=${sessionId}`)
+    // ISSUE-025: CAS 快照冲突重试超限——决策点已预记 applied:true 而 phase 未写，补记拒绝回执
+    await appendRejectTrace(sessionId, base, stateFromSession(base.phase, base.phaseStep), action, { passed: true })
     return { ok: false, reason: 'transitionPhase 快照冲突重试超限' }
   } catch (err) {
     console.warn(`[state-machine] transitionPhase 异常: ${err instanceof Error ? err.message : String(err)}`)
