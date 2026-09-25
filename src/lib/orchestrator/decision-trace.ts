@@ -41,8 +41,11 @@ export interface DecisionTraceEntry {
   corrections: Array<{ from: string; to: string; reason: string }>
   /** ④ 代码校验结果：最终 applyTransition 校验是否通过、违反什么约束（纠正/守卫的"为什么"在 corrections） */
   validation: { passed: boolean; validator: string; reason?: string }
-  /** ⑤ 实际转移：from_state → to_state；escalate 时 applied=false（未写库，to 保持 from） */
-  actualTransition: { from: State; to: State; action: string; applied: boolean; escalated: boolean }
+  /** ⑤ 实际转移：from_state → to_state；escalate 时 applied=false（未写库，to 保持 from）。
+   *  casRejected=true：transitionPhase 拒绝回执（ISSUE-025）——决策点预记 applied:true 后，
+   *  并发下 fail-closed 拒写（合法性翻转/快照冲突超限）。绝不能伪装成 escalated=true：
+   *  合法转移被拒会被 checkConformance 标 escalate_but_legal（代码漂移 bug），污染 ON 口径 oracle。 */
+  actualTransition: { from: State; to: State; action: string; applied: boolean; escalated: boolean; casRejected?: boolean }
 }
 
 /** 写入时补的时间戳（ISO，保证乱序/回放可排序） */
@@ -140,12 +143,17 @@ export interface ConformanceViolation {
 
 export interface ConformanceResult {
   total: number
-  /** 与转移表一致的实际转移数 */
+  /** 与转移表一致的实际转移数。⚠️ 含决策点预记条目——casRejected 回执意味着同转移预记未落地，
+   *  此时 conforming ≠ 实际落地转移数（对账：totalTransitions − 配对回执；ISSUE-025 审查拍板
+   *  不做配对抵消——按 (from,action,to) 匹配在"同一转移稍后成功"时会吃错条目，脆弱性 > 有界超计） */
   conforming: number
   /** LLM 提议非法被代码拦下（escalate）数 */
   escalateCount: number
   /** 发生纠正/守卫 redirect 的条目数 */
   correctionCount: number
+  /** transitionPhase 拒绝回执数（ISSUE-025：并发下 fail-closed 拒写——系统按设计工作，
+   *  既非 violation 也非 conforming；oracle 过滤 illegal/escalate_but_legal 不受影响） */
+  casRejectCount: number
   violations: ConformanceViolation[]
   /** conforming / total（空数组时 0） */
   ratio: number
@@ -179,6 +187,7 @@ export function checkConformance(entries: StoredDecisionTraceEntry[]): Conforman
   let conforming = 0
   let escalateCount = 0
   let correctionCount = 0
+  let casRejectCount = 0
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]
@@ -188,6 +197,14 @@ export function checkConformance(entries: StoredDecisionTraceEntry[]): Conforman
     }
     if (e.corrections && e.corrections.length > 0) correctionCount++
     const { from, to, action, applied, escalated } = e.actualTransition
+
+    // ISSUE-025: transitionPhase 拒绝回执——并发下 fail-closed 拒写，系统按设计工作。
+    // 独立成桶：不进 violations（非 bug）、不计 conforming（转移未发生）、绝不能落进
+    // escalate/escalate_but_legal（escalated=true 且表内合法会被误标为代码漂移）。
+    if (e.actualTransition.casRejected === true) {
+      casRejectCount++
+      continue
+    }
 
     if (escalated === true) {
       if (isLegalTransition(from, action, to)) {
@@ -218,6 +235,7 @@ export function checkConformance(entries: StoredDecisionTraceEntry[]): Conforman
     conforming,
     escalateCount,
     correctionCount,
+    casRejectCount,
     violations,
     ratio: entries.length === 0 ? 0 : conforming / entries.length,
   }
