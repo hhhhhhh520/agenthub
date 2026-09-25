@@ -40,6 +40,7 @@
 | B8 | `sessions/[id]/route.ts:44` GET stuck reset | in_progress→pending | findMany 带 status+updatedAt 条件，但 updateMany **只按 id**（审查抓出：findMany 与 updateMany 之间执行流可把任务写 completed，无条件重置会丢结果 + 造成 DB pending/内存 completed 漂移 → 误 done） | **已收口**：updateMany where 补 `status: 'in_progress'`（2026-09-21 随 §3.2 一并修） |
 | B9 | `execution.ts:198` heartbeat | updatedAt 心跳 | 无条件 | 无状态语义，不纳入 |
 | B10 | `alignment.ts:297` | verify 依赖/描述扩展（status='pending' 分支内） | 无条件 | 锁内对齐路径 + 非状态字段，不纳入 |
+| B11 | `execution.ts` S3 preflight 块（监控纠偏决策之后） | preflight trace（event:'preflight'） | `updateMany where {id, status:'completed'}` | 1A/2A/3A 拍板（2026-09-22）：仅 EXPERIMENT_PREFLIGHT_VERIFY=on 且任务仍 completed 时采数；count=0 弃权（纠偏/转移后不落旧 completion 的灯，重做后有新 completion 再采） |
 
 ### C. SessionMember
 
