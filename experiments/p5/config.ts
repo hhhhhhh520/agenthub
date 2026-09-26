@@ -44,7 +44,7 @@ export const CONFIG = {
   // P11 monitor A/B: 追加 on-monitor / on-llmmon 两臂（仅 MONITOR_AB=1 跑批模式消费，legacy 跑批按 isMonitorConfig 跳过）
   configs: ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify', 'on-monitor', 'on-llmmon'] as const,
   envForConfig, // P6 T8：CONFIG.envForConfig 与独立导出同源（run-one 透传消费，同 seed 配对两两正交）
-  runsPerCell: 5,
+  runsPerCell: 10, // 2026-09-27 用户拍板扩容重跑（n=5→10 换显著性；report 回显）
   escalateLimit: 3,
   maxRounds: 30,
   noProgressRounds: 5,
