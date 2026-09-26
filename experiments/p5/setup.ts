@@ -111,7 +111,9 @@ export async function ensureExperimentAgents(): Promise<void> {
  *  "API Error: Unable to connect to API (ConnectionRefused)"，旧黑名单只覆盖 provider 语义类（401/429/额度…），
  *  连接级故障被判「就绪」⇒ 哨兵的「判环境不判模型」形同空话。数字类保持词边界风格不误伤 latency。 */
 export function detectPreflightError(text: string): string | null {
-  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|未返回有效内容|"error"\s*:|unable to connect|connectionrefused|econnrefused|fetch failed|\bapi error\b|\btimed? ?out\b/i)
+  // ISSUE-026（2026-09-26）：CLI 新版 model catalog 拒绝未知模型名的三签名（transcript 实录）——
+  // CLI 合成错误文本被当 result 时旧黑名单全部漏接 ⇒ preflight 假绿放行整批空转。
+  const m = text.match(/\b(401|403|429)\b|rate[ -]?limit|too many requests|overloaded|quota|额度|余额|限流|过于频繁|unavailable|invalid api key|未返回有效内容|"error"\s*:|unable to connect|connectionrefused|econnrefused|fetch failed|\bapi error\b|\btimed? ?out\b|unrecognized_model|issue with the selected model|model catalog/i)
   return m ? m[0] : null
 }
 
@@ -147,6 +149,8 @@ export async function preflightDecision(): Promise<void> {
   const t0 = Date.now()
   const { result } = await executeSingleAgent(
     { name: orch.name, systemPrompt: orch.systemPrompt, platform: orch.platform, model: orch.model, baseUrl: orch.baseUrl, apiKey: orch.apiKey },
+    // ⚠️ 与下方相关性检查（result.trim() !== '就绪'）同源：改 prompt 必须同步改检查词（run.test.ts 的
+    // preflightPromptMarker 是同一 prompt 的第三份拷贝，vi.hoisted 陷阱不宜 import——三处一处改全改）
     '只回复两个字：就绪', '', () => {},
   )
   const latencyMs = Date.now() - t0
@@ -155,6 +159,11 @@ export async function preflightDecision(): Promise<void> {
   if (!result || !result.trim()) throw new Error(`preflight: LLM 返回空（latency=${latencyMs}ms, key#${fingerprint8}）——provider 未配好`)
   const sig = detectPreflightError(result)
   if (sig) throw new Error(`preflight: 回复含 provider 错误签名「${sig}」（latency=${latencyMs}ms, key#${fingerprint8}）——环境故障，不得进探带读数`)
+  // ISSUE-026：黑名单是追不完的（CLI 错误文本形态多样）——回复必须**精确为**「就绪」，一次封死
+  // 「provider 返回无关文本假绿」整类（tokenrhythm 线路 CLI 错误文本 1.2s 假成功实证）。
+  // 精确匹配（双审查拍板）：includes 有「服务未就绪」子串洞 + CLI 回显 sentinel prompt 的假绿洞；
+  // 「就绪。」「好的就绪」被拒属预期——指令不遵从正是 preflight 要拦的。失效方向=响亮拒批（带 reply 回显），非静默。
+  if (result.trim() !== '就绪') throw new Error(`preflight: 回复未精确返回「就绪」（reply="${reply}"，latency=${latencyMs}ms, key#${fingerprint8}）——模型不遵从 sentinel 指令，不得进探带读数`)
   // T3-r2：成功才落盘（写在全部判定之后 ⇒ 文件存在即「最近一次 preflight 成功」）。
   // 为什么用文件不用 console：vitest v4 拦截**测试体内**的 console（T6 Step0 哨兵真跑 45 passed，
   // 日志 0 条 [preflight] 行——console 信号到不了 check）；afterAll 的 console 不拦，故 batch 的

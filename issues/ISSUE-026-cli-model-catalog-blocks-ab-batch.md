@@ -1,5 +1,5 @@
 # CLI model catalog 拒绝未知模型名 → A/B 批跑 40 runs 全空转 + preflight 闸门被穿透
-> 创建时间: 2026-09-26 | 状态: 🟡 排查中（根因实锤，闸门加固待修）
+> 创建时间: 2026-09-26 | 状态: 🟢 已解决（线路切换跑通 + 闸门加固落地；后续项见文末）
 
 ## 问题描述
 
@@ -27,12 +27,28 @@
 - **线路**：火山方舟 Ark plan（`https://ark.cn-beijing.volces.com/api/plan` + `ark-code-latest`，
   用户 2026-09-26 提供）——CLI 对该 provider id 仅警告不拒跑，ANTHROPIC 协议原生兼容
   （`volces.com` 本在 p5 端点白名单内；CLI transcript 实证真 LLM 响应，网关侧映射 glm-5-3-flash-260901）。
+  第二批 40/40 有效跑完（109min LLM 延迟），报告落档 `results/report.monitor-2026-09-26.md`。
 - **无效数据隔离**：`metrics.monitor-invalid-20260926-cli-model-reject.jsonl.bak` +
   `monitor-batch-last.invalid-20260926.json.bak`（效度口径"跨批比较按批次切分"的实例）。
-- **待修（闸门加固）**：`detectPreflightError`（setup.ts:114）黑名单补 CLI 错误签名：
-  `unrecognized_model` / `issue with the selected model` / `isn't described by this version's model catalog`。
-  顺带评估：preflight 判定除黑名单外可加"回复与 sentinel prompt 的相关性"校验（回复应含"就绪"），
-  防 provider 返回无关文本假绿。修时 TDD + 黑名单变异验证。
+- **闸门加固（已落地，TDD 先红 + 变异 3 组精确红 + 双审查 Agent 拍板）**：
+  1. `detectPreflightError`（setup.ts）黑名单补 CLI 三签名：`unrecognized_model` /
+     `issue with the selected model` / `model catalog`（第三条为工单原稿全句的稳定子串超集）。
+  2. preflightDecision 相关性检查（黑名单之外的兜底层）：回复必须**精确为**「就绪」（`result.trim() !== '就绪'` throw）。
+     双审查从不同角度拍板 exact-match 而非 `includes('就绪')`——堵「服务未就绪」子串洞与 CLI 回显 sentinel prompt 的
+     假绿洞；「就绪。」「好的就绪」润饰变体被拒属预期（指令不遵从正是 preflight 要拦的）。失效方向=响亮拒批（带 reply 回显）。
+  3. sentinel prompt 处加同源注释（prompt 与检查词耦合，三处拷贝一处改全改）。
+
+## 教训（追加）
+
+- **批跑（后台 vitest）运行期间禁编辑 include 集合内文件**：vitest fork 按需加载，尾部测试文件会读到
+  编辑/变异中间态（本批 setup.test.ts 尾 fork 撞加固变异窗口红 2 例；run.test 主体 16:14 fork 时数据效度不受影响，
+  但纯属侥幸——正确做法是批跑期间冻结装置文件或把 commit 排到批跑后）。
+
+## 后续项
+
+- [ ] 决策 LLM 行为方差（D 罐头两臂 pass 0/5 定性：跳过对齐直接 delegate/self 空转）——罐头剧本补引导或 prompt 强化，需单独拍板
+- [ ] 若需显著性：runsPerCell 5→10 加 seed 重跑（装置现成，成本 ×2）
+- [ ] run-gate-smoke.ps1 的 mtime 门诚实局限（preflight-last.json 被测试进程刷新 mtime）维持已声明口径
 
 ## 相关文件
 

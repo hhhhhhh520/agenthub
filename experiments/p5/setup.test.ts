@@ -210,6 +210,68 @@ describe('P10 preflight 加固（F3：provider 错误文本不得判成就绪）
   })
 })
 
+// —— ISSUE-026（2026-09-26 实录）：CLI 新版 model catalog 拒绝未知模型名（--model qwen3.8-flash），
+//    请求从未发出、CLI 合成错误文本被当 result——三签名均不在旧黑名单 ⇒ preflight 假绿放行整批 40 run 空转。
+//    transcript 直接证据：assistant model=<synthetic> "There's an issue with the selected model (...)"。
+describe('ISSUE-026：CLI 未知模型拒绝签名必须命中黑名单', () => {
+  it('三签名命中（transcript 实录原文）', () => {
+    const cliReject = [
+      "There's an issue with the selected model (qwen3.8-flash). It may not exist or you may not have access to it. Run --model to pick a different model.",
+      '[claude-code:unrecognized_model] {"model":"qwen3.8-flash","query_source":"sdk"}',
+      '"ark-code-latest" isn\'t described by this version\'s model catalog; update Claude Code, or map it with behavesAs on a modelPicker row',
+    ]
+    for (const bad of cliReject) {
+      expect(detectPreflightError(bad), bad).toBeTruthy()
+    }
+  })
+  it('反向界：就绪正文/良性文本不因新签名误伤', () => {
+    expect(detectPreflightError('就绪')).toBeNull()
+    expect(detectPreflightError('OK! 一切正常')).toBeNull()
+  })
+})
+
+// —— ISSUE-026 配套：黑名单是追不完的（CLI 错误文本形态多样）——preflight 回复必须**精确为**「就绪」，
+//    一次封死「provider 返回无关文本假绿」整类。tokenrhythm 实证：CLI 错误文本 1.2s "成功"落盘。
+//    双审查（安全🟡1 / 设计🟡）拍板：includes('就绪') 有「未就绪」子串洞 + prompt 回显洞 → 改精确匹配；
+//    「就绪。」「好的就绪」类润饰变体被拒属预期——那本身就是指令不遵从，正是 preflight 要拦的。
+describe('ISSUE-026：preflightDecision 相关性检查——回复必须精确为「就绪」', () => {
+  const pfPath = join(CONFIG.resultsDir, 'preflight-last.json')
+  let original: string | null = null
+  let hadOriginal = false
+  beforeAll(() => {
+    hadOriginal = existsSync(pfPath)
+    original = hadOriginal ? readFileSync(pfPath, 'utf8') : null
+  })
+  beforeEach(() => {
+    vi.stubEnv('GLM_API_KEY', 'fake-key')
+    if (existsSync(pfPath)) rmSync(pfPath) // 从无文件起步：断言「本次失败未落盘」才有效（T3-r2 describe 同惯例）
+    env.findFirst.mockReset()
+    env.findFirst.mockResolvedValue({ name: 'orch', systemPrompt: 'x', platform: 'claude-code', model: 'm', baseUrl: 'https://example.com/v1', apiKey: 'k' })
+    env.exec.mockReset()
+  })
+  afterAll(() => {
+    if (hadOriginal && original !== null) writeFileSync(pfPath, original)
+    else if (existsSync(pfPath)) rmSync(pfPath)
+  })
+  it('黑名单不命中的良性无关文本 → throw 且不落盘（fail-closed）', async () => {
+    env.exec.mockResolvedValue({ result: 'OK! 一切正常' }) // 无错误签名、但与 sentinel 指令无关
+    await expect(preflightDecision()).rejects.toThrow(/未精确返回「就绪」/)
+    expect(existsSync(pfPath)).toBe(false)
+  })
+  it('否定式含词（「未就绪」子串洞）与润饰变体 → 一律拒', async () => {
+    for (const bad of ['服务未就绪', '模型未就绪，请稍后再试', '就绪。', '好的就绪']) {
+      env.exec.mockResolvedValue({ result: bad })
+      await expect(preflightDecision(), bad).rejects.toThrow(/未精确返回「就绪」/)
+      expect(existsSync(pfPath), bad).toBe(false)
+    }
+  })
+  it('精确「就绪」→ 通过并落盘（正向钉桩，防收紧过度）', async () => {
+    env.exec.mockResolvedValue({ result: '就绪' })
+    await preflightDecision()
+    expect(existsSync(pfPath)).toBe(true)
+  })
+})
+
 // —— P10 T3-r2：preflight 文件信号（vitest v4 拦截测试体内 console，T6 Step0 哨兵真跑实证日志 0 条
 //    [preflight] 行 ⇒ check 只能读 results/preflight-last.json；文件存在 ⇒ 最近一次 preflight 成功）——
 describe('P10 T3-r2: preflightDecision 落盘 preflight-last.json（check 的信号源）', () => {
