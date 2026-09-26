@@ -729,7 +729,7 @@ describe('P10 T3-r4: buildBatchRecord 文件信号（单对象 / runs rows ts �
 })
 
 // —— 60+ 次 run（3任务 × configs 全臂 × 5 seed；5 固定 seed 同 seed 配对主效应）——
-const SEEDS = [0, 1, 2, 3, 4]
+const SEEDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] // 2026-09-27 用户拍板：n=5 显著性不足（E p_exact=0.5），扩 10 加 seed 重跑一轮再定转正
 const SENTINEL = process.env.P5_SENTINEL === '1'
 // P11 monitor A/B：MONITOR_AB=1 时本文件只跑 monitor 批（legacy pilot 整体跳过，两批互斥防 signal/metrics 混写）
 describe.skipIf(!process.env.GLM_API_KEY || SENTINEL || isMonitorAbOnly())('P5 pilot: 受控实验全矩阵跑批（configs 全臂 × 3 任务 × 5 seed）', () => {
