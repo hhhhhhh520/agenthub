@@ -84,4 +84,32 @@ describe('GET /api/analytics/process（跨会话流程挖掘聚合）', () => {
     expect(json.process.totalTransitions).toBe(0)
     expect(json.variants).toEqual([])
   })
+
+  // §4.1 G2（phase3-4.1-visualization-gap.md）：violations 无 sessionId 则"哪次协作跑偏"无法定位
+  // （route.ts:15 已知边界"消费方需自行定位归属"——G2 把归属做进 API）。跨 session 拍平后
+  // violations[].index 是 allEntries 全局下标，sessionId 需由 index→session 映射补齐。
+  it('G2：violations 每条补 sessionId（跨 session 拍平下归属可定位）', async () => {
+    mockCount.mockResolvedValueOnce(2)
+    mockFindMany.mockResolvedValueOnce([
+      // session a：1 条 escalate 违规（index 0）
+      { id: 'a', title: 'A', decisionTrace: JSON.stringify([
+        entry('align_pm', 'align_pm', 'align_qa', 't1', {
+          validation: { passed: false, validator: 'applyTransition', reason: '非法' },
+          actualTransition: { from: 'align_pm', to: 'align_pm', action: 'align_qa', applied: false, escalated: true },
+        }),
+      ]) },
+      // session b：先 1 条 conforming（占 index 1），再 1 条 escalate（index 2）——验证映射不串位
+      { id: 'b', title: 'B', decisionTrace: JSON.stringify([
+        entry('idle', 'exec', 'execute', 't1'),
+        entry('exec', 'exec', 'done', 't2', {
+          validation: { passed: false, validator: 'applyTransition', reason: '非法' },
+          actualTransition: { from: 'exec', to: 'exec', action: 'done', applied: false, escalated: true },
+        }),
+      ]) },
+    ])
+    const json = await (await GET()).json()
+    expect(json.conformance.violations).toHaveLength(2)
+    expect(json.conformance.violations[0]).toMatchObject({ index: 0, kind: 'escalate', sessionId: 'a' })
+    expect(json.conformance.violations[1]).toMatchObject({ index: 2, kind: 'escalate', sessionId: 'b' })
+  })
 })

@@ -28,20 +28,29 @@ export async function GET() {
   const traces: SessionTrace[] = []
   const allEntries: StoredDecisionTraceEntry[] = []
   const sessions: Array<{ id: string; title: string }> = []
+  const entryOwner: string[] = [] // §4.1 G2：与 allEntries 平行的 index→sessionId 映射（violations 归属定位）
   for (const s of tracedSessions) {
     const entries = parseTrace(s.decisionTrace) as StoredDecisionTraceEntry[]
     if (entries.length === 0) continue // 非空但畸形 → 跳过，不计入 tracedSessions
     traces.push({ sessionId: s.id, entries })
     // 循环 push 而非 spread(...entries)——防单 session 超长数组击穿 V8 参数上限（攻击者审查 ⚠️）
-    for (const entry of entries) allEntries.push(entry)
+    for (const entry of entries) {
+      allEntries.push(entry)
+      entryOwner.push(s.id)
+    }
     sessions.push({ id: s.id, title: s.title })
   }
+
+  // §4.1 G2：violations 每条补 sessionId（route 头注释的"消费方自行定位"已知边界就此收口）；
+  // index 仍为 allEntries 全局下标，语义不变纯增字段
+  const conformance = checkConformance(allEntries)
+  const violations = conformance.violations.map(v => ({ ...v, sessionId: entryOwner[v.index] ?? null }))
 
   return NextResponse.json({
     totalSessions,
     tracedSessions: traces.length,
     sessions,
-    conformance: checkConformance(allEntries),
+    conformance: { ...conformance, violations },
     process: discoverProcess(traces),
     variants: findVariants(traces),
   })
