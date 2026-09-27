@@ -25,7 +25,7 @@ import {
 
 describe('preflight 门控（EXPERIMENT_PREFLIGHT_VERIFY，F4 严格相等口径）', () => {
   const prev = process.env.EXPERIMENT_PREFLIGHT_VERIFY
-  it('仅 "on" 激活（对齐 isStructuredMonitorOn/isSeqgateOn 先例）', () => {
+  it('仅 "on" 激活（对齐 isSeqgateOn 严格相等先例）', () => {
     process.env.EXPERIMENT_PREFLIGHT_VERIFY = 'on'
     expect(isPreflightVerifyOn()).toBe(true)
     process.env.EXPERIMENT_PREFLIGHT_VERIFY = '1'

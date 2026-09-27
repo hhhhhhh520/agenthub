@@ -544,8 +544,8 @@ export async function handleExecution(
         }
       }
 
-      // §3.4: EXPERIMENT_STRUCTURED_MONITOR=on → 结构化 correction 直接触发纠偏（LLM 降级第二道）；
-      // 结构化 pass 或门控未设（生产默认=现状）→ LLM 审查照跑
+      // §3.4: 结构化监控已转正为生产默认（2026-09-27，未设=on）——结构化 correction 直接触发纠偏
+      // （LLM 降级第二道）；结构化 pass 或显式 'off'（逃生门）→ LLM 审查照跑
       if (isStructuredMonitorOn() && structured.verdict === 'correction') {
         // 遏制与 LLM 臂对称：纠偏途中 prisma 异常不穿透 handleExecution（否则 SSE 断流、
         // 剩余任务处理全部放弃、任务滞留 in_progress 等 stuck reset）

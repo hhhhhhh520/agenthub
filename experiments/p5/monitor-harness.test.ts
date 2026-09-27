@@ -28,9 +28,9 @@ import {
 import { parseMonitorCycles, aggregateMonitorConfusion, type RunMetrics } from './metrics'
 
 describe('monitor A/B 配置（config 扩展）', () => {
-  it('envForConfig：on-monitor → EXPERIMENT_STRUCTURED_MONITOR=on（严格值）；on-llmmon → 未设', () => {
+  it('envForConfig：on-monitor → EXPERIMENT_STRUCTURED_MONITOR=on（严格值）；on-llmmon → off（转正后显式复现旧行为，防两臂同质化）', () => {
     expect(envForConfig('on-monitor').EXPERIMENT_STRUCTURED_MONITOR).toBe('on')
-    expect(envForConfig('on-llmmon').EXPERIMENT_STRUCTURED_MONITOR).toBeUndefined()
+    expect(envForConfig('on-llmmon').EXPERIMENT_STRUCTURED_MONITOR).toBe('off')
     // legacy 臂第四键恒未设（不串扰 P6-P10 语义）
     for (const c of ['on+verify', 'on+no-verify', 'off+verify', 'off+no-verify', 'on-seqgate+verify'] as const) {
       expect(envForConfig(c).EXPERIMENT_STRUCTURED_MONITOR).toBeUndefined()

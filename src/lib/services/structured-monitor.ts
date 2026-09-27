@@ -1,12 +1,12 @@
 /**
  * §3.4 monitoring 结构化——信号层纯函数（roadmap；三梯队第 1 项 A/B 实验的信号面）
  *
- * 现状：monitoring = LLM 审 LLM（executeSingleAgent 出 needsCorrection），结构化信号
- * （git truth 完成性 / outputSchema）只产生软警告、不参与纠偏判定。
- * 本模块把结构化信号收敛为可测试的纯判定，monitoring 接线按
- * EXPERIMENT_STRUCTURED_MONITOR 门控决定"结构化先行（on）或仅记录反事实（未设）"：
- *   - on：结构化 correction 直接触发纠偏（不跑 LLM），pass 时 LLM 作为第二道（漏检率数据）
- *   - 未设：现状行为（只 LLM），信号命中仍记 Task.trace(event:'monitor')——反事实对比数据
+ * 现状（2026-09-27 转正，roadmap v12）：结构化监控为生产默认——未设 env = on
+ * （结构化 correction 直接触发纠偏，pass 时 LLM 作为第二道）；显式 'off' = 复现转正前行为
+ * （只 LLM 审，信号命中记 Task.trace(event:'monitor')——对照/逃生门）。
+ * 本模块把结构化信号收敛为可测试的纯判定，接线语义见 isStructuredMonitorOn。
+ * 转正依据：experiments/p5/results/report.monitor-2026-09-26/27.md（S1/S2 40/40 cycle 零漏检、
+ * 30 run 基线零误报、合并 McNemar E p_exact=0.0625）。
  *
  * 信号定义：
  *   S1 declared_files_untouched——declaredFiles 非空且声明∩实际变更为空（声称完成但无产出）。
@@ -20,9 +20,14 @@
 
 import type { SchemaValidationResult } from '@/lib/services/schema-validator'
 
-/** §3.4 A/B 开关：`EXPERIMENT_STRUCTURED_MONITOR=on` 时结构化检查先行（严格相等语义，对齐 isSeqgateOn） */
+/** §3.4 结构化监控开关——2026-09-27 用户拍板**转正为生产默认**（roadmap v12）。
+ *  默认反转：未设 = on（结构化先行 + LLM 第二道），仅显式 'off' 关闭
+ *  （逃生门 + p5 装置 on-llmmon 对照臂兼容——该臂显式 'off' 复现转正前行为）。
+ *  转正依据：experiments/p5/results/report.monitor-2026-09-26/27.md
+ *  （S1/S2 累计 40/40 cycle 零漏检、30 run 基线零误报、合并 McNemar E p_exact=0.0625；
+ *  转正不减少防线——LLM 审在结构化 pass 后照跑）。 */
 export function isStructuredMonitorOn(): boolean {
-  return process.env.EXPERIMENT_STRUCTURED_MONITOR === 'on'
+  return process.env.EXPERIMENT_STRUCTURED_MONITOR !== 'off'
 }
 
 export interface MonitorSignal {

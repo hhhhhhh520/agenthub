@@ -126,7 +126,7 @@ describe('监控 prompt 审计诚实性（audit.declared = 真实交集）', () 
   })
 
   async function runGhostScenario(changedFiles: string[]) {
-    delete process.env.EXPERIMENT_STRUCTURED_MONITOR // 生产默认臂：LLM 审照跑，prompt 必被构建
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'off' // LLM 审照跑臂（转正后生产默认=结构化先行，本用例测 LLM prompt 需显式 off）
     const { handleExecution } = await import('@/lib/services/execution')
     mocks.mockTaskFindMany.mockResolvedValue([makeTask()])
     mocks.mockExecuteTaskBatch.mockResolvedValue({

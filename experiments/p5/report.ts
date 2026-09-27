@@ -11,7 +11,7 @@ export function generateMonitorReport(metrics: RunMetrics[]): string {
   const lines: string[] = []
   lines.push('# P11 Monitor A/B Report', '')
   lines.push(`> model: ${CONFIG.model} | baseUrl: ${process.env.GLM_BASE_URL || 'https://opencode.ai/zen/go'} | runsPerCell: ${CONFIG.runsPerCell}`)
-  lines.push('> 两臂: on-monitor（EXPERIMENT_STRUCTURED_MONITOR=on，结构化纠偏先行/LLM 降级第二道）vs on-llmmon（未设=生产默认 LLM 审，结构化信号记 monitor 事件=反事实）')
+  lines.push('> 两臂: on-monitor（EXPERIMENT_STRUCTURED_MONITOR=on，结构化纠偏先行/LLM 降级第二道）vs on-llmmon（显式 off=复现转正前 LLM 审行为，结构化信号记 monitor 事件=反事实。2026-09-27 转正后未设=on）')
   lines.push('> 逐 run 臂值由 metrics 行 config 列驱动；判据配对来自 Task.trace completion-cycle（success 分段），verify- 前缀任务已排除', '')
 
   const monitor = metrics.filter(m => isMonitorConfig(m.config))
@@ -83,6 +83,7 @@ export function generateMonitorReport(metrics: RunMetrics[]): string {
   lines.push('- LLM 审返回 JSON 解析失败与"判无需纠偏"不可区分 → llmCorrected 系统性偏低方向的混淆变量')
   lines.push('- cleanupUndeclared 先于监控审查清空 undeclared（越界文件已清理，审查看到清理后世界；E ghost 罐头下两臂观察世界不同）')
   lines.push('- audit.declared 已修复为真实交集（commit 9c0ae4a，2026-09-21）；此前批次数据带"谎报声明交集"偏置，跨批比较需按批次切分')
+  lines.push('- 结构化监控 2026-09-27 转正（未设=on，commit 见 roadmap v12）：转正前批次 on-llmmon 臂=未设（LLM 审），转正后该臂=显式 off（逐语句等价）；跨批比较还需按转正 commit 切分（环境快照含第四键可辨）')
   lines.push('- on 臂结构化命中即纠偏，LLM 对该 cycle 的判断不可观测（结构性；unset 臂补全反事实面）')
   lines.push('- 纠偏重试撞 MAX_CORRECTION_RETRIES 上限时 correction 事件不落 trace（生产既有语义）→ cycle 级 structuredOnly 含"命中但被重试上限拦截"的尝试；run 级首触发不受影响')
   lines.push('- 监控审查超时不终止底层 CLI（生产 Promise.race 既有语义）；批 LLM 调用量约 350-500 次（决策+审查+preflight）')
@@ -104,7 +105,7 @@ export function generateReport(metrics: RunMetrics[]): string {
   // P10（spec §2.3 / 审查 F5）：环境快照段——P9-F4「报告回显 env 供人眼终检」补票；key 永不回显本体
   lines.push('', '## 环境快照')
   const envOr = (k: string) => process.env[k] ?? '(unset)'
-  lines.push(`- EXPERIMENT_STATE_MACHINE=${envOr('EXPERIMENT_STATE_MACHINE')} | EXPERIMENT_VERIFY=${envOr('EXPERIMENT_VERIFY')} | EXPERIMENT_SEQGATE=${envOr('EXPERIMENT_SEQGATE')}`)
+  lines.push(`- EXPERIMENT_STATE_MACHINE=${envOr('EXPERIMENT_STATE_MACHINE')} | EXPERIMENT_VERIFY=${envOr('EXPERIMENT_VERIFY')} | EXPERIMENT_SEQGATE=${envOr('EXPERIMENT_SEQGATE')} | EXPERIMENT_STRUCTURED_MONITOR=${envOr('EXPERIMENT_STRUCTURED_MONITOR')}`)
   lines.push(`- P7_GATE=${envOr('P7_GATE')} | P7_GATE_CELL=${envOr('P7_GATE_CELL')} | P9_ARMS=${envOr('P9_ARMS')} | P5_SENTINEL=${envOr('P5_SENTINEL')}`)
   lines.push(`- seed 集=[0,1,2,3,4] | key 指纹=${process.env.GLM_API_KEY ? createHash('sha256').update(process.env.GLM_API_KEY).digest('hex').slice(0, 8) : '(no key)'}（sha256 前 8 位）`)
   // P10 终审 should-fix#2：45-run 矩阵报告里 EXPERIMENT_SEQGATE=(unset) 是进程基线，不是"seqgate 没开"

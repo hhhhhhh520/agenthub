@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest'
 //   S2 outputSchema——validateAgainstSchema 不通过（missing-fields/parse-error/no-json）
 //      防御：declaredFiles 为空（纯讨论/分析任务）跳过 S1；outputSchema 为空跳过 S2
 
-import { structuredMonitorVerdict, describeSignal } from '@/lib/services/structured-monitor'
+import { structuredMonitorVerdict, describeSignal, isStructuredMonitorOn } from '@/lib/services/structured-monitor'
 import { validateAgainstSchema } from '@/lib/services/schema-validator'
 
 describe('structuredMonitorVerdict — S1 git-truth 完成性', () => {
@@ -97,5 +97,32 @@ describe('describeSignal — 纠偏 prompt 摘要', () => {
     const s = describeSignal({ kind: 'declared_files_untouched', detail: 'src/a.ts' })
     expect(s).toContain('src/a.ts')
     expect(s).toContain('未变更')
+  })
+})
+
+// ── 转正（2026-09-27 用户拍板，roadmap v12）：结构化监控成为生产默认 ──
+// 依据：report.monitor-2026-09-26/27（S1/S2 累计 40/40 cycle 零漏检、30 run 基线零误报、
+// 合并 McNemar E p_exact=0.0625）。默认反转：未设=on，仅显式 'off' 关闭
+// （逃生门 + p5 装置 on-llmmon 对照臂兼容——该臂显式 'off' 复现转正前行为）。
+describe('isStructuredMonitorOn — 转正后默认语义', () => {
+  const prev = process.env.EXPERIMENT_STRUCTURED_MONITOR
+  afterEach(() => {
+    if (prev === undefined) delete process.env.EXPERIMENT_STRUCTURED_MONITOR
+    else process.env.EXPERIMENT_STRUCTURED_MONITOR = prev
+  })
+
+  it('未设 = on（转正：结构化先行 + LLM 第二道为生产默认）', () => {
+    delete process.env.EXPERIMENT_STRUCTURED_MONITOR
+    expect(isStructuredMonitorOn()).toBe(true)
+  })
+
+  it("显式 'off' = 关闭（逃生门 + 对照臂）", () => {
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'off'
+    expect(isStructuredMonitorOn()).toBe(false)
+  })
+
+  it("显式 'on' = on", () => {
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'on'
+    expect(isStructuredMonitorOn()).toBe(true)
   })
 })

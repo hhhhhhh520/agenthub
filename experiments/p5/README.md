@@ -20,7 +20,7 @@ export MONITOR_AB=1       # 严格 '1'；设了只跑 monitor 批（legacy pilot
 npx vitest run --config experiments/p5/vitest.config.ts
 ```
 
-- **两臂**：`on-monitor`（EXPERIMENT_STRUCTURED_MONITOR=on，结构化纠偏先行/LLM 降级第二道）vs `on-llmmon`（未设=生产默认 LLM 审，结构化信号记 monitor 事件=反事实）。
+- **两臂**：`on-monitor`（EXPERIMENT_STRUCTURED_MONITOR=on，结构化纠偏先行/LLM 降级第二道）vs `on-llmmon`（显式 **'off'**=复现转正前 LLM 审行为，结构化信号记 monitor 事件=反事实。2026-09-27 结构化监控已转正为生产默认：未设=on，'off' 是唯一关闭值）。
 - **4 罐头 D-G**（tasks-monitor.ts，剧本 = mock executor 写真实文件让影子 git 检出 + 定型 result；监控审查两臂透传真实 LLM）：
   - D clean（双 pass 基线）/ E ghost 只写杂散文件（S1 命中）/ F schema 缺字段（S2 命中）/ G 自曝缺陷（结构化盲区、LLM 应纠偏）。
 - **指标**：Task.trace 按 success 分段配对两判据（metrics.ts parseMonitorCycles，verify- 前缀任务排除）→ 触发率 / 混淆矩阵 / 跨臂 McNemar；报告 generateMonitorReport（afterAll console + 效度口径段必读）。
