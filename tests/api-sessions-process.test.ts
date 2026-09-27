@@ -81,4 +81,30 @@ describe('GET /api/sessions/[id]/process（单会话流程挖掘消费方）', (
     expect(json.conformance.violations[0].kind).toBe('escalate')
     expect(json.process.escalateCount).toBe(1)
   })
+
+  // §4.1 G1（phase3-4.1-visualization-gap.md）：单会话追踪视图的数据面——端点此前只返回聚合结果，
+  // 时间线需要逐条原始条目（ts/decisionPoint/llmProposal/corrections/actualTransition）。
+  it('G1：返回 entries（decisionTrace 原始条目透传，时间线数据源）', async () => {
+    mockFindUnique.mockResolvedValueOnce({ decisionTrace: JSON.stringify([
+      entry('idle', 'align_arch', 'align_decompose', 't1', {
+        corrections: [{ from: 'done', to: 'align_decompose', reason: '重做引导' }],
+      }),
+      entry('align_arch', 'exec', 'execute', 't2'),
+    ]) })
+    const res = await GET(makeReq(), params)
+    const json = await res.json()
+    expect(json.entries).toHaveLength(2)
+    expect(json.entries[0].ts).toBe('t1')
+    expect(json.entries[0].decisionPoint).toBe('handleOrchestratorDecision')
+    expect(json.entries[0].llmProposal.action).toBe('align_decompose')
+    expect(json.entries[0].corrections).toEqual([{ from: 'done', to: 'align_decompose', reason: '重做引导' }])
+    expect(json.entries[0].actualTransition.applied).toBe(true)
+    expect(json.entries[1].ts).toBe('t2')
+  })
+
+  it('G1：畸形 trace → entries 为空数组（不击穿，与 conformance 空态同语义）', async () => {
+    mockFindUnique.mockResolvedValueOnce({ decisionTrace: 'not json' })
+    const json = await (await GET(makeReq(), params)).json()
+    expect(json.entries).toEqual([])
+  })
 })

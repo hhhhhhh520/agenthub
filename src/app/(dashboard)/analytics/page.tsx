@@ -1,12 +1,18 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
+import { STATE_LABELS, VIOLATION_LABELS } from "@/lib/process-labels"
+import type { ProcessModel } from "@/lib/orchestrator/process-mining"
+import { DfgGraph } from "./dfg-graph"
 
 /**
  * P4 T6: 最小 analytics 可视化页（B 方向"可视化原型"）。
  * 渲染 /api/analytics/process 三块：conformance 指标 / directly-follows 边表 / 流程变体列表。
  * 无图库、无新依赖；数据为空显示空态。
+ * §4.1 G2/G4/G5（phase3-4.1-visualization-gap.md）：casRejectCount 展示 + violations 会话归属列 +
+ * 变体/会话可点击跳转（单会话追踪视图 /analytics/sessions/[id]）。
  */
 
 interface ConformanceViolation {
@@ -16,25 +22,18 @@ interface ConformanceViolation {
   action: string
   to: string
   detail: string
+  sessionId?: string | null
 }
 interface Conformance {
   total: number
   conforming: number
   escalateCount: number
   correctionCount: number
+  casRejectCount: number
   ratio: number
   violations: ConformanceViolation[]
 }
-interface ProcessEdge { from: string; to: string; count: number }
-interface StateSignals { visits: number; escalateCount: number; correctionCount: number }
-interface ProcessModel {
-  nodes: string[]
-  edges: ProcessEdge[]
-  totalTransitions: number
-  escalateCount: number
-  correctionCount: number
-  stateSignals: Record<string, StateSignals>
-}
+// process 块直接用 lib 的 ProcessModel（API 返回即 discoverProcess 产出，类型同源防漂移）
 interface TraceVariant {
   id: string
   stateSeq: string[]
@@ -46,25 +45,10 @@ interface TraceVariant {
 interface AnalyticsData {
   totalSessions: number
   tracedSessions: number
+  sessions: Array<{ id: string; title: string }>
   conformance: Conformance
   process: ProcessModel
   variants: TraceVariant[]
-}
-
-const STATE_LABELS: Record<string, string> = {
-  idle: "空闲",
-  align_pm: "需求确认",
-  align_arch: "架构拆解",
-  align_qa: "对齐问答",
-  exec: "执行中",
-  done: "已完成",
-}
-
-const VIOLATION_LABELS: Record<string, { text: string; color: string }> = {
-  escalate: { text: "LLM 越界被拦", color: "bg-yellow-100 text-yellow-800" },
-  escalate_but_legal: { text: "代码误拦(漂移)", color: "bg-red-100 text-red-800" },
-  illegal_transition: { text: "记录非法转移(漂移)", color: "bg-red-100 text-red-800" },
-  malformed: { text: "畸形条目", color: "bg-gray-200 text-gray-700" },
 }
 
 function stateLabel(s: string) {
@@ -126,15 +110,17 @@ export default function AnalyticsPage() {
           <Stat label="一致性" value={`${ratioPct}%`} hint={`${conformance.conforming}/${conformance.total}`} />
           <Stat label="升级(LLM 越界被拦)" value={String(conformance.escalateCount)} hint="A 的核心信号" />
           <Stat label="纠正" value={String(conformance.correctionCount)} hint="守卫/规范重定向" />
+          <Stat label="CAS 拒绝回执" value={String(conformance.casRejectCount ?? 0)} hint="并发拒写，按设计" />
           <Stat label="转移总数" value={String(conformance.total)} />
         </div>
         {conformance.violations.length > 0 && (
           <table className="mt-4 w-full text-sm">
             <thead>
               <tr className="border-b text-left text-gray-500">
-                <th className="py-2 pr-4">#</th>
+                <th className="py-2 pr-4" title="跨会话条目的全局下标（与单会话追踪页的逐会话序号不同）">全局#</th>
                 <th className="py-2 pr-4">类型</th>
                 <th className="py-2 pr-4">转移</th>
+                <th className="py-2 pr-4">会话</th>
                 <th className="py-2">详情</th>
               </tr>
             </thead>
@@ -146,6 +132,15 @@ export default function AnalyticsPage() {
                     <td className="py-2 pr-4 text-gray-500">{v.index}</td>
                     <td className="py-2 pr-4"><Badge className={vc.color}>{vc.text}</Badge></td>
                     <td className="py-2 pr-4 font-mono">{stateLabel(v.from)} + {v.action} → {stateLabel(v.to)}</td>
+                    <td className="py-2 pr-4">
+                      {v.sessionId ? (
+                        <Link href={`/analytics/sessions/${v.sessionId}`} className="font-mono text-xs text-blue-600 hover:underline">
+                          {v.sessionId.slice(0, 8)}…
+                        </Link>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
                     <td className="py-2 text-gray-600">{v.detail}</td>
                   </tr>
                 )
@@ -158,6 +153,8 @@ export default function AnalyticsPage() {
       {/* 2. directly-follows 图 */}
       <section>
         <h2 className="mb-3 text-lg font-semibold">Directly-Follows 图（流程转移频次）</h2>
+        <DfgGraph edges={process.edges} stateSignals={process.stateSignals} />
+        <h3 className="mb-2 mt-4 text-sm font-medium text-gray-600">边表明细</h3>
         {process.edges.length === 0 ? (
           <p className="text-sm text-gray-500">无实际转移</p>
         ) : (
@@ -211,10 +208,43 @@ export default function AnalyticsPage() {
                 {v.correctionCount > 0 && <Badge className="bg-blue-100 text-blue-800">纠正 {v.correctionCount}</Badge>}
                 {v.escalateCount > 0 && <Badge className="bg-yellow-100 text-yellow-800">升级 {v.escalateCount}</Badge>}
               </div>
-              <p className="mt-1 text-xs text-gray-400">会话：{v.sessionIds.join("、") || "—"}</p>
+              <p className="mt-1 text-xs text-gray-400">
+                会话：
+                {v.sessionIds.length > 0
+                  ? v.sessionIds.map((sid, si) => (
+                      <span key={sid}>
+                        {si > 0 && "、"}
+                        <Link href={`/analytics/sessions/${sid}`} className="font-mono text-blue-600 hover:underline">
+                          {sid.slice(0, 8)}…
+                        </Link>
+                      </span>
+                    ))
+                  : "—"}
+              </p>
             </div>
           ))}
         </div>
+      </section>
+
+      {/* 4. 会话列表（§4.1 G5：会话 → 单会话追踪视图的导航入口） */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">会话（{data.sessions.length}）</h2>
+        {data.sessions.length === 0 ? (
+          <p className="text-sm text-gray-500">无带决策轨迹的会话</p>
+        ) : (
+          <div className="max-h-72 space-y-1 overflow-y-auto rounded border p-2">
+            {data.sessions.map(s => (
+              <Link
+                key={s.id}
+                href={`/analytics/sessions/${s.id}`}
+                className="block rounded px-2 py-1 text-sm hover:bg-gray-50"
+              >
+                <span>{s.title || "（无标题）"}</span>
+                <span className="ml-2 font-mono text-xs text-gray-400">{s.id.slice(0, 8)}…</span>
+              </Link>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )

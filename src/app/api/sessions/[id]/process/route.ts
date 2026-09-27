@@ -28,6 +28,9 @@ export async function GET(
   const trace = { sessionId: id, entries }
   return NextResponse.json({
     sessionId: id,
+    // §4.1 G1：决策条目原文透传（ts/decisionPoint/llmProposal/corrections/actualTransition）——
+    // 单会话追踪视图的纠偏时间线数据源；顺序即 append 序（ts 保序写入，封顶截断保序）
+    entries,
     conformance: checkConformance(entries),
     process: discoverProcess([trace]),
     variants: findVariants([trace]),
