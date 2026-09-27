@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ── §3.4 monitoring 结构化——execution.ts 接线（roadmap；三梯队第 1 项 A/B 实验的触发层）──
 //
-// 门控语义（EXPERIMENT_STRUCTURED_MONITOR，严格相等对齐 isSeqgateOn 先例）：
-//   on：结构化 verdict=correction 直接触发纠偏（复用 invalidateCliSession 统一入口，
+// 门控语义（EXPERIMENT_STRUCTURED_MONITOR，2026-09-27 转正后默认反转：未设=on，'off'=唯一关闭值）：
+//   on（含未设）：结构化 verdict=correction 直接触发纠偏（复用 invalidateCliSession 统一入口，
 //       expectedFrom='completed'）且 LLM 审查不跑（降级第二道）；verdict=pass → LLM 照跑（漏检率数据）
-//   未设（生产默认）：纠偏仍由 LLM 驱动（现状不变），结构化信号命中仍记 Task.trace
+//   显式 'off'（逃生门/对照臂）：纠偏仍由 LLM 驱动（转正前行为），结构化信号命中仍记 Task.trace
 //       event:'monitor'（反事实对比数据）
 //
 // 变异锚点：
@@ -174,7 +174,8 @@ describe('§3.4 结构化监控接线（EXPERIMENT_STRUCTURED_MONITOR）', () =>
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('缺少错误处理') }))
   })
 
-  it('未设（生产默认）+ S1 命中 + LLM pass → 不纠偏（现状不变），但信号记 monitor trace（反事实数据）', async () => {
+  it('未设（转正后生产默认）+ S1 命中 → 结构化纠偏（LLM 短路）+ monitor 埋点照记', async () => {
+    // 转正（roadmap v12）：未设 = 结构化先行，S1 命中即纠偏——与 on 臂同语义
     delete process.env.EXPERIMENT_STRUCTURED_MONITOR
     const { handleExecution } = await runHandleExecution()
     mocks.mockGetChangedFiles.mockReturnValue(['src/lib/other.ts'])
@@ -183,12 +184,13 @@ describe('§3.4 结构化监控接线（EXPERIMENT_STRUCTURED_MONITOR）', () =>
     const sendEvent = vi.fn()
     await handleExecution('test', 'sess-1', AGENTS, sendEvent)
 
-    // LLM 照跑（现状）
-    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
-    // 不纠偏（门控未设，结构化信号只记录）
+    // LLM 审查不跑（结构化 correction 短路）
+    expect(mocks.mockExecuteSingleAgent).not.toHaveBeenCalled()
+    // 结构化纠偏走统一入口
     const invalidateWrite = mocks.mockTaskUpdateMany.mock.calls.find(c => c[0].data?.status === 'pending')
-    expect(invalidateWrite).toBeUndefined()
-    // 信号埋点：monitor trace 事件落库（条件写 where status=completed）
+    expect(invalidateWrite).toBeTruthy()
+    expect(invalidateWrite![0].where).toEqual({ id: 'task-1', status: { in: ['completed'] } })
+    // 信号埋点：monitor trace 事件照记（反事实样本两臂同构语义保留）
     const monitorWrite = mocks.mockTaskUpdateMany.mock.calls.find(
       c => typeof c[0].data?.trace === 'string' && c[0].data.trace.includes('"event":"monitor"')
     )
@@ -200,5 +202,27 @@ describe('§3.4 结构化监控接线（EXPERIMENT_STRUCTURED_MONITOR）', () =>
     // 审查收编（⚠️-1 变异锚点）：埋点基串必须是 B2 落库的 successTrace——
     // 退化为内存过期 trace（缺 success 事件）时此断言红
     expect(traceArr.some(e => e.event === 'success')).toBe(true)
+  })
+
+  it("显式 'off'（逃生门）+ S1 命中 + LLM pass → 不纠偏（转正前旧行为可达），信号仍记 monitor trace", async () => {
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'off'
+    const { handleExecution } = await runHandleExecution()
+    mocks.mockGetChangedFiles.mockReturnValue(['src/lib/other.ts'])
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: '{"needsCorrection":false}' })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // LLM 照跑（旧行为：结构化信号只记录不参与判定）
+    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
+    // 不纠偏
+    const invalidateWrite = mocks.mockTaskUpdateMany.mock.calls.find(c => c[0].data?.status === 'pending')
+    expect(invalidateWrite).toBeUndefined()
+    // 信号埋点照记（条件写 where status=completed）
+    const monitorWrite = mocks.mockTaskUpdateMany.mock.calls.find(
+      c => typeof c[0].data?.trace === 'string' && c[0].data.trace.includes('"event":"monitor"')
+    )
+    expect(monitorWrite).toBeTruthy()
+    expect(monitorWrite![0].where).toEqual({ id: 'task-1', status: 'completed' })
   })
 })

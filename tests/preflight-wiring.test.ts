@@ -124,6 +124,8 @@ describe('preflight 命令红绿灯接线（EXPERIMENT_PREFLIGHT_VERIFY）', () 
     mocks.mockTaskFindUnique.mockResolvedValue({ status: 'completed' })
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     delete process.env.EXPERIMENT_PREFLIGHT_VERIFY
+    // 结构化监控转正后未设=on——本 describe 测 preflight 接线，冻结监控变量在 off（隔离变量）
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'off'
   })
 
   afterEach(() => {

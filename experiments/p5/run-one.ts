@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -15,6 +16,21 @@ export interface RunInput { config: (typeof CONFIG.configs)[number]; taskId: Har
 /** P9-乙 T4: 本进程内 runOne 创建的精确 work 目录（run.test.ts afterAll 逐个 rmSync 清理；
  *  路径来自 mkdtempSync 返回值本身，无通配、删除前无需再断言前缀——审查 H 放行的首选方案） */
 export const createdWorkDirs: string[] = []
+
+/** 2026-09-27 拍板（审查者越权代工修复，roadmap v12）：work projectDir 独立 git init——
+ *  无 .git 时 `git rev-parse --show-toplevel` 会向上命中 agenthub 主仓库，审查 LLM 由此
+ *  认定"项目根=仓库根"并越权写文件（E/D 罐头实锤：src/api/login.ts、src/utils/math.ts）。
+ *  init 后 toplevel=自身，审查 agent 的 git 视角被隔离在本目录内。
+ *  shadow-git 用显式 --git-dir/--work-tree（shadowGitArgs），不查 toplevel，零冲突。
+ *  best-effort：git 不可达/失败静默跳过（隔离是加固，不阻塞跑批）。 */
+export function initWorkGit(projectDir: string): void {
+  try {
+    execFileSync('git', ['init', '--quiet'], { cwd: projectDir, stdio: 'ignore', timeout: 10_000 })
+  } catch (e) {
+    // 隔离失败不阻塞跑批，但必须可见——静默 = 30 run 全部回到越权代工暴露面且无感（安全审查🟡4）
+    console.warn(`[run-one] initWorkGit 失败，work 目录无 git 隔离: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
 
 /** P9-乙 T3: 三变量（F4 必办②——seqgate 臂需 EXPERIMENT_SEQGATE 隔离）
  *  P11 monitor A/B（🔴 防两臂同质化）: 第四键 EXPERIMENT_STRUCTURED_MONITOR 进快照——
@@ -92,6 +108,8 @@ export async function runOne({ config, taskId, seed }: RunInput): Promise<RunMet
     const projectDir = mkdtempSync(join(CONFIG.workDir, runId))
     // P9-乙 T4: 注册精确路径供 afterAll teardown（mkdtemp 成功即注册，覆盖后续任何异常/中断路径）
     createdWorkDirs.push(projectDir)
+    // 2026-09-27: work 目录 git toplevel 隔离（initWorkGit 注释详述）——必须在任何 agent/CLI 前完成
+    initWorkGit(projectDir)
     const session = await prisma.session.create({
       data: { title: `p5-${config}-${taskId}-s${seed}`, type: 'group', projectDir },
     })

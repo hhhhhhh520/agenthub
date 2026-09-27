@@ -5,7 +5,7 @@ import { CONFIG, isP9ArmsOnly, parseGateCell, isMonitorAbOnly, isMonitorConfig }
 import { MONITOR_TASKS, type MonitorTaskId } from './tasks-monitor'
 import { TASKS } from './tasks'
 import { setupExperiment } from './setup'
-import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs } from './run-one'
+import { runOne, saveRunEnv, restoreRunEnv, applyRunEnv, createdWorkDirs, initWorkGit } from './run-one'
 import { loadMetrics, appendMetrics, countIllegalProposals, resolveFailureMode, classifyFailKind, type FailKind, type RunMetrics } from './metrics'
 import { bootstrapCI, mcnemarExact, pairedMcNemar, seedNoise } from './stats'
 import { generateReport, generateMonitorReport } from './report'
@@ -432,7 +432,7 @@ describe('P6 T8: 状态机×verify 主效应矩阵', () => {
     expect(CONFIG.envForConfig('off+verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
     expect(CONFIG.envForConfig('off+no-verify')).toEqual({ EXPERIMENT_STATE_MACHINE: 'off', EXPERIMENT_VERIFY: 'off', EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
     expect(CONFIG.envForConfig('on-monitor')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: 'on' })
-    expect(CONFIG.envForConfig('on-llmmon')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: undefined })
+    expect(CONFIG.envForConfig('on-llmmon')).toEqual({ EXPERIMENT_STATE_MACHINE: undefined, EXPERIMENT_VERIFY: undefined, EXPERIMENT_SEQGATE: undefined, EXPERIMENT_STRUCTURED_MONITOR: 'off' })
   })
 
   it('generateReport: 全配置×3任务×5seed 输出状态机主效应+verify 主效应+交互（b/c 手算正确，配对按 seed 排序）', () => {
@@ -662,6 +662,26 @@ describe('P9-乙 T4: work teardown 接线（createdWorkDirs 注册 + 文件级 a
     // 注册的是 mkdtempSync 的真实返回路径（精确、非前缀拼凑）
     expect(createdWorkDirs).toContain(dir)
     expect(existsSync(dir)).toBe(true)
+  })
+})
+
+// —— 转正配套：initWorkGit 隔离（2026-09-27，审查者越权代工修复，run-one.ts 注释详述）——
+describe('initWorkGit: work projectDir git toplevel 隔离', () => {
+  it('init 后 rev-parse --show-toplevel = projectDir 自身（不再向上命中 agenthub 主仓库）', () => {
+    const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
+    const dir = mkdtempSync(join(CONFIG.workDir, '__t-git-isolate-'))
+    createdWorkDirs.push(dir)
+    initWorkGit(dir)
+    expect(existsSync(join(dir, '.git'))).toBe(true)
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: dir, encoding: 'utf8' }).trim().replace(/\\/g, '/')
+    expect(top.toLowerCase()).toBe(dir.replace(/\\/g, '/').toLowerCase())
+  })
+
+  // 接线守卫（readFileSync 源码断言，P5 setup 守卫先例）：runOne 不调 initWorkGit 则此断言红——
+  // 防"函数还在但调用点被删"的静默退化（变异验证实证：仅变异函数体测不出接线断裂）
+  it('接线守卫：runOne 在 mkdtemp 后调用 initWorkGit', () => {
+    const src = readFileSync(join(__dirname, 'run-one.ts'), 'utf8')
+    expect(src).toContain('initWorkGit(projectDir)')
   })
 })
 

@@ -8,9 +8,10 @@ export const envForConfig = (config: string) => ({
   EXPERIMENT_STATE_MACHINE: config.startsWith('off') ? 'off' : undefined,
   EXPERIMENT_VERIFY: config.includes('no-verify') ? 'off' : undefined,
   EXPERIMENT_SEQGATE: config.startsWith('on-seqgate') ? 'on' : undefined,
-  // monitor A/B 第四键（严格值 'on'，isStructuredMonitorOn 只认 ==='on'）：
-  // on-monitor = 结构化纠偏先行；on-llmmon = 未设（生产默认 LLM 审 + 反事实埋点）
-  EXPERIMENT_STRUCTURED_MONITOR: config === 'on-monitor' ? 'on' : undefined,
+  // monitor A/B 第四键——2026-09-27 转正后生产默认反转（未设=on，见 structured-monitor.ts）：
+  // on-monitor = 'on'（结构化纠偏先行）；on-llmmon = 显式 'off'（复现转正前 LLM 审行为，防两臂同质化）；
+  // legacy 配置未设 → 转正后自然享受生产默认（结构化先行）
+  EXPERIMENT_STRUCTURED_MONITOR: config === 'on-monitor' ? 'on' : config === 'on-llmmon' ? 'off' : undefined,
 })
 
 /** monitor A/B 两臂判别（legacy 臂 false，报告/驱动按此分流） */
