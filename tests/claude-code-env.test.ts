@@ -26,7 +26,14 @@ import {
   SCRUB_ENV_EXACT,
   type ClaudeProviderConfig,
 } from '@/lib/adapter/claude-code-env'
-import { composeSpawnEnv, isSessionNotFoundError } from '@/lib/adapter/process-registry'
+import { composeSpawnEnv, isSessionNotFoundError, isPermanentError } from '@/lib/adapter/process-registry'
+import {
+  CLI_SYNTHETIC_ERROR_PREFIXES,
+  looksLikeCliSyntheticError,
+} from '@/lib/adapter/claude-code-env'
+
+// CJK_RE 的代表字符（模块内私有，此处镜像校验测试夹具确实夹带中文）
+const CJK_RE_REPRESENTATIVE = /[一-鿿]/
 
 const CFG: ClaudeProviderConfig = {
   baseUrl: 'https://tokenrhythm.studio',
@@ -294,5 +301,56 @@ describe('isSessionNotFoundError（--resume 落空形态，ISSUE-027 换线后�
   it('普通错误不命中', () => {
     expect(isSessionNotFoundError('Process exited, code=1')).toBe(false)
     expect(isSessionNotFoundError('API Error: 401 The API key format is incorrect')).toBe(false)
+  })
+})
+
+describe('isPermanentError（ISSUE-027 增补：认证/模型授权快速失败，评审 #4 取舍见 commit message）', () => {
+  it('🔴 新增签名逐条命中（09-27 实测死相文本）', () => {
+    // 聊天路径实测：CLI 内部重试放弃后的最终错误文本
+    expect(isPermanentError('Failed to authenticate. API Error: 401 The API key format is incorrect. Request id: 0217ab')).toBe(true)
+    // F/F2 探针实测：aliyuncs 模型未开通（403）
+    expect(isPermanentError('{"code":"AccessDenied.Unpurchased","message":"Access to model denied."}')).toBe(true)
+    // F 变体死相：CLI 合成错误（服务器 401/403 的包装）
+    expect(isPermanentError("There's an issue with the selected model (mimo-v2.6-flash). It may not exist or you may not have access to it.")).toBe(true)
+    // aliyuncs 401 指纹
+    expect(isPermanentError('{"code":"InvalidApiKey","message":"Invalid API-key provided."}')).toBe(true)
+  })
+  it('瞬时错误不命中（重试语义保留）', () => {
+    expect(isPermanentError('timeout')).toBe(false)
+    expect(isPermanentError('Process exited, code=1')).toBe(false)
+    expect(isPermanentError('ECONNRESET')).toBe(false)
+  })
+})
+
+describe('looksLikeCliSyntheticError（CLI 合成错误判定，评审 #3 长度上限防误伤）', () => {
+  it('两类 CLI 错误前缀（trim 后）命中', () => {
+    expect(looksLikeCliSyntheticError('Failed to authenticate. API Error: 401 The API key format is incorrect. Request id: 0217ab')).toBe(true)
+    expect(looksLikeCliSyntheticError("There's an issue with the selected model (mimo-v2.6-flash). It may not exist or you may not have access to it.")).toBe(true)
+    expect(CLI_SYNTHETIC_ERROR_PREFIXES.length).toBeGreaterThanOrEqual(2)
+  })
+  it('🔴 误伤防线：以错误字符串开头的正常长回复（≥300 字符）不判定为错误', () => {
+    const legit = 'Failed to authenticate. API Error: 401 是一个常见的 HTTP 状态码。' +
+      '要修复它，你需要检查 API key 是否与端点配对：先看 baseUrl 的协议面（OpenAI/Anthropic），' +
+      '再看 key 的前缀格式是否属于该网关，最后在控制台确认模型权限是否开通（403 Unpurchased 场景）。' +
+      '以上是排查 401 的完整 checklist，共三步，按顺序执行即可定位绝大多数配置类认证问题。' +
+      '另外还要注意 CLI 侧的行为：新版 claude CLI 在 -p 模式下会忽略进程环境变量里注入的 ANTHROPIC_BASE_URL，' +
+      '因此即使 env 配置完全正确，请求也可能落到用户级 settings.json 声明的旧端点上，' +
+      '这时错误文本里的 Request id 前缀可以帮你判断真正被击中的是哪一家网关（UUID 风格与 0217 风格分属不同平台）。'
+    expect(legit.length).toBeGreaterThanOrEqual(300)
+    expect(looksLikeCliSyntheticError(legit)).toBe(false)
+  })
+  it('普通回复 / 空串 / 前缀出现在中部 → false', () => {
+    expect(looksLikeCliSyntheticError('好的，我已经完成任务并写入文件。')).toBe(false)
+    expect(looksLikeCliSyntheticError('')).toBe(false)
+    expect(looksLikeCliSyntheticError('排查步骤一：Failed to authenticate. API Error: 401 常见于 key 错配')).toBe(false)
+  })
+  it('🔴 CJK 放行（攻击者审查 F1）：以错误前缀开头的短中文回复不拦——讨论 200 字限制下长度防线失效，靠形态判别兜底', () => {
+    const quoted = 'Failed to authenticate. API Error: 401 表示认证失败，先检查 key 与端点是否配对。'
+    expect(quoted.length).toBeLessThan(300)
+    expect(CJK_RE_REPRESENTATIVE.test(quoted)).toBe(true) // 夹带中文
+    expect(looksLikeCliSyntheticError(quoted)).toBe(false)
+  })
+  it('短假冒回复（<300 且以前缀开头）仍拦截——判据就是 CLI 合成错误的形态', () => {
+    expect(looksLikeCliSyntheticError('Failed to authenticate. API Error: 401')).toBe(true)
   })
 })

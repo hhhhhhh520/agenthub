@@ -243,3 +243,29 @@ export const SCRUB_ENV_EXACT: readonly string[] = [
 export function claudeEnvScrub(): { prefixes: string[]; exact: string[] } {
   return { prefixes: [...SCRUB_ENV_PREFIXES], exact: [...SCRUB_ENV_EXACT] }
 }
+
+/** CLI 合成错误文本的前缀签名（v2.1.270 实测两种死相，issues/ISSUE-027） */
+export const CLI_SYNTHETIC_ERROR_PREFIXES: readonly string[] = [
+  'Failed to authenticate. API Error:',
+  "There's an issue with the selected model",
+]
+
+/**
+ * CLI 合成错误判定（orchestrator 收口「错误文本被当 LLM 回复消费」——09-27 聊天假成功死相）。
+ * 三重判据（评审 #3 长度上限 + 攻击者审查 F1 CJK 放行）：
+ * - trim 后以前缀开头；
+ * - 长度 <300（实测两形态 ~110/~180 字符）；
+ * - **不含 CJK 字符**——CLI 合成错误是纯 ASCII 单行；讨论提示词限「200 字以内」（汉字
+ *   ≈200 code units < 300），长度防线在讨论路径天然失效，skipMsg 错误文本回灌下一轮后
+ *   健康 agent 以引用错误开头作答会被误拦成片传染——CJK 放行比长度更强的形态判别。
+ */
+const CLI_SYNTHETIC_MAX_LEN = 300
+const CJK_RE = /[一-鿿]/
+
+export function looksLikeCliSyntheticError(text: string): boolean {
+  const t = (text ?? '').trim()
+  if (!t || t.length >= CLI_SYNTHETIC_MAX_LEN) return false
+  if (CJK_RE.test(t)) return false // 含中文 = 人话回复，CLI 合成错误恒纯 ASCII（攻击者审查 F1）
+  const lower = t.toLowerCase()
+  return CLI_SYNTHETIC_ERROR_PREFIXES.some(p => lower.startsWith(p.toLowerCase()))
+}

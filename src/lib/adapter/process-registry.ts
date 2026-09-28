@@ -99,6 +99,10 @@ class EntryDiedWhileWaitingError extends Error {
 }
 
 // Error classification: permanent errors should not be retried
+// ISSUE-027 增补（评审 #4 取舍，此注释随代码生效）：后 5 项把 09-27 实测的认证/模型授权
+// 死相文本纳入快速失败——auth/授权错误绝大多数是配置错误，重试 3×3min 只是陪跑；
+// 代价：上游瞬时 401 抖动（网关闪断）从「重试后成功」变成「立即死」。若线上出现
+// 瞬时 401 误杀，收紧为仅 'api key format is incorrect' + 'unpurchased' 两个高置信签名。
 const PERMANENT_ERROR_PATTERNS = [
   'api_key_invalid',
   'invalid_api_key',
@@ -109,6 +113,12 @@ const PERMANENT_ERROR_PATTERNS = [
   'model_not_found',
   'model not found',
   'invalid_prompt',
+  // ── ISSUE-027 增补（09-27/09-28 实测死相文本，逐条见 tests/claude-code-env.test.ts）──
+  'failed to authenticate',
+  'api key format is incorrect',
+  'invalid api-key',
+  'unpurchased',
+  'issue with the selected model',
 ]
 
 export function isPermanentError(error: string): boolean {

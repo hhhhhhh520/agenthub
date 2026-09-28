@@ -67,8 +67,10 @@ seed 系、longcat。**用户拍板：mimo-v2.6-flash**。⚠️ baseUrl 必须�
    12 项 findings 全部整改（哨兵、scheme、tmp 残留三路径、启动兜底、大小写、12-hex 用例
    空集合失效、注释锚点失实、测试泄漏）。
 2. **Commit 2（止损+透传）**：isPermanentError 补认证/模型签名（含 transient-401 变
-   「立即死」的取舍说明）；`looksLikeCliSyntheticError`（前缀+<300 长度上限防误伤）接进
-   orchestrator 错误消费路径；runDiscussion skipMsg 携带真实错误文本。
+   「立即死」的取舍说明）；`looksLikeCliSyntheticError`（前缀 + <300 长度上限 + **CJK 放行**
+   三重判据——讨论提示词限 200 字使长度防线在讨论路径失效，CJK 形态判别兜底，攻击者审查 F1）
+   接进 orchestrator **三个堆积点**（executeTaskBatch / executeSingleAgent / runDiscussion）；
+   runDiscussion skipMsg 携带真实错误文本（reasonToString 序列化）。
 3. **换线**：8 个带 key 的 agent 整体切 tokenrhythm + mimo-v2.6-flash（key 经 DB，不落文档）。
 4. **用户侧**：aliyun token-plan 的 qwen3.8-max-preview/flash 均 403 Unpurchased（与讯飞比赛
    09-05 同款），不开通则该线路不可用——已用换线绕开。
@@ -78,6 +80,9 @@ seed 系、longcat。**用户拍板：mimo-v2.6-flash**。⚠️ baseUrl 必须�
   测不到竞态；为此注入 io 会扭曲产线签名）——靠三段条件推演 + 真实并发首启场景守护。
 - PATCH /api/agents/[id] 允许 baseUrl 与 apiKey 分开改（providerRef 语义）——本批以 scheme
   校验收敛明文外发面；「改 URL 必须重验 providerRef」属 API 语义变更，留待后续批。
+- `looksLikeCliSyntheticError` 的 <300 总长度判据可进一步升级为「首行命中前缀」形态判据
+  （行为回归审查 🟡：网关返回冗长 401 body 时总长 ≥300 整体逃逸拦截；实测形态 ~110/~180
+  字符，短期安全）。CJK 放行已封住讨论路径的传染向量。
 - env 通道对 opencode 仍有效，providerEnv 注入保留（防误删，composeSpawnEnv 注释已声明）。
 - 主库 24 会话 decisionTrace 全 '[]' 为预期（老会话早于 trace 功能）；盲测验收待本修复
   + 换线冒烟通过后重跑。
