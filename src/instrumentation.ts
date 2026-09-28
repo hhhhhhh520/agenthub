@@ -1,6 +1,6 @@
 /**
  * Next.js instrumentation hook：server 启动时执行（roadmap §2.3 shadow-git 孤儿清扫 +
- * §3.3 执行中断恢复 reconcile）。
+ * §3.3 执行中断恢复 reconcile + ISSUE-027 受管 claude 配置目录出清）。
  * best-effort：DB 未就绪（首次启动未 migrate）/ 单 projectDir 失败均静默跳过，
  * 不阻塞启动。成本为一次全表 id+projectDir 查询 + 每 projectDir 一次目录扫描
  * + 一次 in_progress 任务条件写（§3.3）。
@@ -29,6 +29,18 @@ export async function register(): Promise<void> {
       } catch {
         // 单 projectDir 失败（权限/占用）继续其余
       }
+    }
+    // ISSUE-027：受管 claude 配置目录启动兜底出清（常规触发挂 GET /api/agents 全量视图，
+    // 用户不打开 agents 页则不出清——生命周期审查 🟡1.1）。旧目录内含明文 key，
+    // 出清与 UI 访问脱钩即凭据 at-rest 残留。
+    try {
+      const { sweepWithCurrentConfigs } = await import('@/lib/services/claude-cfg-maintenance')
+      const removed = await sweepWithCurrentConfigs()
+      if (removed.length > 0) {
+        console.log(`[startup] 已出清过期受管 claude 配置目录 ${removed.length} 个`)
+      }
+    } catch {
+      // 数据源未就绪等情况跳过（agents 页加载路径兜底）
     }
   } catch {
     // 孤儿清扫是 best-effort：DB 未就绪等情况直接跳过

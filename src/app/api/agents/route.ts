@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { sweepWithCurrentConfigs } from '@/lib/services/claude-cfg-maintenance'
 
 // 导出供测试验证：如果有人修改这些值，测试会同步感知
 export const XSS_TAG_RE = /<[a-zA-Z][^>]*>/
@@ -15,6 +16,20 @@ export async function GET(request: Request) {
     orderBy: { name: 'asc' },
     select: { id:true, name:true, expertise:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
   })
+
+  // ISSUE-027 生命周期（评审 #1 + 双审查 🟡）：全量视图加载时兜底出清受管配置目录
+  //（key/端点轮换产生新目录，旧目录内含明文 key）。仅全量列表时执行——preset 过滤视图
+  // 的子集不是合法 active 集合。sweepWithCurrentConfigs 内部任一数据源失败即抛 →
+  // 跳过本轮（集合不完整时删 = 宁漏勿错）；sweep 自身有 12-hex + 哨兵双护栏。
+  // 串行而非 Promise.all：保持 findMany 调用序确定（视图查询恒为第一次调用，测试断言依赖）。
+  if (!preset) {
+    try {
+      await sweepWithCurrentConfigs()
+    } catch {
+      /* active 集合构造失败 → 跳过本轮 sweep */
+    }
+  }
+
   return NextResponse.json(agents)
 }
 

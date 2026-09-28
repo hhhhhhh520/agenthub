@@ -60,6 +60,9 @@ interface SpawnConfig {
   args?: string[]               // 完整 CLI 参数，覆盖默认的 claude 参数
   format?: 'claude' | 'ndjson'  // stdout 协议格式，默认 'claude'
   env?: Record<string, string>  // 额外环境变量，合并到 spawn env
+  // ISSUE-027：继承 env 清洗（claude 路径专用）——CLI v2.1.270 -p 模式无视 env 的
+  // ANTHROPIC_BASE_URL，继承的 provider/会话 env 只剩双头鉴权混乱风险，剥除后按受管配置重建
+  envScrub?: { prefixes: string[]; exact: string[] }
   // 工具硬限制
   allowedTools?: string[]       // CLI 工具白名单
   disallowedTools?: string[]    // CLI 工具黑名单
@@ -113,8 +116,46 @@ export function isPermanentError(error: string): boolean {
   return PERMANENT_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()))
 }
 
+/**
+ * spawn env 组合（ISSUE-027 抽出为纯函数）：
+ * 继承 env（可选 envScrub 清洗）→ providerEnv（config 派生 + OPENCODE_CONFIG）→ config.env → 固定编码项。
+ * ⚠️ providerEnv 的 ANTHROPIC_API_KEY/BASE_URL 对 claude -p 路由**无效**（CLI v2.1.270 无视 env
+ * BASE_URL，实际端点由 CLAUDE_CONFIG_DIR settings.json 决定，2026-09-28 八组实验，
+ * issues/ISSUE-027）——保留它只为 opencode 路径与 x-api-key 冗余头，不得再把它当 claude 路径的有效通道。
+ */
+export function composeSpawnEnv(
+  inheritedEnv: Record<string, string | undefined>,
+  config: Pick<SpawnConfig, 'envScrub' | 'env'>,
+  providerEnv: Record<string, string>,
+): Record<string, string | undefined> {
+  const scrub = config.envScrub
+  const inherited = scrub
+    ? Object.fromEntries(
+        Object.entries(inheritedEnv).filter(([k]) => {
+          // Windows env 查找大小写不敏感——小写变体（anthropic_auth_token）同样要剥除（攻击者审查 🟢）
+          const upper = k.toUpperCase()
+          return !scrub.exact.some(e => e.toUpperCase() === upper) && !scrub.prefixes.some(p => upper.startsWith(p.toUpperCase()))
+        }),
+      )
+    : inheritedEnv
+  return {
+    ...inherited,
+    ...providerEnv,
+    ...(config.env || {}),
+    PYTHONIOENCODING: 'utf-8',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+  }
+}
+
 export function getRetryDelay(attempt: number): number {
   return Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt), 16000)
+}
+
+/** --resume 落空形态（受管配置目录随配置迁移 / CLI 会话过期）→ 丢 sessionId 以全新会话重试 */
+export function isSessionNotFoundError(error: string): boolean {
+  const lower = error.toLowerCase()
+  return lower.includes('no conversation found') || lower.includes('session not found')
 }
 
 // OpenCode 工具名（全小写）→ 对应的权限键
@@ -183,6 +224,8 @@ function buildConfigHash(config?: SpawnConfig): string {
 
   // disallowedTools 排序后 join,顺序变化不应触发新 entry
   const sortedDisallowed = config.disallowedTools ? [...config.disallowedTools].sort().join(',') : ''
+  // 不进指纹的字段：env/envScrub（ISSUE-027）——env.CLAUDE_CONFIG_DIR 与 envScrub 均由
+  // hash 白名单内字段（apiKey/baseUrl/model）纯派生，派生结果随指纹字段同步变化，无错配窗口
 
   const fingerprint = JSON.stringify({
     permissionMode: config.permissionMode ?? '',
@@ -349,14 +392,8 @@ class ProcessRegistry {
 
     const proc = spawn(command, args, {
       cwd: workDir,
-      env: {
-        ...process.env,
-        ...providerEnv,
-        ...(config.env || {}),
-        PYTHONIOENCODING: 'utf-8',
-        LANG: 'en_US.UTF-8',
-        LC_ALL: 'en_US.UTF-8',
-      },
+      // NODE_ENV 由本服务进程继承恒存在；compose 返回宽化 Record 只是静态上不含必填键
+      env: composeSpawnEnv(process.env, config, providerEnv) as NodeJS.ProcessEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: config.shell !== false,  // 默认 true，OpenCode 可设为 false
     })
@@ -522,6 +559,7 @@ class ProcessRegistry {
     let lastError: string | null = null
     let latestSessionId = config?.sessionId || null
     let dieWhileWaitingCount = 0  // EntryDiedWhileWaitingError 连续触发次数,触顶就 abort 防底层 bug 死循环
+    let dropResume = false       // ISSUE-027：--resume 落空后丢一次 sessionId 以全新会话重试
 
     const effectiveKey = this.toEffectiveKey(key, config)
 
@@ -533,9 +571,12 @@ class ProcessRegistry {
         if (attempt > 0 && !config) {
           throw new Error(`Process died and no config available to rebuild for key: ${effectiveKey}`)
         }
-        const resumeSessionId = entry?.sessionId || latestSessionId
-        if (resumeSessionId && config) {
+        const resumeSessionId = dropResume ? null : (entry?.sessionId || latestSessionId)
+        if (config && resumeSessionId) {
           config = { ...config, sessionId: resumeSessionId }
+        } else if (config && dropResume) {
+          config = { ...config, sessionId: null }
+          dropResume = false // 即将以 fresh 启动（spawn 在下一行）；后续 retry 恢复正常 resume 语义
         }
         if (entry) this.killEntryIfCurrent(effectiveKey, entry)
         if (!config) throw new Error(`Process entry not found for key: ${effectiveKey}`)
@@ -593,6 +634,14 @@ class ProcessRegistry {
         }
         lastError = err instanceof Error ? err.message : String(err)
         attempt++
+
+        // ISSUE-027 降级：--resume 落空（受管配置目录随 key/model 轮换迁移、CLI 会话过期）——
+        // 丢 sessionId 重试 fresh，而不是把配置类错误硬报给用户。此形态不属 permanent：
+        // fresh 会话可以成功。
+        if (isSessionNotFoundError(lastError)) {
+          latestSessionId = null
+          dropResume = true
+        }
 
         // Permanent error: don't retry — throw immediately with actual error
         if (isPermanentError(lastError)) {

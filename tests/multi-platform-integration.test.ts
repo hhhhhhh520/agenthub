@@ -1,10 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 /**
  * Multi-platform integration tests.
  * Covers: OpenCode adapter edge cases, ClaudeCode adapter config flow,
  * createAdapter factory completeness, ProcessRegistry env merge for both platforms.
  */
+
+// ISSUE-027：ClaudeCode adapter 在带 apiKey+baseUrl 的用例里会真实写受管配置目录——
+// 重定向到临时根，防污染真实 ~/.agenthub/claude-cfg（设计审查 🟡7）
+const cfgRoot = mkdtempSync(join(tmpdir(), 'ah-multiplat-cfg-'))
+process.env.AGENTHUB_CLAUDE_CFG_ROOT = cfgRoot
+afterAll(() => {
+  delete process.env.AGENTHUB_CLAUDE_CFG_ROOT
+  try { rmSync(cfgRoot, { recursive: true, force: true }) } catch { /* best-effort */ }
+})
 
 // ─── Mock ProcessRegistry for adapter-level tests ────────────────────────────
 
