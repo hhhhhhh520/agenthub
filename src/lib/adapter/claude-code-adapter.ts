@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process'
 import { readFileSync } from 'fs'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 import { processRegistry, type SpawnConfig } from './process-registry'
+import { ensureClaudeConfigDir, claudeEnvScrub } from './claude-code-env'
 
 // 默认工作目录：项目的 workspaces 目录（在 Claude Code 允许范围内）
 const DEFAULT_WORK_DIR = process.cwd()
@@ -104,6 +105,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       model: this.model,
       allowedTools: this.allowedTools,
       disallowedTools: this.disallowedTools,
+    }
+
+    // ISSUE-027 根治：claude -p 模式无视 env 注入的 ANTHROPIC_BASE_URL（CLI v2.1.270 实测，
+    // 2026-09-27 讨论全灭根因），provider 配置改走受管 CLAUDE_CONFIG_DIR settings.json 通道；
+    // env 注入仅作冗余。baseUrl/apiKey 缺失（如空配置 agent）→ ensure 返回 null → 维持旧行为。
+    const cfgDir = ensureClaudeConfigDir({ baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model })
+    if (cfgDir) {
+      spawnConfig.env = { CLAUDE_CONFIG_DIR: cfgDir }
+      spawnConfig.envScrub = claudeEnvScrub()
     }
 
     // Get or create process via registry

@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, existsSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // --- Mock setup ---
 const { mockGetOrCreate, mockSend } = vi.hoisted(() => ({
@@ -15,10 +18,19 @@ vi.mock('@/lib/adapter/process-registry', () => ({
 
 import { ClaudeCodeAdapter } from '@/lib/adapter/claude-code-adapter'
 
+let cfgRoot = ''
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetOrCreate.mockReturnValue({ sessionId: null })
   mockSend.mockImplementation(async function* () {})
+  // ISSUE-027：受管配置目录写入重定向到临时根，防测试污染真实 ~/.agenthub
+  cfgRoot = mkdtempSync(join(tmpdir(), 'ah-adapter-cfg-'))
+  process.env.AGENTHUB_CLAUDE_CFG_ROOT = cfgRoot
+})
+
+afterEach(() => {
+  delete process.env.AGENTHUB_CLAUDE_CFG_ROOT
+  try { rmSync(cfgRoot, { recursive: true, force: true }) } catch { /* best-effort */ }
 })
 
 describe('ClaudeCodeAdapter', () => {
@@ -113,5 +125,40 @@ describe('ClaudeCodeAdapter', () => {
     // close() 是 no-op，不应该调用任何 registry 方法
     expect(mockGetOrCreate).not.toHaveBeenCalled()
     expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  // ── ISSUE-027：provider 配置走受管 CLAUDE_CONFIG_DIR settings.json 通道 ──
+  it('有 apiKey+baseUrl → spawnConfig 携带 CLAUDE_CONFIG_DIR + envScrub，settings.json 实际落盘', async () => {
+    const adapter = new ClaudeCodeAdapter()
+    await adapter.connect({
+      platform: 'claude-code',
+      workDir: '/project',
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.test.com',
+      model: 'mimo-v2.6-flash',
+    })
+    await (adapter as any).send({ prompt: 'test' }).next()
+    const config = mockGetOrCreate.mock.calls[0][1]
+    expect(config.env!.CLAUDE_CONFIG_DIR).toBeTruthy()
+    expect(config.env!.CLAUDE_CONFIG_DIR).toContain(cfgRoot)
+    expect(config.envScrub).toEqual({
+      prefixes: ['ANTHROPIC_', 'CLAUDE_'],
+      exact: expect.arrayContaining(['CLAUDECODE', 'CLAUDE_CODE_MESSAGING_SOCKET']),
+    })
+    // settings.json 真实写到了受管目录
+    const settingsPath = join(config.env!.CLAUDE_CONFIG_DIR, 'settings.json')
+    expect(existsSync(settingsPath)).toBe(true)
+    const parsed = JSON.parse(readFileSync(settingsPath, 'utf-8'))
+    expect(parsed.env.ANTHROPIC_BASE_URL).toBe('https://api.test.com')
+    expect(parsed.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test')
+  })
+
+  it('无 baseUrl（空配置 agent）→ 不注入 configDir，维持旧行为', async () => {
+    const adapter = new ClaudeCodeAdapter()
+    await adapter.connect({ platform: 'claude-code', workDir: '/dir', apiKey: 'sk-only' })
+    await (adapter as any).send({ prompt: 'test' }).next()
+    const config = mockGetOrCreate.mock.calls[0][1]
+    expect(config.env).toBeUndefined()
+    expect(config.envScrub).toBeUndefined()
   })
 })

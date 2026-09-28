@@ -1,4 +1,17 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterAll } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+// ISSUE-027：agents GET 全量视图会触发受管配置目录 sweep——测试环境必须把 sweep 根
+// 重定向到临时目录，否则（配合 prisma mock 返回空 active 集合之外的场景）会威胁真实
+// ~/.agenthub/claude-cfg。见设计审查 🔴1。
+const sweepRoot = mkdtempSync(join(tmpdir(), 'ah-api-safety-sweep-'))
+process.env.AGENTHUB_CLAUDE_CFG_ROOT = sweepRoot
+afterAll(() => {
+  delete process.env.AGENTHUB_CLAUDE_CFG_ROOT
+  try { rmSync(sweepRoot, { recursive: true, force: true }) } catch { /* best-effort */ }
+})
 
 // Mock prisma
 vi.mock('@/lib/db', () => ({
@@ -23,10 +36,12 @@ vi.mock('@/lib/db', () => ({
   },
 }))
 
-// Mock orchestrator
+// Mock orchestrator（ISSUE-027：route 顶层 import getOrchestratorAgent——mock 缺该导出会在
+// 模块求值期报错；空凭据解析结果使 claudeConfigDir 返回 null，不参与 sweep active 集合）
 vi.mock('@/lib/orchestrator', () => ({
   callLLMForAnalysis: vi.fn(),
   parseJSON: vi.fn(),
+  getOrchestratorAgent: vi.fn().mockResolvedValue({ platform: 'claude-code', model: '', baseUrl: '', apiKey: '' }),
 }))
 
 import { prisma } from '@/lib/db'

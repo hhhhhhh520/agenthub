@@ -51,6 +51,14 @@ vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
+  // ISSUE-027：claude-code-env.ensureClaudeConfigDir 经由 adapter.send() 也走 fs——
+  // readFileSync 恒 ENOENT 走"首建"路径，rename/rm 为 no-op（settings.json 写入本测试不关心）。
+  // 注：vi.mock('fs') 能拦截 claude-code-env 的 'node:fs' 导入，依赖 vitest 4 的
+  // normalizeModuleId 剥 node: 前缀（fs 与 node:fs 归一为同一 mock key）——换 test runner 需复查。
+  readFileSync: vi.fn(() => { throw new Error('ENOENT: mock fs has no settings file') }),
+  renameSync: vi.fn(),
+  rmSync: vi.fn(),
+  readdirSync: vi.fn(() => { throw new Error('ENOENT: mock fs') }),
 }))
 
 let processRegistry: any
