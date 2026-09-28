@@ -47,4 +47,19 @@ describe('ISSUE-027 接线守卫：claude-code adapter → 受管 CLAUDE_CONFIG_
     const instr = readFileSync(resolve(__dirname, '../src/instrumentation.ts'), 'utf-8')
     expect(instr).toContain('sweepWithCurrentConfigs')
   })
+  it('orchestrator 收口接线（commit 2）：三个堆积点全挂拦截 + skipMsg 透传', () => {
+    const orchSrc = readFileSync(resolve(__dirname, '../src/lib/orchestrator/index.ts'), 'utf-8')
+    expect(orchSrc).toContain("looksLikeCliSyntheticError(result)")
+    // 三处消费点（executeTaskBatch 第三堆积点 + executeSingleAgent + runDiscussion，行为回归审查 🟡）
+    expect(orchSrc.match(/looksLikeCliSyntheticError\(result\)/g)!.length).toBeGreaterThanOrEqual(3)
+    expect(orchSrc).toContain('讨论出错，已跳过：')
+    expect(orchSrc).toContain('CLI 合成错误拦截')
+  })
+  it('PERMANENT_ERROR_PATTERNS 含 ISSUE-027 五签名（transient-401 取舍见注释）', () => {
+    expect(REGISTRY_SRC).toContain("'failed to authenticate'")
+    expect(REGISTRY_SRC).toContain("'api key format is incorrect'")
+    expect(REGISTRY_SRC).toContain("'invalid api-key'")
+    expect(REGISTRY_SRC).toContain("'unpurchased'")
+    expect(REGISTRY_SRC).toContain("'issue with the selected model'")
+  })
 })

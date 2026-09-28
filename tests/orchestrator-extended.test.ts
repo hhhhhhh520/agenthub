@@ -225,6 +225,16 @@ describe('executeSingleAgent', () => {
     expect(result.result).toBe('[Agent 未返回有效内容]')
   })
 
+  it('ISSUE-027: CLI 合成错误文本上抛而非当返回值（09-27 聊天假成功死相的收口）', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: "There's an issue with the selected model (mimo-v2.6-flash). It may not exist or you may not have access to it." }
+    })
+    await expect(executeSingleAgent(
+      { name: 'PM', systemPrompt: 'sp', platform: 'claude-code' },
+      'task', '', vi.fn()
+    )).rejects.toThrow(/\[CLI 合成错误拦截\]/)
+  })
+
   it('prepends tools hint when agent has tools', async () => {
     mockAdapterSend.mockImplementation(async function* () {
       yield { type: 'text', content: 'ok' }
@@ -342,6 +352,34 @@ describe('executeTaskBatch', () => {
 })
 
 describe('runDiscussion', () => {
+  it('ISSUE-027: agent 回复=CLI 合成错误 → 真实错误文本进 skipMsg，不当观点消费', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'Failed to authenticate. API Error: 401 The API key format is incorrect. Request id: 0217ab' }
+    })
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    const opinions = await runDiscussion('topic', agents, 1, vi.fn())
+    expect(opinions[0]).toContain('讨论出错，已跳过：')
+    expect(opinions[0]).toContain('Failed to authenticate') // 真实错误透传（09-27 只见「超时」的根治面）
+    expect(opinions[0]).toContain('[CLI 合成错误拦截]')
+  })
+
+  it('ISSUE-027: 正常长回复以错误字符串开头 → 不误拦（长度上限防线）', async () => {
+    const legit = 'Failed to authenticate. API Error: 401 是常见状态码。' +
+      '排查步骤：一、确认 baseUrl 的协议面（OpenAI/Anthropic）；二、确认 key 前缀格式属于该网关；' +
+      '三、在控制台确认模型权限已开通（403 Unpurchased 场景要看 AccessDenied 的具体错误码）。' +
+      '另外注意 claude CLI 的 -p 模式会忽略进程环境变量里注入的 ANTHROPIC_BASE_URL，' +
+      '所以即使 env 配置完全正确，请求也可能落到用户级 settings.json 声明的旧端点上；' +
+      '错误文本里的 Request id 前缀能帮你判断真正被击中的是哪家网关，' +
+      'UUID 风格与 0217 开头的长串分属不同平台，这是本次排查里最省时的鉴别技巧。'
+    expect(legit.length).toBeGreaterThanOrEqual(300)
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: legit }
+    })
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    const opinions = await runDiscussion('topic', agents, 1, vi.fn())
+    expect(opinions[0]).toContain('PM（第1轮）：Failed to authenticate') // 作为观点正常收集
+  })
+
   it('runs multiple rounds and collects opinions', async () => {
     mockAdapterSend.mockImplementation(async function* () {
       yield { type: 'text', content: 'my opinion' }

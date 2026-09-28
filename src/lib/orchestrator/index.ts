@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
 import { processRegistry } from '../adapter/process-registry'
+import { looksLikeCliSyntheticError } from '../adapter/claude-code-env'
 import { withTimeout, TIMEOUT, TimeoutError } from './timeout'
 import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
@@ -511,6 +512,13 @@ export async function executeTaskBatch(
         await updateAgentSessionStatus(chatSessionId, agentId, agent.name, 'idle')
       }
 
+      // ISSUE-027 收口（第三堆积点，行为回归审查 🟡）：CLI 合成错误文本不当任务交付物——
+      // throw 落进 allSettled → failedTaskIds/failedTaskReasons 管道（零新结构），
+      // 任务标失败而非 completed，防止错误文本经 result → 依赖注入/审查继续消费
+      if (looksLikeCliSyntheticError(result)) {
+        throw new Error(`[CLI 合成错误拦截] ${result.trim().slice(0, 200)}`)
+      }
+
       // Guard: empty response
       if (!result.trim()) result = EMPTY_RESPONSE
 
@@ -619,6 +627,14 @@ export async function executeSingleAgent(
       await adapter.close()
     }
 
+    // ISSUE-027 收口：CLI 合成错误（401 包装/"issue with the selected model"）是错误不是回复——
+    // 上抛给调用方（isPermanentError 同族语义：配置类错误重试无意义），防错误文本被当 agent
+    // 产出消费（09-27 聊天路径 HTTP 200 假成功的死相）。合成错误是单行短文本，正常长回复
+    // 不受影响（looksLikeCliSyntheticError 内置 <300 长度上限）。
+    if (looksLikeCliSyntheticError(result)) {
+      throw new Error(`[CLI 合成错误拦截] ${result.trim().slice(0, 200)}`)
+    }
+
     // Guard: empty response
     if (!result.trim()) {
       onChunk(agent.name, { type: 'text', content: EMPTY_RESPONSE })
@@ -686,14 +702,20 @@ export async function runDiscussion(
           await adapter.close()
         }
 
+        // ISSUE-027 收口：合成错误文本不当观点消费（同 executeSingleAgent 拦截语义）
+        if (looksLikeCliSyntheticError(result)) {
+          throw new Error(`[CLI 合成错误拦截] ${result.trim().slice(0, 200)}`)
+        }
         opinions.push(`${agent.name}（第${round}轮）：${result || EMPTY_RESPONSE}`)
       } catch (err) {
         if (err instanceof TimeoutError) {
           console.error('[TIMEOUT] runDiscussion', agent.name, 'round', round)
         }
+        // ISSUE-027 透传：真实错误文本进 skipMsg（09-27 全灭只剩「超时」二字的根治面）；
+        // reasonToString 复用 ISSUE-011 F1 的序列化防线（行为回归审查 🟢）
         const skipMsg = err instanceof TimeoutError
           ? `[${agent.name} 讨论超时，已跳过]`
-          : `[${agent.name} 讨论出错，已跳过]`
+          : `[${agent.name} 讨论出错，已跳过：${reasonToString(err).slice(0, 160)}]`
         opinions.push(`${agent.name}（第${round}轮）：${skipMsg}`)
         onChunk(agent.name, { type: 'error', content: skipMsg })
       }
