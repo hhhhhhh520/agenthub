@@ -281,6 +281,8 @@
 - **S3 preflight 命令红绿灯第一版（2026-09-22 用户拍板 1A/2A/3A，commit cae7cd2）**：~~原拍板"不做"~~ 经三决策拍板落地——1A 命令来源=约定探测 package.json（命令永不来自 LLM，RCE 主源消失，零 schema 变更）/ 2A 执行=`npm run <key>` 白名单三层收口（Windows npm-shim 需 shell）/ 3A exit≠0 仅记 trace 采数据不纠偏。EXPERIMENT_PREFLIGHT_VERIFY 门控生产默认未设；已知限制（exec timeout 孤儿树/deadline 侵蚀）落档转正前收口。变异 3 组精确红 + 双审查闭环；测试 1211→1236
 - 第二梯队（高价值中成本）：可信度显式化 + 前端展示 / Orchestrator 显式状态机 / redo 改 SSE
 - 第三梯队（研究向）：全链路 trace 可视化 / 设计复盘文档(❌/⚠️ 修复沉淀) / 受控实验
+- **ISSUE-027 LLM 通路修复（2026-09-29/30，四 commit e4d7796/d62f5cf/f64d2e7/1ab265f）**：✅ 全落地——讨论 8/8 agent 两轮真实发言 0 超时（opencode + tokenrhythm/mimo-v2.6-flash 线路）；根因与三层阻塞见 `issues/ISSUE-027`（CLI 无视 env BASE_URL / tokenrhythm 拒 beta 头 / opencode env 路径同触发）
+- **§4.1 盲测验收（2026-09-30 代执行）：未通过**——讨论/工具执行通，但决策时间线全库 0 条：决策 LLM 解析失败静默回退直连（绕过状态机与 trace）→ `issues/ISSUE-028` 待修（回退显性化 / 决策换快模型 / read_messages 空返回排查）
 - 核心原则：减复杂度优于加功能；可审计性应内生而非补丁（参考镜像项目 homerail，D:\my project\homerail，拆解见 wiki-ascii/raw/sources/projects/homerail/）
 
 **已评估不实施**：
