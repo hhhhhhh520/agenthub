@@ -34,6 +34,18 @@ export function opencodeCfgDirName(agentId: string): string {
   return 'agenthub-oc-' + createHash('sha256').update(agentId).digest('hex').slice(0, 12)
 }
 
+/**
+ * agentId → CLI 安全标识（--agent 参数与 agent md 文件名共用）。冒烟实测：中文/含空格名
+ * （「UI 设计师」「Xiaomi MiMo」）会让 `--agent agenthub-UI 设计师` 携带空白被 arg-safety
+ * fail-closed 拒绝（shell:true 注入防线）——非安全字符统一折叠为 '-'。
+ */
+export function sanitizeOpencodeAgentId(agentId: string): string {
+  const s = agentId.replace(/[^A-Za-z0-9_-]/g, '-')
+  if (s === agentId) return s
+  // 折叠发生时追加短 hash：防不同原名折叠成同一标识（共享 agent 定义/互相覆盖 systemPrompt）
+  return s + '-' + createHash('sha256').update(agentId).digest('hex').slice(0, 6)
+}
+
 /** opencode 平台的 baseUrl scheme 校验（与 claude-code-env.assertSafeBaseUrl 同规则） */
 function assertSafeBaseUrl(baseUrl: string): void {
   let url: URL
@@ -137,7 +149,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (!this.agentId || !this.workDir) return
 
     const agentDir = join(this.workDir, '.opencode', 'agents')
-    const agentFile = join(agentDir, `agenthub-${this.agentId}.md`)
+    const agentFile = join(agentDir, `agenthub-${sanitizeOpencodeAgentId(this.agentId)}.md`)
 
     const toolsYaml = this.buildToolsYaml()
     const content = `---\ndescription: AgentHub Agent\n${toolsYaml}---\n${systemPrompt}`
@@ -278,7 +290,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     // 构建 CLI 参数
     const args = ['run', '--format', 'json']
-    if (this.agentId) args.push('--agent', `agenthub-${this.agentId}`)
+    if (this.agentId) args.push('--agent', `agenthub-${sanitizeOpencodeAgentId(this.agentId)}`)
     if (this.sessionId) args.push('--session', this.sessionId)
     // ISSUE-027 commit 3：有 apiKey+baseUrl 时 provider 配置走生成的配置文件（env 路径触发
     // tokenrhythm 拒收的 anthropic-beta 头），模型引用带 provider 前缀；否则维持 env 旧路径
