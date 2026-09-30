@@ -65,6 +65,7 @@ vi.mock('@/lib/services/alignment', () => ({
 
 import { handleOrchestratorDecision, handleOrchestratorChat, isCreateAgentIntent, parseDeclaredFiles } from '@/lib/services/chat-router'
 import { applyTransition } from '@/lib/orchestrator/state-machine'
+import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { prisma } from '@/lib/db'
 
 const sendEvent = vi.fn()
@@ -616,5 +617,103 @@ describe('P9-乙 seqgate 决策点接线', () => {
 
   it('表内断言（F6）：redirect 目标 idle→align_decompose 在 TRANSITIONS 表内', () => {
     expect(applyTransition('idle', 'align_decompose')).toMatchObject({ ok: true, nextState: 'align_arch' })
+  })
+})
+
+// ── ISSUE-028：决策失败显性回退（打日志 + 告知用户 + 记回退 trace，治理观测不允许静默旁路）──
+describe('ISSUE-028 决策失败显性回退', () => {
+  const idle = { phase: 'idle', phaseStep: '' }
+  it('非超时错误 → console.error 透传原始错误 + 用户收到回退提示 + 回退 trace 落库 + 照常直连', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // parseJSON 失败的错误消息含原始输出前 200 字符——console.error 必须把它带出来（诊断层级要求）
+      mockGetOrchestratorDecision.mockRejectedValueOnce(new Error('Failed to parse JSON from: {"action":"delegate","tar'))
+      mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
+      await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+      // ① console.error 含原始错误文本（前缀参数 + 正文参数）
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[decision-fallback]'),
+        expect.stringContaining('Failed to parse JSON from'),
+      )
+      // ② 用户被告知回退（不再静默）
+      expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'text',
+        content: expect.stringContaining('决策解析失败'),
+      }))
+      // ③ 回退 trace：与正常 self 决策同构（applied:true），decisionPoint=decision-fallback 可检索
+      const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+      expect(traceCall).toBeDefined()
+      const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+      expect(entry).toMatchObject({
+        decisionPoint: 'decision-fallback',
+        inputState: { phase: 'idle', phaseStep: '', state: 'idle' },
+        llmProposal: { action: 'self', target: null, targets: null },
+        corrections: [],
+        validation: { passed: false, validator: 'decision-fallback' },
+        actualTransition: { from: 'idle', to: 'idle', action: 'self', applied: true, escalated: false },
+      })
+      expect(entry.llmProposal.reason).toContain('决策解析失败回退')
+      // ④ 回退后照常直连（原行为保留，旧用例 line:208 语义不回归）
+      expect(mockExecuteSingleAgent).toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('TimeoutError → 维持原行为：错误事件 + 不记 trace + 不直连', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      mockGetOrchestratorDecision.mockRejectedValueOnce(new TimeoutError(120000, 'getOrchestratorDecision'))
+      await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+      expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', content: expect.stringContaining('决策超时') }))
+      expect(mockSessionUpdateMany).not.toHaveBeenCalled()
+      expect(mockExecuteSingleAgent).not.toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('回退 trace 写库失败（appendDecisionTrace 返回 null 契约）→ 直连仍继续不击穿', async () => {
+    // 覆盖的是 updateMany 抛错路径（4 条 null 路径之一）；乐观锁重试超限路径对调用方等价（同返回 null）
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      mockGetOrchestratorDecision.mockRejectedValueOnce(new Error('parse fail'))
+      mockSessionUpdateMany.mockRejectedValue(new Error('db down'))
+      mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
+      await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+      expect(mockExecuteSingleAgent).toHaveBeenCalled()
+      expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done' }))
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('错误文本截断进 trace（200 上限）且不泄漏给用户事件（console 拿全文）', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // 300+ 字符错误，尾部标记用于判定"全文 vs 截断"
+      const leakTail = 'A'.repeat(250) + 'LEAKMARKER'
+      mockGetOrchestratorDecision.mockRejectedValueOnce(new Error(`Failed to parse JSON from: ${leakTail}`))
+      mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
+      await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+      // console 拿全文（JSON.stringify 转义后标记仍在）
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[decision-fallback]'),
+        expect.stringContaining('LEAKMARKER'),
+      )
+      const traceCall = mockSessionUpdateMany.mock.calls.find(c => c[0].data?.decisionTrace)
+      const entry = JSON.parse(traceCall![0].data.decisionTrace)[0]
+      // trace reason：前缀(10 字符) + 截断 200 → ≤210，尾部标记（250 字符外）被截掉
+      expect(entry.llmProposal.reason).toContain('决策解析失败回退')
+      expect(entry.llmProposal.reason.length).toBeLessThanOrEqual(210)
+      expect(entry.llmProposal.reason).not.toContain('LEAKMARKER')
+      // 用户事件不泄漏原始错误文本（安全属性：错误只进 console 与 trace）
+      const leaked = sendEvent.mock.calls.some(
+        c => typeof c[0].content === 'string' && c[0].content.includes('LEAKMARKER'),
+      )
+      expect(leaked).toBe(false)
+    } finally {
+      errSpy.mockRestore()
+    }
   })
 })

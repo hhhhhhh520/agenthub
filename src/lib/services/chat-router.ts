@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import { getOrchestratorDecision, executeSingleAgent, getOrchestratorAgent } from '@/lib/orchestrator'
+import { reasonToString } from '@/lib/orchestrator/reason'
 import { buildContextFromHistory } from './context-builder'
 import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review'
 import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution, isCodeTask } from './alignment'
@@ -74,6 +75,25 @@ export async function handleOrchestratorDecision(
       sendEvent({ agentId: 'orchestrator', type: 'error', content: 'Orchestrator 决策超时，请重试' })
       return
     }
+    // ISSUE-028: 决策失败不允许静默回退——console.error 透传原始错误（parseJSON 截断文本在内）、
+    // 告知用户、记一条回退 trace。回退 = 代码接管为 self 直连，与正常 self 决策同构记录
+    // （applied:true，'self' 属 NON_TRANSITIONING 旁路，to===from 表内合法，不污染 conformance 口径）。
+    // reasonToString（ISSUE-011 F1 先例）防 toString 抛异常击穿 fallback；JSON.stringify 转义换行
+    // 防 LLM 输出伪造日志行（同 escalate 分支先例）。
+    const errText = reasonToString(err)
+    console.error('[decision-fallback] getOrchestratorDecision 失败，回退直连:', JSON.stringify(errText))
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: '[回退] 决策解析失败，本次由 Orchestrator 直连处理' })
+    const state = stateFromSession(sessionPhase.phase, sessionPhase.phaseStep)
+    const fallbackEntry: DecisionTraceEntry = {
+      decisionPoint: 'decision-fallback',
+      inputState: { phase: sessionPhase.phase, phaseStep: sessionPhase.phaseStep, state },
+      llmProposal: { action: 'self', target: null, targets: null, reason: `决策解析失败回退: ${errText.slice(0, 200)}` },
+      corrections: [],
+      validation: { passed: false, validator: 'decision-fallback', reason: errText.slice(0, 200) },
+      actualTransition: { from: state, to: state, action: 'self', applied: true, escalated: false },
+    }
+    // appendDecisionTrace 契约：写库异常/重试超限返回 null 不抛——失败即回退无 trace，不阻断直连
+    await appendDecisionTrace(sessionId, sessionPhase.decisionTrace, fallbackEntry)
     await handleOrchestratorChat(message, sessionId, sendEvent, agents)
     return
   }
