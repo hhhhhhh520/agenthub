@@ -21,6 +21,7 @@ const REAL_WORK_DIR = realpathSync(WORK_DIR)
 
 import { isPathSafe as _isPathSafe } from '../lib/path-safety'
 import { listProjectFiles } from '../lib/list-dir'
+import { buildChannelWhere } from './message-channel'
 
 function isPathSafe(filePath: string): boolean {
   return _isPathSafe(filePath, WORK_DIR)
@@ -110,20 +111,17 @@ server.tool(
   }
 )
 
-// 工具 5: 读取其他Agent的消息
+// 工具 5: 读取协作频道消息（ISSUE-028: 全角色可见，不再只过滤 role:'agent'）
 server.tool(
   'read_messages',
-  '读取其他Agent的消息（查看协作频道中的对话）',
+  '读取协作频道中的消息（含用户需求、Orchestrator 编排发言与各 Agent 的产出讨论）',
   { since: z.string().optional().describe('只读取此时间之后的消息（ISO时间戳）') },
   async ({ since }) => {
     if (!SESSION_ID) {
       return { content: [{ type: 'text', text: '错误：未设置 SESSION_ID' }] }
     }
     try {
-      const where: Record<string, unknown> = { sessionId: SESSION_ID, role: 'agent' }
-      if (since) {
-        where.createdAt = { gt: new Date(since) }
-      }
+      const where = buildChannelWhere(SESSION_ID, since)
       const messages = await prisma.message.findMany({
         where,
         orderBy: { createdAt: 'asc' },
