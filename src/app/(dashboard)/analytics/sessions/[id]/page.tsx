@@ -168,8 +168,8 @@ export default function SessionTracePage({ params }: { params: Promise<{ id: str
                     <span className="font-mono text-xs text-gray-400">#{i + 1}</span>
                     {safeText(e.ts) && <span className="font-mono text-xs text-gray-400">{safeText(e.ts)}</span>}
                     {dp && (
-                      <Badge className={dp === "handleOrchestratorDecision" ? "bg-indigo-100 text-indigo-800" : "bg-slate-100 text-slate-600"}>
-                        {dp === "handleOrchestratorDecision" ? "LLM 决策" : dp === "transitionPhase" ? "代码补记转移" : dp}
+                      <Badge className={dp === "handleOrchestratorDecision" ? "bg-indigo-100 text-indigo-800" : dp === "decision-fallback" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}>
+                        {dp === "handleOrchestratorDecision" ? "LLM 决策" : dp === "transitionPhase" ? "代码补记转移" : dp === "decision-fallback" ? "决策失败回退" : dp}
                       </Badge>
                     )}
                     {outcomeBadge(e, violation)}

@@ -9,6 +9,8 @@ import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT, escapeContractTags } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
+import { reasonToString } from './reason'
+export { reasonToString } from './reason'
 
 // ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
 // 新模式:adapter.getRegistryKey() + adapter.getSpawnConfig() 拿权威值。
@@ -325,16 +327,6 @@ export interface PriorTaskMeta {
  * ISSUE-011 F1: 直接 String(reason) 对 null-prototype 对象/toString 抛异常的对象会抛 TypeError,
  * 一次怪异 rejection 会击穿整批处理。对象走 JSON.stringify 避免退化成 "[object Object]"。
  */
-function reasonToString(reason: unknown): string {
-  if (reason instanceof Error) return reason.message || String(reason)
-  try {
-    if (reason !== null && typeof reason === 'object') return JSON.stringify(reason)
-    return String(reason)
-  } catch {
-    return '[unserializable reason]'
-  }
-}
-
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
   agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
