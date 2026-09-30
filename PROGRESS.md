@@ -283,6 +283,7 @@
 - 第三梯队（研究向）：全链路 trace 可视化 / 设计复盘文档(❌/⚠️ 修复沉淀) / 受控实验
 - **ISSUE-027 LLM 通路修复（2026-09-29/30，四 commit e4d7796/d62f5cf/f64d2e7/1ab265f）**：✅ 全落地——讨论 8/8 agent 两轮真实发言 0 超时（opencode + tokenrhythm/mimo-v2.6-flash 线路）；根因与三层阻塞见 `issues/ISSUE-027`（CLI 无视 env BASE_URL / tokenrhythm 拒 beta 头 / opencode env 路径同触发）
 - **§4.1 盲测验收（2026-09-30 代执行）：未通过**——讨论/工具执行通，但决策时间线全库 0 条：决策 LLM 解析失败静默回退直连（绕过状态机与 trace）→ `issues/ISSUE-028` 待修（回退显性化 / 决策换快模型 / read_messages 空返回排查）
+- **ISSUE-028 决策链路修复（2026-09-30，四 commit d0a122c/a7fec72/75cfa28/9a5e113）**：✅ 全落地且**验收复测通过**——①回退显性化（console.error+用户告知+decision-fallback trace）②决策/执行模型分离（decision-llm.ts 快通道：qwen3.8-flash 直连 ~3-5s JSON 可靠，enable_thinking:false 关混合思考——实测思考耗尽 max_tokens 致 content 空的根因）③read_messages 全角色可见（失忆消除）④真实 UI 验收：对齐→拆解→执行管线完整走通，决策时间线 4 条一致性 100%，0-task 守卫拦截入 trace；全量 1337 passed / 3 skipped
 - 核心原则：减复杂度优于加功能；可审计性应内生而非补丁（参考镜像项目 homerail，D:\my project\homerail，拆解见 wiki-ascii/raw/sources/projects/homerail/）
 
 **已评估不实施**：

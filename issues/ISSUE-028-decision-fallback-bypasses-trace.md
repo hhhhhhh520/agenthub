@@ -1,5 +1,5 @@
 # §4.1 盲测验收发现：决策 LLM 失败静默回退绕过状态机与 trace，主库 24 会话零决策轨迹
-> 创建时间: 2026-09-30 | 状态: 🔴未解决
+> 创建时间: 2026-09-30 | 状态: 🟢已解决（2026-09-30 四 commit + 验收复测通过）
 
 ## 问题描述（盲测验收 = 3 真实会话，仅用 dashboard 5 分钟说清"哪一步跑偏、被什么机制拦住"）
 
@@ -24,6 +24,23 @@
 2. **mimo 决策 JSON 兼容**：决策 prompt 输出约束强化 / parseJSON 失败时把原始文本写日志便于诊断 / 考虑决策调用换非推理小模型（快且听话）。
 3. **agenthub_read_messages 返回空**：排查 MCP 工具的 session 过滤条件。
 4. **管线触发率**：mimo 决策不稳定导致管线几乎不可达——考虑决策模型与执行模型分离（决策用快模型）。
+
+## 修复记录（2026-09-30，四 commit 全落地，验收复测通过）
+
+| commit | 内容 |
+|---|---|
+| d0a122c | **回退显性化**：catch 分支 console.error（JSON.stringify 转义防日志注入）+ sendEvent 告知用户 + appendDecisionTrace 记 decision-fallback 条目（与正常 self 决策同构，'self'∈NON_TRANSITIONING 不污染 conformance 口径）；reasonToString 抽叶子模块复用 ISSUE-011 防线；analytics 页琥珀徽标 |
+| a7fec72 | **决策/执行模型分离**：新模块 decision-llm.ts——OpenAI 兼容 /chat/completions 直连快通道；env `AGENTHUB_DECISION_MODEL` 启用（凭据缺省复用 Orchestrator Agent 的 DB 配置，key 不落盘）；收口 getOrchestratorDecision + callLLM（→analyzeScene/角色生成/架构师拆解）；callLLMForAnalysis 明确排除（有钉住测试）；redirect:'error' 禁重定向 + 错误体脱敏 sk- 形态 + AbortSignal 超时转译自定义 TimeoutError |
+| 75cfa28 | **read_messages 全角色可见**：旧 where 硬过滤 role:'agent' 是失忆根因；新 buildChannelWhere 三角色 in 过滤（user/orchestrator/agent），叶子模块可测 + 接线守卫 |
+| 9a5e113 | **关思考修复**（验收实测追加）：tokenrhythm 的 qwen3.8-flash 为混合思考模型，真实拆解 prompt 下思考耗尽 max_tokens=2048（finish_reason=length，content 空）——请求体固定 `enable_thinking:false`（实测 5.0s vs 带思考 45.7s）+ max_tokens 8192 兜底 + 空 content 错误带 finish_reason 诊断 |
+
+## 验收复测（2026-09-30，真实 UI 全链路）
+
+- 新会话（bfa9f2c6）发开发任务（温度换算工具，D:/tmp-agenthub-i028）：**对齐→拆解→执行管线完整走通**——PM 复述需求 → 用户确认 → 架构师方案落库（Tasks 3 个）→ 后端工程师交付 convert.js → 测试工程师交付 convert.test.js（`node --test` 独立复跑 pass 2 / fail 0）。
+- **决策时间线 4 条**（修复前全库 24 会话 0 条）：一致性 100%（4/4），#3 完整记录 0-task 守卫真实拦截（execute → align_decompose 重定向）——「哪一步做了什么决策、被什么机制拦住」5 分钟可读，§4.1 验收标准达成。
+- 决策调用从「mimo 推理 2min 超时+解析失败」变为 qwen3.8-flash 直连 ~3-5s、JSON 直接可解析。
+- `agenthub_read_messages` 返回完整频道历史（含用户/Orchestrator 发言），失忆消除。
+- 全量回归 1337 passed / 3 skipped；tsc src 0。每 commit 双审查（攻击者+声明vs实现）findings 全整改。
 
 ## 相关文件
 - `src/lib/services/chat-router.ts:71-78`（静默回退点）、`src/lib/orchestrator/index.ts:233`（parseJSON）
