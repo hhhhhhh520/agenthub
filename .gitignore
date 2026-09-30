@@ -95,3 +95,7 @@ code-review-report.html
 /script.js
 /styles.css
 /test_api.py
+
+# claude CLI runtime artifacts (smoke/dev spawns with repo cwd)
+.last-cleanup
+projects/
