@@ -98,6 +98,7 @@ seed 系、longcat。**用户拍板：mimo-v2.6-flash**。⚠️ baseUrl 必须�
   + 换线冒烟通过后重跑。
 
 ## 相关文件
+- **后记（2026-09-30，claude adapter 复活）**：tokenrhythm 的 beta 头死路只覆盖该网关——火山方舟 ark plan（`https://ark.cn-beijing.volces.com/api/plan` + `glm-5.3-flash`）实测**不拒 `anthropic-beta` 头**（curl 带头 200 + 真实 CLI 探针通过），受管 settings.json 通道零改动直接可用；前端工程师已切该线路，claude adapter + opencode adapter 混编群聊三轮讨论全通（用户供钥匙，key 只在 DB）。混合形态与红线更新见项目 `CLAUDE.md`「当前线路」
 - `src/lib/adapter/claude-code-env.ts`（新）、`process-registry.ts`、`claude-code-adapter.ts`、
   `opencode-adapter.ts`（commit 3 改造）、`src/app/api/agents/route.ts`、
   `src/lib/services/claude-cfg-maintenance.ts`（新）、`src/instrumentation.ts`
