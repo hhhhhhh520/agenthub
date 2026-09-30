@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'events'
+import { join } from 'path'
+import { readFileSync } from 'fs'
 import type { ChildProcess } from 'child_process'
 
 /**
@@ -232,8 +234,21 @@ describe('ProcessRegistry — per-agent env isolation', () => {
 
 // ─── OpenCodeAdapter env injection ─────────────────────────────────────────────
 
-describe('OpenCodeAdapter — provider env injection', () => {
-  it('should set ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL in spawn env', async () => {
+describe('OpenCodeAdapter — provider config file (ISSUE-027 commit 3)', () => {
+  it('有 apiKey+baseUrl → env 不再注入 ANTHROPIC_*，XDG 配置文件承载 provider（配置路径绕开 beta 头）', async () => {
+    // 确定性 seed（安全审查 🟡）：宿主 shell 带不带 ANTHROPIC_* 不定——显式种入再断言
+    // scrub 生效（变异：删 envScrub → 此断言红）
+    const prevBase = process.env.ANTHROPIC_BASE_URL
+    process.env.ANTHROPIC_BASE_URL = 'https://seed-ark.example/plan'
+    try {
+      await runProviderConfigAssertions()
+    } finally {
+      if (prevBase === undefined) delete process.env.ANTHROPIC_BASE_URL
+      else process.env.ANTHROPIC_BASE_URL = prevBase
+    }
+  })
+
+  async function runProviderConfigAssertions() {
     // 创建独立的 mock 进程，以便控制 stdout close 事件
     const localStdout = new EventEmitter()
     const localStderr = new EventEmitter()
@@ -263,7 +278,7 @@ describe('OpenCodeAdapter — provider env injection', () => {
     await adapter.connect({
       platform: 'opencode',
       apiKey: 'sk-test-opencode-key',
-      baseUrl: 'https://proxy.example.com',
+      baseUrl: 'https://proxy.example.com/v1',
       model: 'deepseek-chat',
       workDir: '/tmp/test-oc-env',
     })
@@ -278,12 +293,61 @@ describe('OpenCodeAdapter — provider env injection', () => {
     const newEnvs = capturedEnvList.slice(before)
     expect(newEnvs.length).toBeGreaterThanOrEqual(1)
 
-    // 验证 spawn 时传入的 env 包含正确的变量
-    // 第一个 spawn 是 opencode 进程（包含 env），后续可能是 taskkill 清理
+    // 新契约：env 不注入 ANTHROPIC_*（env 路径触发 opencode 的 Claude-Code 兼容 beta 头，
+    // tokenrhythm 拒收——2026-09-29 实测），provider 配置改走 XDG 配置文件
     const spawnEnv = newEnvs[0]
-    expect(spawnEnv.ANTHROPIC_API_KEY).toBe('sk-test-opencode-key')
-    expect(spawnEnv.ANTHROPIC_BASE_URL).toBe('https://proxy.example.com')
+    expect(spawnEnv.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(spawnEnv.ANTHROPIC_BASE_URL).toBeUndefined()
     expect(spawnEnv.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    expect(spawnEnv.XDG_CONFIG_HOME).toBeTruthy()
+
+    // 配置文件内容：provider.anthropic.options 承载凭据与端点，模型带 provider 前缀
+    const cfgPath = join(spawnEnv.XDG_CONFIG_HOME, 'opencode', 'opencode.json')
+    const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'))
+    expect(parsed.provider.anthropic.options.baseURL).toBe('https://proxy.example.com/v1')
+    expect(parsed.provider.anthropic.options.apiKey).toBe('sk-test-opencode-key')
+    expect(parsed.provider.anthropic.models).toEqual({ 'deepseek-chat': {} })
+    expect(parsed.model).toBe('anthropic/deepseek-chat')
+    expect(parsed.small_model).toBe('anthropic/deepseek-chat')
+
+    await adapter.close()
+  }
+
+  it('仅 apiKey 无 baseUrl → 保留 env 旧路径（无 provider 配置文件）', async () => {
+    const localStdout = new EventEmitter()
+    const localStderr = new EventEmitter()
+    const localProcess: any = {
+      pid: 88889,
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: localStdout,
+      stderr: localStderr,
+      exitCode: null,
+      on: vi.fn(),
+      kill: vi.fn(),
+    }
+    const { spawn } = await import('child_process')
+    const spawnMock = vi.mocked(spawn)
+    spawnMock.mockImplementation((cmd: string, args: string[], options: any) => {
+      capturedEnvList.push(options?.env || {})
+      return localProcess as any
+    })
+
+    const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
+    const adapter = new OpenCodeAdapter()
+    await adapter.connect({
+      platform: 'opencode',
+      apiKey: 'sk-only-key',
+      workDir: '/tmp/test-oc-env-2',
+    })
+
+    const before = capturedEnvList.length
+    const gen = adapter.send({ prompt: 'test' })
+    setTimeout(() => localStdout.emit('close'), 10)
+    for await (const _ of gen) { /* consume */ }
+
+    const spawnEnv = capturedEnvList.slice(before)[0]
+    expect(spawnEnv.ANTHROPIC_API_KEY).toBe('sk-only-key')
+    expect(spawnEnv.XDG_CONFIG_HOME).toBeUndefined()
 
     await adapter.close()
   })

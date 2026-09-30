@@ -1,5 +1,5 @@
 # AgentHub 多 Agent 讨论/聊天全灭 — claude CLI 无视 spawn env 的 ANTHROPIC_BASE_URL（env 通道死亡）
-> 创建时间: 2026-09-28 | 状态: 🟡排查中（修复 commit 1/2 落地中，待端到端冒烟）
+> 创建时间: 2026-09-28 | 状态: 🟢已解决（commit 1/2/3 落地 + adapter 级冒烟通过，待用户 UI 冒烟）
 
 ## 问题描述
 
@@ -71,7 +71,17 @@ seed 系、longcat。**用户拍板：mimo-v2.6-flash**。⚠️ baseUrl 必须�
    三重判据——讨论提示词限 200 字使长度防线在讨论路径失效，CJK 形态判别兜底，攻击者审查 F1）
    接进 orchestrator **三个堆积点**（executeTaskBatch / executeSingleAgent / runDiscussion）；
    runDiscussion skipMsg 携带真实错误文本（reasonToString 序列化）。
-3. **换线**：8 个带 key 的 agent 整体切 tokenrhythm + mimo-v2.6-flash（key 经 DB，不落文档）。
+3. **Commit 3（换线最终形态，2026-09-29）**：首次换线后端到端冒烟撞出第二层阻塞——tokenrhythm
+   网关拒收 claude CLI 必带的 `anthropic-beta: interleaved-thinking-2025-05-14` 头（CLI 10 模型
+   全 400；curl 显式带同头也 400 = 网关层拒绝；MAX_THINKING_TOKENS=0、ANTHROPIC_CUSTOM_HEADERS
+   均无法去除）。**opencode 的 env 注入路径同样触发该头**（opencode 检测到 ANTHROPIC_* env 启用
+   Claude-Code 兼容 betas），唯一可通路径 = opencode 配置文件显式 provider options（实测
+   SMOKE-OK + adapter 级 ADAPTER-SMOKE-OK 全链路）。故 OpenCodeAdapter 改造：有 apiKey+baseUrl
+   的 agent 生成 XDG 配置文件（`buildOpencodeProviderConfig`：provider/model/small_model，
+   0o600，按 agentId 稳定目录，读同跳过写），env 注入退役 + envScrub 剥除继承的 ANTHROPIC_*/
+   CLAUDE_*；**opencode 平台 baseUrl 语义 = 带 /v1**（SDK 追加 /messages，与 claude-code 裸域名
+   不同）；DB 8 agent → platform=opencode + baseUrl /v1 + mimo-v2.6-flash（tool_use 已实测 200）。
+   遗留：tokenrhythm 放行 beta 头后可切回 claude-code adapter（baseUrl 改裸域名即回）。
 4. **用户侧**：aliyun token-plan 的 qwen3.8-max-preview/flash 均 403 Unpurchased（与讯飞比赛
    09-05 同款），不开通则该线路不可用——已用换线绕开。
 
@@ -89,11 +99,14 @@ seed 系、longcat。**用户拍板：mimo-v2.6-flash**。⚠️ baseUrl 必须�
 
 ## 相关文件
 - `src/lib/adapter/claude-code-env.ts`（新）、`process-registry.ts`、`claude-code-adapter.ts`、
-  `src/app/api/agents/route.ts`、`src/lib/services/claude-cfg-maintenance.ts`（新）、
-  `src/instrumentation.ts`
+  `opencode-adapter.ts`（commit 3 改造）、`src/app/api/agents/route.ts`、
+  `src/lib/services/claude-cfg-maintenance.ts`（新）、`src/instrumentation.ts`
 - 测试：`tests/claude-code-env.test.ts`、`tests/claude-code-env-wiring.test.ts`、
   `tests/claude-code-adapter.test.ts`、`tests/api-safety.test.ts`、
-  `tests/multi-platform-integration.test.ts`、`tests/process-registry-graceful-kill.test.ts`
+  `tests/multi-platform-integration.test.ts`、`tests/process-registry-graceful-kill.test.ts`、
+  `tests/opencode-provider-config.test.ts`、`tests/multi-provider-isolation.test.ts`
+- ⚠️ commit 3 附带行为变更：opencode 平台 agent 的 baseUrl 现在会过 scheme 强制校验
+  （assertSafeBaseUrl，https 或 http 回环）——旧 http 内网网关 + env 通道的用法被收紧
 - 交叉：`issues/ISSUE-026`（根因段修订注记）、memory `claude-cli-model-catalog-reject`（已修订）、
   `feedback_llm_endpoint_default`（tokenrhythm Anthropic 面模型清单）
 

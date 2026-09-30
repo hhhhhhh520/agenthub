@@ -128,7 +128,8 @@ export function ensureClaudeConfigDir(cfg: ClaudeProviderConfig, opts?: ClaudeCf
   if (existing === content) return dir
 
   const tmp = join(dir, `.settings.${process.pid}.${Date.now()}.tmp`)
-  // 0o600：settings.json 内含明文 key，收紧到仅属主可读（Windows 下映射为 ACL 收紧的尽力而为）
+  // 0o600：POSIX 下收紧到仅属主可读；**Windows 无 ACL 收紧效果**（libuv 只认 write-bit），
+  // 实际防护依赖 %TEMP% 位于用户 profile 下的目录 ACL（安全审查 🟡 实证勘误）
   try {
     writeFileSync(tmp, content, { encoding: 'utf-8', mode: 0o600 })
   } catch (err) {

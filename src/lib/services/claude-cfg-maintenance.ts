@@ -10,15 +10,35 @@
  * （active 集合不完整时删 = 宁漏勿错）。触发点：GET /api/agents 全量视图 + 启动兜底
  * （src/instrumentation.ts）——仅挂 UI 加载会让出清与 UI 访问脱钩（生命周期审查 🟡1.1）。
  */
+import { tmpdir } from 'node:os'
+import { readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { prisma } from '@/lib/db'
 import { sweepAgentClaudeConfigDirs, claudeConfigDir } from '@/lib/adapter/claude-code-env'
+import { opencodeCfgDirName } from '@/lib/adapter/opencode-adapter'
 import { getOrchestratorAgent } from '@/lib/orchestrator'
 
 export async function sweepWithCurrentConfigs(): Promise<string[]> {
-  const cfgRows = await prisma.agent.findMany({ select: { baseUrl: true, apiKey: true, model: true } })
+  const cfgRows = await prisma.agent.findMany({ select: { id: true, baseUrl: true, apiKey: true, model: true } })
   const orchestrator = await getOrchestratorAgent()
   const dirs = [...cfgRows, orchestrator]
     .map(r => claudeConfigDir(r))
     .filter((d): d is string => d !== null)
-  return sweepAgentClaudeConfigDirs(dirs)
+  const removed = sweepAgentClaudeConfigDirs(dirs)
+  removed.push(...sweepOrphanOpencodeXdgDirs(cfgRows.map(r => r.id)))
+  return removed
+}
+
+function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[]): string[] {
+  const active = new Set(activeAgentIds.map(id => opencodeCfgDirName(id)))
+  const out: string[] = []
+  try {
+    for (const e of readdirSync(tmpdir(), { withFileTypes: true })) {
+      if (!e.isDirectory() || !e.name.startsWith('agenthub-oc-')) continue
+      if (active.has(e.name.slice('agenthub-oc-'.length))) continue
+      rmSync(join(tmpdir(), e.name), { recursive: true })
+      out.push(e.name)
+    }
+  } catch { /* tmp unreadable: best-effort */ }
+  return out
 }

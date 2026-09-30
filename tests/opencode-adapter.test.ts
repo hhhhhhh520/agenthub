@@ -200,9 +200,11 @@ describe('OpenCodeAdapter', () => {
     const gen = adapter.send({ prompt: 'test' })
     for await (const _ of gen) { /* consume */ }
     const config = mockSend.mock.calls[0][2]
-    // XDG_CONFIG_HOME 应该被设置
+    // XDG_CONFIG_HOME 应该被设置；目录名 hash 化（ISSUE-027 commit 3 审查 🟡：原始
+    // agentId 含中文/路径字符会逃逸，不再出现在路径里）
     expect(config.env.XDG_CONFIG_HOME).toBeDefined()
-    expect(config.env.XDG_CONFIG_HOME).toContain('agenthub-oc-test-agent')
+    expect(config.env.XDG_CONFIG_HOME).toContain('agenthub-oc-')
+    expect(config.env.XDG_CONFIG_HOME).not.toContain('test-agent')
   })
 
   it('send does not set XDG_CONFIG_HOME when mcpConfig is empty', async () => {
