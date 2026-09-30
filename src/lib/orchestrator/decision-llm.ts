@@ -101,7 +101,11 @@ export async function callDecisionLLM(
       body: JSON.stringify({
         model: cfg.model,
         temperature: 0.2,
-        max_tokens: 2048,
+        max_tokens: 8192,
+        // 关闭混合思考模型的思考模式（Qwen3 系参数，tokenrhythm 后端识别；不识别的网关多忽略之）。
+        // 思考对结构化决策无益：探针实测同 prompt 关思考 5.0s vs 带思考 45.7s，且思考耗尽
+        // max_tokens 会让 content 为空（finish_reason=length）——ISSUE-028 验收实测根因。
+        enable_thinking: false,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -121,16 +125,21 @@ export async function callDecisionLLM(
     const body = await res.text().catch(() => '')
     throw new Error(`决策快模型 HTTP ${res.status}: ${sanitizeGatewayBody(body).slice(0, 200)}`)
   }
-  let data: { choices?: Array<{ message?: { content?: unknown } }> }
+  let data: { choices?: Array<{ finish_reason?: string; message?: { content?: unknown } }> }
   try {
     data = await res.json()
   } catch {
     // HTML 错误页等非 JSON 响应：SyntaxError message 会带响应体片段（可能含 key 回显），收敛为通用消息
     throw new Error(`决策快模型响应非 JSON（HTTP ${res.status}）`)
   }
-  const content = data?.choices?.[0]?.message?.content
+  const choice = data?.choices?.[0]
+  const content = choice?.message?.content
   if (typeof content !== 'string' || !content.trim()) {
-    throw new Error('决策快模型返回空 content（choices[0].message.content 缺失或为空）')
+    // 空 content 的头号根因（验收实测）：混合思考模型的思考耗尽 max_tokens（finish_reason=length），
+    // reasoning_content 有内容而 content 为空——把 finish_reason 带出来，别让下个人再猜
+    const finishReason = (choice?.finish_reason ?? 'unknown').toString().slice(0, 40)
+    const hint = finishReason === 'length' ? '，思考耗尽 max_tokens' : ''
+    throw new Error(`决策快模型返回空 content（finish_reason=${finishReason}${hint}）`)
   }
   return content
 }

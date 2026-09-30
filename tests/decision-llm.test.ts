@@ -126,7 +126,9 @@ describe('callDecisionLLM', () => {
     const payload = JSON.parse(init.body as string)
     expect(payload.model).toBe('qwen3.8-flash')
     expect(payload.temperature).toBe(0.2)
-    expect(payload.max_tokens).toBe(2048)
+    expect(payload.max_tokens).toBe(8192)
+    // 关思考：混合思考模型的思考耗尽 max_tokens 会致 content 空（验收实测根因）
+    expect(payload.enable_thinking).toBe(false)
     expect(payload.messages).toEqual([
       { role: 'system', content: '系统提示' },
       { role: 'user', content: '用户输入' },
@@ -166,11 +168,18 @@ describe('callDecisionLLM', () => {
     await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toBeInstanceOf(TimeoutError)
   })
 
-  it('200 但 content 空 / choices 缺失 → throw（推理模型 reasoning_content 陷阱防御）', async () => {
-    vi.stubGlobal('fetch', mockFetchRes(true, 200, { choices: [{ message: { content: '   ' } }] }))
-    await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toThrow('content')
+  it('200 但 content 空（思考耗尽 max_tokens，finish_reason=length）→ throw 且带诊断', async () => {
+    vi.stubGlobal('fetch', mockFetchRes(true, 200, {
+      choices: [{ finish_reason: 'length', message: { content: '   ', reasoning_content: '思考了 7204 字符…' } }],
+    }))
+    await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toThrow(/返回空 content（finish_reason=length.*思考耗尽/s)
+  })
+
+  it('200 但 choices 缺失/空数组 → throw（finish_reason=unknown 兜底）', async () => {
     vi.stubGlobal('fetch', mockFetchRes(true, 200, { choices: [] }))
-    await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toThrow('content')
+    await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toThrow('finish_reason=unknown')
+    vi.stubGlobal('fetch', mockFetchRes(true, 200, {}))
+    await expect(callDecisionLLM(cfg, 's', 'u')).rejects.toThrow('finish_reason=unknown')
   })
 
   it('fetch 网络异常 → 原样上抛（调用方显性处理，禁止静默回落慢路径）', async () => {
