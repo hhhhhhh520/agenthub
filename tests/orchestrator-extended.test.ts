@@ -444,3 +444,105 @@ describe('formatArchitectPlan', () => {
     expect(result).toContain('依赖：t1')
   })
 })
+
+// ── ISSUE-028 T2 集成：设 AGENTHUB_DECISION_MODEL → 决策/拆解走快模型直连，不走 CLI adapter ──
+describe('ISSUE-028 决策快模型通道集成', () => {
+  const savedEnv: Record<string, string | undefined> = {}
+  const ENV_KEYS = ['AGENTHUB_DECISION_MODEL', 'AGENTHUB_DECISION_BASE_URL', 'AGENTHUB_DECISION_API_KEY'] as const
+
+  beforeEach(() => {
+    for (const k of ENV_KEYS) {
+      savedEnv[k] = process.env[k]
+      delete process.env[k]
+    }
+  })
+
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k]
+      else process.env[k] = savedEnv[k]
+    }
+    vi.unstubAllGlobals()
+  })
+
+  function stubFetch(content: unknown) {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => content,
+      text: async () => JSON.stringify(content),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('env 未设 → 快通道关闭，走原 adapter 路径（行为不变对照，fetch 零调用）', async () => {
+    const fetchMock = stubFetch({ choices: [{ message: { content: '{}' } }] })
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: JSON.stringify({ action: 'self', message: 'hi', reason: 'r' }) }
+    })
+    const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'claude-code' }], 'context')
+    expect(result.decision.action).toBe('self')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockCreateAdapter).toHaveBeenCalled()
+  })
+
+  it('env 设定 + orchestrator 凭据齐全 → fetch 直连决策，adapter 零调用，sessionId undefined', async () => {
+    mockAgentFindFirst.mockResolvedValueOnce({ id: 'orch-1', platform: 'opencode', model: 'mimo-v2.6-flash', baseUrl: 'https://gw.test/v1', apiKey: 'sk-orch' })
+    const fetchMock = stubFetch({ choices: [{ message: { content: JSON.stringify({ action: 'align_confirm', target: null, targets: null, message: 'm', reason: 'r' }) } }] })
+    process.env.AGENTHUB_DECISION_MODEL = 'qwen3.8-flash'
+    const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'opencode' }], 'context')
+    expect(result.decision.action).toBe('align_confirm')
+    expect(result.sessionId).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://gw.test/v1/chat/completions')
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer sk-orch')
+    expect(JSON.parse(init.body as string).model).toBe('qwen3.8-flash')
+    expect(mockCreateAdapter).not.toHaveBeenCalled()
+  })
+
+  it('快通道调用失败 → 原样上抛（不静默回落 CLI 慢路径）', async () => {
+    mockAgentFindFirst.mockResolvedValueOnce({ id: 'orch-1', platform: 'opencode', model: 'mimo', baseUrl: 'https://gw.test/v1', apiKey: 'sk-orch' })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('gateway down')))
+    process.env.AGENTHUB_DECISION_MODEL = 'qwen3.8-flash'
+    await expect(getOrchestratorDecision('hello', [], 'context')).rejects.toThrow('gateway down')
+    expect(mockCreateAdapter).not.toHaveBeenCalled()
+  })
+
+  it('env 设定但 orchestrator 无 baseUrl → 配置解析 null，回落原 adapter 路径', async () => {
+    mockAgentFindFirst.mockResolvedValueOnce({ id: 'orch-1', platform: 'claude-code', model: 'test', baseUrl: '', apiKey: 'sk' })
+    const fetchMock = stubFetch({ choices: [] })
+    process.env.AGENTHUB_DECISION_MODEL = 'qwen3.8-flash'
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: JSON.stringify({ action: 'self', message: 'hi', reason: 'r' }) }
+    })
+    const result = await getOrchestratorDecision('hello', [], 'context')
+    expect(result.decision.action).toBe('self')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockCreateAdapter).toHaveBeenCalled()
+  })
+
+  it('decomposeTasks 同享快通道（callLLM 收口，架构师拆解不再依赖推理模型 JSON）', async () => {
+    mockAgentFindFirst.mockResolvedValueOnce({ id: 'orch-1', platform: 'opencode', model: 'mimo', baseUrl: 'https://gw.test/v1', apiKey: 'sk-orch' })
+    const tasksPayload = { tasks: [{ id: 1, description: '实现登录', assignedAgent: '后端', dependencies: [], declared_files: ['src/login.ts'] }] }
+    const fetchMock = stubFetch({ choices: [{ message: { content: JSON.stringify(tasksPayload) } }] })
+    process.env.AGENTHUB_DECISION_MODEL = 'qwen3.8-flash'
+    const tasks = await decomposeTasks('做登录', [{ name: '后端', expertise: 'backend' }])
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].description).toBe('实现登录')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(mockCreateAdapter).not.toHaveBeenCalled()
+  })
+
+  it('callLLMForAnalysis 不走快通道（review 质量审查维持原线路——声明排除项，防未来顺手收口）', async () => {
+    process.env.AGENTHUB_DECISION_MODEL = 'qwen3.8-flash'
+    const fetchMock = stubFetch({ choices: [{ message: { content: '{}' } }] })
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'analysis result' }
+    })
+    const result = await callLLMForAnalysis('analyze this')
+    expect(result).toBe('analysis result')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mockCreateAdapter).toHaveBeenCalled()
+  })
+})

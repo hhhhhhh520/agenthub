@@ -11,6 +11,7 @@ import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMP
 import { topologicalSort, type ScheduledTask } from './scheduler'
 import { reasonToString } from './reason'
 export { reasonToString } from './reason'
+import { readDecisionModelEnv, resolveDecisionLLMConfig, callDecisionLLM } from './decision-llm'
 
 // ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
 // 新模式:adapter.getRegistryKey() + adapter.getSpawnConfig() 拿权威值。
@@ -137,6 +138,20 @@ export async function getOrchestratorAgent(): Promise<{
   return { platform: 'claude-code', ...config }
 }
 
+/**
+ * ISSUE-028: 决策/分析类结构化调用的快模型通道收口（analyzeScene/决策/角色生成/任务拆解）。
+ * 设 AGENTHUB_DECISION_MODEL 即启用；未设返回 null（走原 adapter 路径，行为不变对照）；
+ * 已设但凭据缺 null、调用失败 throw（不静默回落 CLI 慢路径，上层显性处理）。
+ */
+async function callDecisionLLMIfConfigured(systemPrompt: string, userPrompt: string): Promise<string | null> {
+  const model = readDecisionModelEnv()
+  if (!model) return null
+  const orch = await getOrchestratorAgent()
+  const cfg = resolveDecisionLLMConfig(model, orch)
+  if (!cfg) return null
+  return callDecisionLLM(cfg, systemPrompt, userPrompt)
+}
+
 export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
   const orch = await getOrchestratorAgent()
   const platform = orch.platform as AdapterConfig['platform']
@@ -162,6 +177,10 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
 }
 
 async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
+  // ISSUE-028: 决策/分析类结构化调用优先走快模型直连（未设 env → null 走原路径）
+  const fast = await callDecisionLLMIfConfigured(systemPrompt, userPrompt)
+  if (fast !== null) return fast
+
   const combinedPrompt = `${systemPrompt}\n\n---\n\n用户输入：${userPrompt}\n\n你必须严格按照上述指令返回结果，不要说其他话。`
 
   const orch = await getOrchestratorAgent()
@@ -267,6 +286,13 @@ export async function getOrchestratorDecision(
 ${context}
 
 请决定下一步该谁发言。`
+
+  // ISSUE-028: 决策优先走快模型直连（未设 env → null 走原 CLI 路径）。
+  // 快通道无 CLI 会话，sessionId 恒 undefined（决策无状态，resume 只对执行有意义）。
+  const fast = await callDecisionLLMIfConfigured(systemPrompt, fullPrompt)
+  if (fast !== null) {
+    return { decision: parseJSON(fast, ['action', 'message', 'reason']), sessionId: undefined }
+  }
 
   const orch = await getOrchestratorAgent()
   const { result: response, sessionId } = await executeSingleAgent(
