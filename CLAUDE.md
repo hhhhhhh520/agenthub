@@ -228,6 +228,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - 用户创建群聊时可指定项目目录（如 `E:\projects\todo-app\`）
 - Session 表存储 `projectDir` 和 `permissionMode`（`default` | `auto`）
 - Agent 直接在 `projectDir` 中工作，不创建独立子目录
+- **创建会话必须透传 projectDir**（前端 `create` 第 4 参；实测「私聊」曾漏传 → 私聊 agent workDir 回落 process.cwd() 仓库根，误报仓库根文件，commit 0adb713）
 - 最近打开的目录存储在 `RecentDir` 表，API：`/api/recent-dirs`
 - 聊天命令 `/permission auto` 或 `/permission default` 切换权限模式
 - ClaudeCodeAdapter 支持 `--permission-mode` + `--permission-prompt-tool stdio` 参数
