@@ -38,7 +38,8 @@ function ChatContent() {
         <AgentPanel
           sessionId={activeId}
           onPrivateChat={async (agentId, agentName) => {
-            await create(`私聊: ${agentName}`, 'private', [agentId])
+            // 从来源会话继承 projectDir（否则私聊 agent 的 workDir 回落 process.cwd()，"失忆"用户工作目录）
+            await create(`私聊: ${agentName}`, 'private', [agentId], sessions.find(s => s.id === activeId)?.projectDir || undefined)
           }}
         />
       </div>
