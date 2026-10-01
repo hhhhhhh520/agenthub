@@ -9,6 +9,7 @@ interface Session {
   type: string
   createdAt: string
   updatedAt: string
+  projectDir?: string
   _count?: { messages: number; agents: number }
   members?: Array<{ agentId: string; agent?: { name: string; accentColor: string } }>
 }
@@ -54,11 +55,11 @@ export function useSessions() {
     }
   }, [searchParams, activeId])
 
-  const create = async (title?: string, type?: string, agentIds?: string[]) => {
+  const create = async (title?: string, type?: string, agentIds?: string[], projectDir?: string) => {
     const res = await fetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, type, agentIds }),
+      body: JSON.stringify({ title, type, agentIds, projectDir }),
     })
     const session = await res.json()
     setSessions(prev => [session, ...prev])
