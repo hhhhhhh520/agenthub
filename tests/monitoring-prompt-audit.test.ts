@@ -155,6 +155,11 @@ describe('监控 prompt 审计诚实性（audit.declared = 真实交集）', () 
     expect(audit.undeclared).toEqual([])
   })
 
+  it('执行层把 projectRoot 透传给 monitor prompt 第 6 参（projectDir 语义锚点）', async () => {
+    await runGhostScenario(['src/app/page.tsx'])
+    expect(mocks.mockBuildMonitoringPrompt.mock.calls[0][5]).toBe(tmpDir)
+  })
+
   it('部分命中（声明 2 文件只动了 1 个）→ audit.declared 只含真实触达的', async () => {
     const { handleExecution } = await import('@/lib/services/execution')
     delete process.env.EXPERIMENT_STRUCTURED_MONITOR

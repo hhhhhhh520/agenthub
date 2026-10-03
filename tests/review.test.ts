@@ -25,6 +25,7 @@ vi.mock('@/lib/orchestrator/prompts', () => ({
 }))
 
 import { reviewResult } from '@/lib/services/review'
+import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 
 describe('reviewResult', () => {
   const sendEvent = vi.fn()
@@ -135,6 +136,21 @@ describe('reviewResult', () => {
     expect(result).toEqual({ quality: 'poor' })
     // Only monitoring call, no retry
     expect(mockExecuteSingleAgent).toHaveBeenCalledTimes(1)
+  })
+
+  it('monitor prompt 透传 retryContext.projectDir（projectDir 语义锚点）', async () => {
+    mockExecuteSingleAgent.mockResolvedValueOnce({
+      result: JSON.stringify({ needsCorrection: false, quality: 'good' }),
+    })
+
+    await reviewResult('task output', 'task desc', 'session-1', sendEvent, {
+      agent: { name: 'test-agent', systemPrompt: 'prompt', platform: 'claude-code' },
+      projectDir: '/test-proj',
+    })
+
+    expect(vi.mocked(buildMonitoringPrompt)).toHaveBeenCalledWith(
+      'task desc', 'task output', [], { declared: [], undeclared: [] }, 'single', '/test-proj'
+    )
   })
 
   it('should return quality poor when executeSingleAgent fails during retry', async () => {
