@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // --- Mocks ---
-const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionUpdateMany, mockSessionFindUnique, mockMessageCreate } = vi.hoisted(() => ({
+const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst, mockSessionUpdate, mockSessionUpdateMany, mockSessionFindUnique, mockMessageCreate, mockAgentFindFirst } = vi.hoisted(() => ({
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockTaskCount: vi.fn().mockResolvedValue(0),
   mockTaskFindMany: vi.fn().mockResolvedValue([]),
@@ -10,6 +10,7 @@ const { mockMessageFindMany, mockTaskCount, mockTaskFindMany, mockTaskFindFirst,
   mockSessionUpdateMany: vi.fn(),
   mockSessionFindUnique: vi.fn(),
   mockMessageCreate: vi.fn(),
+  mockAgentFindFirst: vi.fn().mockResolvedValue({ id: 'orch-id' }),
 }))
 
 vi.mock('@/lib/db', () => ({
@@ -17,6 +18,7 @@ vi.mock('@/lib/db', () => ({
     message: { findMany: mockMessageFindMany, create: mockMessageCreate },
     task: { count: mockTaskCount, findMany: mockTaskFindMany, findFirst: mockTaskFindFirst },
     session: { update: mockSessionUpdate, updateMany: mockSessionUpdateMany, findUnique: mockSessionFindUnique },
+    agent: { findFirst: mockAgentFindFirst },
   },
 }))
 
