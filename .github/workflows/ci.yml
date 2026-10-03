@@ -75,8 +75,11 @@ jobs:
           fi
           git diff --name-only --diff-filter=ACMR "$BASE" "$GITHUB_SHA" \
             | grep -E '\.(ts|tsx)$' > changed.txt || true
-          echo "files=$(paste -sd ' ' changed.txt)" >> "$GITHUB_OUTPUT"
+          echo "count=$(grep -c . changed.txt || true)" >> "$GITHUB_OUTPUT"
 
       - name: ESLint gate (changed files, 0 error)
-        if: steps.diff.outputs.files != ''
-        run: npx eslint ${{ steps.diff.outputs.files }}
+        if: steps.diff.outputs.count != '0'
+        # changed.txt 按行传参（xargs -d '\n'）：路径含 (dashboard)/[id] 等 shell
+        # 元字符时直接展开会 bash 语法错误（2026-10-03 master 红，exit 2）。
+        # -r：空输入不跑（eslint 无参会报错）。
+        run: xargs -d '\n' -r npx eslint < changed.txt
