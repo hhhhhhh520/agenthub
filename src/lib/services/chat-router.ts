@@ -300,6 +300,7 @@ ${agentList || '（无）'}
     : process.cwd()
 
   const orchConfig = await getOrchestratorAgent()
+  const orchAgent = await prisma.agent.findFirst({ where: { isOrchestrator: true }, select: { id: true } })
   const { result } = await executeSingleAgent(
     {
       name: 'Orchestrator', systemPrompt, platform: orchConfig.platform,
@@ -308,6 +309,7 @@ ${agentList || '（无）'}
       baseUrl: orchConfig.baseUrl || undefined,
       workDir, permissionMode: session?.permissionMode || 'default',
       sessionId: orchSessionId,
+      id: orchAgent?.id,
     },
     message,
     '',
