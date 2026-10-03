@@ -557,7 +557,7 @@ export async function handleExecution(
         }
       } else {
         try {
-          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: attributed, undeclared })
+          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: attributed, undeclared }, 'batch', projectRoot)
           const orch = await getOrchestratorAgent()
           const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
           const { result: reviewResult } = await Promise.race([
@@ -572,6 +572,7 @@ export async function handleExecution(
               sessionId: orchSessionId,
               workDir: projectRoot,
               permissionMode: 'auto',
+              id: orch.id,
             },
             monitoringPrompt,
             '',

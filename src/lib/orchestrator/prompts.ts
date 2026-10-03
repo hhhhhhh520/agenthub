@@ -208,12 +208,20 @@ export function buildMonitoringPrompt(
   taskResult: string,
   declaredFiles: string[],
   auditResult: { declared: string[]; undeclared: string[] },
-  mode: 'batch' | 'single' = 'batch'
+  mode: 'batch' | 'single' = 'batch',
+  projectDir?: string
 ): string {
   const fileInfo = mode === 'batch'
     ? `声明修改的文件：${declaredFiles.join(', ') || '无'}
 实际修改的声明文件：${auditResult.declared.join(', ') || '无'}
 越界修改的文件：${auditResult.undeclared.join(', ') || '无'}`
+    : ''
+  // projectDir 语义锚点：monitor 曾把会话 workDir 误判为"临时目录"——审查 LLM
+  // 看不到执行上下文，临时目录味的路径（opencode 凭据配置/影子 git）会带偏判断。
+  // 有 projectDir 才追加（可选参，旧调用行为不变）。
+  const dirAnchor = projectDir && projectDir.trim()
+    ? `
+工作目录说明：任务在会话的真实项目目录（${projectDir.trim()}）中执行，这是正式项目目录，不是临时目录；系统临时目录下的 agenthub-oc-*（opencode 凭据配置）与项目内的 .agenthub/shadow-git（影子 git 快照）是平台基础设施，不是任务产出，审查时忽略，只看项目目录内的文件变更。`
     : ''
 
   return `你是 Orchestrator，正在审查任务执行结果。
@@ -222,7 +230,7 @@ export function buildMonitoringPrompt(
 ${fileInfo}
 任务产出（前 500 字）：
 ${taskResult.slice(0, 500)}
-
+${dirAnchor}
 请判断：1.任务是否完成？2.产出质量是否合格？3.是否需要纠偏？
 
 返回 JSON：

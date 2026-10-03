@@ -117,7 +117,7 @@ const EMPTY_RESPONSE = '[Agent 未返回有效内容]'
  * 如果 Agent 凭证为空，尝试从 CC-Switch 读取当前 Provider
  */
 export async function getOrchestratorAgent(): Promise<{
-  platform: string; model: string; baseUrl: string; apiKey: string
+  platform: string; model: string; baseUrl: string; apiKey: string; id?: string
 }> {
   await ensureOrchestratorAgent()
 
@@ -127,10 +127,10 @@ export async function getOrchestratorAgent(): Promise<{
     if (!agent.apiKey) {
       const config = await getOrchestratorConfig()
       if (config.apiKey) {
-        return { platform: agent.platform, model: config.model, baseUrl: config.baseUrl, apiKey: config.apiKey }
+        return { platform: agent.platform, model: config.model, baseUrl: config.baseUrl, apiKey: config.apiKey, id: agent.id }
       }
     }
-    return { platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey }
+    return { platform: agent.platform, model: agent.model, baseUrl: agent.baseUrl, apiKey: agent.apiKey, id: agent.id }
   }
 
   // 极端 fallback：Agent 创建失败，退回 AppConfig

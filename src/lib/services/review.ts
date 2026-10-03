@@ -28,7 +28,7 @@ export async function reviewResult(
     return { quality: 'poor' }
   }
   try {
-    const monitoringPrompt = buildMonitoringPrompt(taskDescription, result, [], { declared: [], undeclared: [] }, 'single')
+    const monitoringPrompt = buildMonitoringPrompt(taskDescription, result, [], { declared: [], undeclared: [] }, 'single', retryContext?.projectDir)
     const orch = await getOrchestratorAgent()
     const { result: reviewOutput } = await executeSingleAgent(
       {
@@ -41,6 +41,7 @@ export async function reviewResult(
         sessionId: orchSessionId,
         workDir: retryContext?.projectDir,
         permissionMode: 'auto',
+        id: orch.id,
       },
       monitoringPrompt,
       '',

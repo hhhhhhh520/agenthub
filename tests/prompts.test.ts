@@ -153,6 +153,26 @@ describe('buildMonitoringPrompt', () => {
     expect(prompt).toContain('"quality"')
     expect(prompt).toContain('"needsCorrection"')
   })
+
+  it('projectDir 透传 → 追加 workDir 语义锚点（误判"临时目录"回归守卫）', () => {
+    const prompt = buildMonitoringPrompt('task', 'result', [], { declared: [], undeclared: [] }, 'batch', 'D:\\proj\\todo-app')
+    expect(prompt).toContain('D:\\proj\\todo-app')
+    expect(prompt).toContain('不是临时目录')
+    // 基础设施路径点名忽略（opencode 凭据配置 + 影子 git）
+    expect(prompt).toContain('agenthub-oc-*')
+    expect(prompt).toContain('shadow-git')
+  })
+
+  it('projectDir 缺省 → 无锚点（旧调用行为不变）', () => {
+    const prompt = buildMonitoringPrompt('task', 'result', [], { declared: [], undeclared: [] })
+    expect(prompt).not.toContain('工作目录说明')
+    expect(prompt).not.toContain('不是临时目录')
+  })
+
+  it('projectDir 空白 → 无锚点', () => {
+    const prompt = buildMonitoringPrompt('task', 'result', [], { declared: [], undeclared: [] }, 'single', '   ')
+    expect(prompt).not.toContain('工作目录说明')
+  })
 })
 
 describe('buildDiscussionPrompt', () => {
