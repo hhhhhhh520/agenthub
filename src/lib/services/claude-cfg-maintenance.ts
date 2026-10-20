@@ -35,7 +35,7 @@ function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[]): string[] {
   try {
     for (const e of readdirSync(tmpdir(), { withFileTypes: true })) {
       if (!e.isDirectory() || !e.name.startsWith('agenthub-oc-')) continue
-      if (active.has(e.name.slice('agenthub-oc-'.length))) continue
+      if (active.has(e.name)) continue
       rmSync(join(tmpdir(), e.name), { recursive: true })
       out.push(e.name)
     }
