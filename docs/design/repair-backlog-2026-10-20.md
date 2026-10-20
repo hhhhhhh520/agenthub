@@ -1,8 +1,8 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`be969e0`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`120 files / 1389 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`0dd751a`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`121 files / 1396 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 当前代码复核
 
@@ -33,6 +33,7 @@
 | `4774de6` | 双维度权限模型 + CLI 探针 | Claude `--tools` 可用性 + default 审批；OpenCode agent frontmatter tools/permission；default 只读 |
 | `ca020b8` | OpenCode 配置清扫前缀 hotfix | active 集合按完整目录名比较，不再误删活跃目录 |
 | `be969e0` | 任务结果发布门禁 | completed CAS 成功后才写 `allResults`；纠偏退回 pending 删除旧结果 |
+| `0dd751a` | 审计内容证据 | `GitEvidence` 按内容 hash + key 存在性比较；覆盖已脏同路径再改、忽略 `.env`、删除；失败仍 `unavailable` |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -48,11 +49,12 @@
 
 ---
 
-## 2. P1 待修（必须先做）
+## 2. P1（P1-01 已修；P1-02/03 待修）
 
-### P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
+### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
-**旧编号：** 原 36 项 #2（部分修）
+**状态：** ✅ 已修（commit `0dd751a`，2026-10-20）。保留本节作为验收记录；后续 P1 从 P1-02 开始。
+**旧编号：** 原 36 项 #2（原“部分修”，现已闭环）
 **位置：**
 - `src/lib/services/shadow-git.ts:111` `getGitSnapshotDetailed`
 - `src/lib/services/shadow-git.ts:116` `git diff --name-only HEAD`
@@ -277,13 +279,12 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 4. 旧 36 项未闭环映射
 
-> 已修/已关闭：#1 越界自动删除、#4 OpenCode 默认权限、#7 删除停止 CLI、#11 锁、#20 timeout cleanup、#35 Tailwind 动态色。
-> **注意：** 原 36 项 #2 是“审计漏报/失效放行”，仍未闭环，见 P1-01；质量复核报告里的第 2 项是“completed CAS 后成功摘要”，已由 `be969e0` 修复，两者编号相同但内容不同。
+> 已修/已关闭：#1 越界自动删除、#2 审计内容证据（`0dd751a`）、#4 OpenCode 默认权限、#7 删除停止 CLI、#11 锁、#20 timeout cleanup、#35 Tailwind 动态色。
+> **注意：** 原 36 项 #2 是“审计漏报/失效放行”，已由 P1-01/`0dd751a` 闭环；质量复核报告里的第 2 项是“completed CAS 后成功摘要”，已由 `be969e0` 修复，两者编号相同但内容不同。
 > 下表的“部分”表示主要风险已缓解但仍有明确缺口。
 
 | 旧# | 状态 | 位置 | 缺口 / 最小动作 |
 |---|---|---|---|
-| 2 | 部分 | `shadow-git.ts` | 见 P1-01：路径差集漏掉已脏路径再次修改/忽略 .env |
 | 3 | 未修 | API 路由 / README | 无认证；README 已明确仅本机。若产品化/暴露局域网，必须加 Bearer/token |
 | 5 | 部分 | `sessions/route.ts:22`、`[id]/route.ts:71` | API 未校验 `permissionMode ∈ {default,auto}`；CLI 已固定 default，不能绕过，但非法值会静默按 default |
 | 6 | 未修 | `permission/route.ts:22` | 只查 session 存在，未校验 requestId 所属 session；改为按 key/owner 校验 |
@@ -311,7 +312,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1389 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1396 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -343,18 +344,17 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 6. 建议执行顺序
 
-1. **P1-01 审计内容证据**（最高优先，已有真实复现）
-2. **P1-02 主批次 tools 透传**（安全边界）
-3. **P1-03 OpenCode 权限文件会话隔离**（安全边界）
-4. **P2-05 Claude MDS 隔离**（小改动，安全）
-5. **P2-01 timeout iterator 收尾**
-6. **P2-02 regenerate chatSessionId**
-7. **P2-03 stop/delete 生命周期**
-8. **P2-04 恢复计划审批关联**
-9. **P2-06/07 HTTP cancel/旧快照**
-10. **P2-08/09 进程树/Agent 创建取消**
-11. **P2-10/11/12 提示/清扫/事件**
-12. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+1. **P1-02 主批次 tools 透传**（安全边界）
+2. **P1-03 OpenCode 权限文件会话隔离**（安全边界）
+3. **P2-05 Claude MDS 隔离**（小改动，安全）
+4. **P2-01 timeout iterator 收尾**
+5. **P2-02 regenerate chatSessionId**
+6. **P2-03 stop/delete 生命周期**
+7. **P2-04 恢复计划审批关联**
+8. **P2-06/07 HTTP cancel/旧快照**
+9. **P2-08/09 进程树/Agent 创建取消**
+10. **P2-10/11/12 提示/清扫/事件**
+11. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -376,7 +376,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `120 files / 1389 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `121 files / 1396 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -403,5 +403,5 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - 取消/退出/清理、执行恢复、批次审计、双维度权限：仍有实质缺口。
-- 最危险的剩余项是：**审计内容漏检、主批次丢工具白名单、OpenCode 权限文件跨会话覆盖**。
-- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）仍在 P1-01。
+- 最危险的剩余项是：**主批次丢工具白名单、OpenCode 权限文件跨会话覆盖**（审计内容漏检已由 `0dd751a` 闭环）。
+- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a` 修复。

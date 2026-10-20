@@ -263,6 +263,7 @@
 | OpenCode 配置清扫前缀 bug hotfix（commit ca020b8） | 根因：`sweepOrphanOpencodeXdgDirs` 的 active 集合存完整目录名 `agenthub-oc-<hash>`，旧比较先 `slice('agenthub-oc-'.length)` 成 `<hash>`，永远匹配不上 → 启动/agents 列表 sweep 会把所有活跃 OpenCode 配置目录当孤儿删除。修复：`active.has(e.name)` 直接比较完整目录名。新增隔离 tmpdir 回归测试（active 含/不含哨兵目录保留、孤儿删除、非 agenthub 目录不动）；变异验证恢复 slice 精确红后还原；全量 120 files / 1388 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 任务结果发布门禁修复（commit be969e0） | 根因：`allResults` 在 completed 条件写/CAS 之前写入，count=0（任务被 GET reset 或其他流转移）后仍进入最终成功摘要与后续批次入参。修复：只有 completed 条件写成功后才 `allResults.set`；纠偏退回 pending 时 `allResults.delete`，避免重试失败/取消后仍发布旧结果。新增回归：B2 条件写拒绝不得出现「任务完成：R」摘要；结构化纠偏后重试失败不得发布旧结果；正常 CAS 成功仍保留成功摘要。变异验证删除纠偏清理精确红后还原；全量 120 files / 1389 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
 | 修复待办总表落档（`docs/design/repair-backlog-2026-10-20.md`） | 汇总原始 36 项 + 2026-10-20 质量复核的全部未闭环项：P1 审计内容证据/主批次 tools 透传/OpenCode 权限文件会话隔离；P2 timeout iterator、regenerate 归属、stop/delete 生命周期、恢复计划审批、Claude MDS、HTTP body cancel、拿锁旧快照、进程树、Agent 创建取消、私聊提示、清扫护栏、事件 seq/SSE；附旧 36 项状态映射、接受风险、执行顺序、复现材料与验证模板。 | 2026-10-20 |
+| 批次审计内容证据修复（commit 0dd751a） | 根因：`shadow-git` 只用脏路径 Set，批次前已脏的同一路径再次修改、被 `.gitignore` 忽略的 `.env`、删除都不会进入 `after - before` 差集。新增 `GitEvidence`（路径 → sha256/null）：快照覆盖 tracked dirty、untracked、ignored 敏感文件；审计传 Map 按“内容 hash + key 是否存在”比较，读取失败仍返回 `unavailable`。新增真实临时 Git 回归：已脏 `package.json` 再改、忽略 `.env`、删除、无变化、审计 violation，以及 execution 接线守卫。全量 121 files / 1396 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
