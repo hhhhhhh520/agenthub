@@ -560,7 +560,6 @@ export async function handleExecution(
       // P0 重放 bug 修复: 跳过 executeTaskBatch 预装的历史任务(非本批新执行)。
       // 旧代码无此守卫,对已完成任务也重走完整 success 处理(见上方 preloadedIds 注释)
       if (preloadedIds.has(taskId)) continue
-      allResults.set(taskId, result)
       const taskForTrace = tasks.find(t => t.id === taskId)
 
       // 批次级归责：敏感路径已在批次审计统一处理；这里只保留本任务声明范围，
@@ -611,6 +610,9 @@ export async function handleExecution(
         if (taskForTrace) await syncTaskStatusFromDb(taskForTrace)
         continue
       }
+      // 只有 completed 条件写成功后才发布到权威结果 Map：count=0 的结果不得进入
+      // 后续批次入参、完成摘要或 done 帧。
+      allResults.set(taskId, result)
       if (taskForTrace) taskForTrace.result = result
       // 内存 trace 同步（对齐失败路径 :323 先例）——completed 写携带 successTrace 落库，
       // 不同步会让后续 monitor 埋点/纠偏以过期内存 trace 为基串，覆盖丢失 success 事件（审查抓出）
@@ -698,6 +700,9 @@ export async function handleExecution(
             console.warn(`[execution] 任务 ${taskId} 纠偏退回被条件写拦下（状态已被其他写者转移），弃权`)
             if (task) await syncTaskStatusFromDb(task)
           } else {
+            // 纠偏把任务退回 pending 后，原先的完成结果不再是权威交付物；
+            // 从 allResults 移除，避免重试失败/取消时摘要仍发布旧结果。
+            allResults.delete(taskId)
             if (agentId) memberSessionMap.set(agentId, null)
             if (task) { task.status = 'pending'; task.correctionCount = retryCount + 1; task.trace = correctionTrace; task.cliSessionId = null }
             sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'pending', retryCount: retryCount + 1 }) })

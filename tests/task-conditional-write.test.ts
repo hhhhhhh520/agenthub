@@ -165,6 +165,8 @@ describe('Task 批次状态条件写（§3.2 B1-B7）', () => {
     )
     expect(markCall).toBeTruthy()
     expect(markCall![0].where).toEqual({ id: 'task-1', status: 'pending' })
+    // CAS 成功后仍须发布结果到成功摘要（防止修复“拒绝时不发布”时误伤正常路径）
+    expect(sendEvent.mock.calls.some(([event]) => event.type === 'done' && event.content.includes('任务完成：R'))).toBe(true)
   })
 
   it('B2 完成弃权：completed 条件写 count=0（任务已被 GET reset 置回 pending）→ 不写 result/member，不触发 monitoring', async () => {
@@ -194,10 +196,46 @@ describe('Task 批次状态条件写（§3.2 B1-B7）', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('task-1'))
     // 内存同步到 DB 真值
     expect(task.status).toBe('pending')
+    // 条件写被拒后不得把本次结果发布到成功摘要（allResults 只能在 CAS 成功后写入）
+    expect(sendEvent.mock.calls.some(([event]) => event.type === 'done' && event.content.includes('任务完成：R'))).toBe(false)
     // completed 写必须带 status:'in_progress' 前置条件（变异锚点：去掉条件必红）
     const completedWrite = mocks.mockTaskUpdateMany.mock.calls.find(c => c[0].data?.status === 'completed')
     expect(completedWrite).toBeTruthy()
     expect(completedWrite![0].where).toEqual({ id: 'task-1', status: 'in_progress' })
+  })
+
+  it('B2 纠偏退回 pending 后：旧完成结果不得进入最终成功摘要', async () => {
+    const prevMonitor = process.env.EXPERIMENT_STRUCTURED_MONITOR
+    process.env.EXPERIMENT_STRUCTURED_MONITOR = 'on'
+    try {
+      const { handleExecution } = await import('@/lib/services/execution')
+      const task = makeTask()
+      mocks.mockTaskFindMany.mockResolvedValue([task])
+      mocks.mockTaskUpdateMany.mockResolvedValue({ count: 1 })
+      mocks.mockGetChangedFiles.mockReturnValue(['src/other.ts'])
+      mocks.mockTaskFindUnique.mockResolvedValue({ status: 'pending' })
+      // 第一次完成；结构化监控因声明文件未命中触发纠偏；第二次重试失败。
+      mocks.mockExecuteTaskBatch
+        .mockResolvedValueOnce({
+          results: new Map([['task-1', { result: '旧结果', sessionId: 'cli-1' }]]),
+          failedTaskIds: [],
+        })
+        .mockResolvedValueOnce({
+          results: new Map(),
+          failedTaskIds: ['task-1'],
+          failedTaskReasons: { 'task-1': '重试失败' },
+        })
+
+      const sendEvent = vi.fn()
+      await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+      expect(sendEvent.mock.calls.some(([event]) =>
+        event.type === 'done' && event.content.includes('任务完成：旧结果')
+      )).toBe(false)
+    } finally {
+      if (prevMonitor === undefined) delete process.env.EXPERIMENT_STRUCTURED_MONITOR
+      else process.env.EXPERIMENT_STRUCTURED_MONITOR = prevMonitor
+    }
   })
 
   it('B6 invalidateCliSession：expectedFrom 不匹配 → applied:false，条件写带 status 前置', async () => {
