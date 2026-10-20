@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   mockTaskCreate: vi.fn(),
   mockTaskUpdate: vi.fn(),
   mockTaskFindFirst: vi.fn(),
+  mockTaskCount: vi.fn().mockResolvedValue(1),
+  mockTransaction: vi.fn(),
+  mockTxTaskCreates: [] as string[],
   mockSessionUpdate: vi.fn(),
   mockSessionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockSessionFindUnique: vi.fn(),
@@ -23,7 +26,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst, update: mocks.mockTaskUpdate },
+    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst, update: mocks.mockTaskUpdate, count: mocks.mockTaskCount },
+    $transaction: mocks.mockTransaction,
     session: { update: mocks.mockSessionUpdate, updateMany: mocks.mockSessionUpdateMany, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findMany: mocks.mockSessionMemberFindMany, findUnique: mocks.mockSessionMemberFindUnique },
@@ -44,8 +48,25 @@ vi.mock('@/lib/services/execution', () => ({
   handleExecution: mocks.mockHandleExecution,
 }))
 
-import { transitionToExecution, handleArchitectPlan, isCodeTask, buildVerifyDescription, countConsecutiveReplans } from '@/lib/services/alignment'
+import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans } from '@/lib/services/alignment'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
+
+// 交互式事务 mock：把 tx.task.* 映射到同一组 task mock，既有断言无需改。
+mocks.mockTransaction.mockImplementation(async (fn: (tx: any) => Promise<any>) => fn({
+  task: {
+    create: (arg: any) => {
+      mocks.mockTxTaskCreates.push(arg.data.id)
+      return mocks.mockTaskCreate(arg)
+    },
+    findFirst: mocks.mockTaskFindFirst,
+    update: mocks.mockTaskUpdate,
+    findMany: mocks.mockTaskFindMany,
+  },
+}))
+
+beforeEach(() => {
+  mocks.mockTxTaskCreates.length = 0
+})
 
 describe('state-machine: phase guards（原 validateDecision，P1 迁移）', () => {
   it('对齐中提议 done 被纠正（align_pm->align_decompose / arch|qa->execute）', () => {
@@ -145,7 +166,7 @@ describe('transitionToExecution — task-empty fallback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.mockSessionUpdate.mockResolvedValue({})
-    mocks.mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
     mocks.mockHandleExecution.mockResolvedValue(undefined)
     // handleArchitectPlan 内部需要的 mock
     mocks.mockMessageFindMany.mockResolvedValue([])
@@ -248,6 +269,160 @@ describe('transitionToExecution — task-empty fallback', () => {
   })
 })
 
+// ── 执行恢复边界：任务已存在但 phase 未推进 ──
+describe('ensureExecutableState / transitionToExecution recovery', () => {
+  const agents = [
+    { id: 'a1', name: '前端工程师', systemPrompt: '', platform: 'claude-code', expertise: '前端', model: '', baseUrl: '', apiKey: '', tools: '' },
+  ]
+
+  const setupState = (phase: string, step: string) => {
+    let currentPhase = phase
+    let currentStep = step
+    mocks.mockSessionFindUnique.mockImplementation(async () => ({
+      phase: currentPhase,
+      phaseStep: currentStep,
+      decisionTrace: '[]',
+      projectDir: '',
+      permissionMode: 'default',
+    }))
+    mocks.mockSessionUpdateMany.mockImplementation(async (arg: any) => {
+      if (arg?.data && Object.hasOwn(arg.data, 'phase')) {
+        currentPhase = arg.data.phase
+        currentStep = arg.data.phaseStep ?? ''
+      }
+      return { count: 1 }
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
+    mocks.mockTaskFindMany.mockResolvedValue([{ id: 't1', description: 'task1' }])
+    mocks.mockTaskCount.mockResolvedValue(1)
+    mocks.mockHandleExecution.mockResolvedValue(undefined)
+    mocks.mockSendEvent.mockResolvedValue(undefined)
+  })
+
+  it('align_pm + 已有任务：沿 align_decompose → execute 恢复，不重新拆解/不建任务', async () => {
+    setupState('alignment', 'pm_confirm')
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '继续执行')
+
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toEqual([
+      { phase: 'alignment', phaseStep: 'architect_plan' },
+      { phase: 'execution', phaseStep: '' },
+    ])
+    expect(mocks.mockDecomposeTasks).not.toHaveBeenCalled()
+    expect(mocks.mockTaskCreate).not.toHaveBeenCalled()
+    expect(mocks.mockHandleExecution).toHaveBeenCalledTimes(1)
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition', content: 'execution' })
+    )
+  })
+
+  it.each([
+    ['alignment', 'architect_plan'],
+    ['alignment', 'agent_qa'],
+  ])('align_arch/align_qa (%s/%s) + 已有任务：一条 execute 边恢复', async (phase, step) => {
+    setupState(phase, step)
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toEqual({ ok: true, atExec: true })
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toEqual([{ phase: 'execution', phaseStep: '' }])
+  })
+
+  it('exec：no-op，不写 phase', async () => {
+    setupState('execution', '')
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toEqual({ ok: true, atExec: true })
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toHaveLength(0)
+  })
+
+  it('phase 恢复失败：报错并中止，不启动 handleExecution', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 0 }) // transitionPhase CAS 连续失败
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '继续执行')
+
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('执行状态恢复失败') })
+    )
+    expect(mocks.mockSendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition' })
+    )
+  })
+
+  it('未知 phase：fail-closed，不执行', async () => {
+    setupState('planning', '')
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result.ok).toBe(false)
+    expect(mocks.mockTaskCreate).not.toHaveBeenCalled()
+  })
+
+  it('任务已创建但 align_decompose 推进失败：返回 false，不继续发 plan/done', async () => {
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'doc-1', description: '写文档', assignedAgent: '前端工程师', dependencies: [], declaredFiles: ['README.md'], batch: 0 },
+    ])
+    mocks.mockTaskCreate.mockResolvedValue({})
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 0 })
+
+    const result = await handleArchitectPlan('写文档', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('进入对齐状态失败') })
+    )
+    expect(mocks.mockSendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition', content: 'alignment' })
+    )
+    expect(mocks.mockSendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: 'architect_plan' })
+    )
+  })
+
+  it('任务 + verify 创建失败：整段中止，不推进 phase，不发 plan/done', async () => {
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'alignment', phaseStep: 'pm_confirm', projectDir: '', permissionMode: 'default' })
+    mocks.mockTaskFindMany.mockResolvedValue([])
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'task-a', description: '任务 A', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+      { id: 'task-b', description: '任务 B', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+    ])
+    mocks.mockTaskCreate
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error('db down'))
+
+    const result = await handleArchitectPlan('做个网站', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(false)
+    expect(mocks.mockSessionUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { phase: 'alignment', phaseStep: 'architect_plan' } })
+    )
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('任务创建失败') })
+    )
+    expect(mocks.mockSendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'done', content: 'plan summary' })
+    )
+  })
+})
+
 // ── replan 硬停：连续拆解失败封顶，不再无限烧 LLM ──
 // 上限字面量 3 与实现常量同值但不引用——改动上限数字时测试必须变红。
 describe('replan 硬停（连续失败封顶转人工）', () => {
@@ -264,7 +439,7 @@ describe('replan 硬停（连续失败封顶转人工）', () => {
     mocks.mockMessageCreate.mockResolvedValue({})
     // clearAllMocks 不清实现：把行为 mock 全部显式覆盖默认，防止前面用例的残留实现污染
     mocks.mockDecomposeTasks.mockResolvedValue([])
-    mocks.mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
     mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
     mocks.mockTaskFindFirst.mockResolvedValue(null)
     mocks.mockTaskCreate.mockResolvedValue({})
@@ -354,9 +529,11 @@ describe('ISSUE-008 — 自动创建验证任务', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
     mocks.mockMessageFindMany.mockResolvedValue([])
     mocks.mockTaskCreate.mockResolvedValue({})
     mocks.mockTaskFindFirst.mockResolvedValue(null)
+    mocks.mockTaskCount.mockResolvedValue(1)
   })
 
   it('代码任务拆解 → 自动创建 verify 任务(依赖代码任务/declaredFiles 空/分配给测试工程师)', async () => {
@@ -374,6 +551,8 @@ describe('ISSUE-008 — 自动创建验证任务', () => {
     expect(data.declaredFiles).toBe('[]')
     expect(data.assignedAgentId).toBe('a3')
     expect(data.status).toBe('pending')
+    // verify 必须在同一个交互式事务内创建（tx.task.create 包装器记录）
+    expect(mocks.mockTxTaskCreates.some(id => id.startsWith('verify-'))).toBe(true)
     expect(mocks.mockSendEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'text', content: expect.stringContaining('已自动创建验证任务') })
     )
@@ -458,11 +637,13 @@ describe('多轮对齐 verify 条件式', () => {
   const setup = () => {
     vi.clearAllMocks()
     mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
     mocks.mockMessageFindMany.mockResolvedValue([])
     mocks.mockMessageCreate.mockResolvedValue({})
     mocks.mockTaskCreate.mockResolvedValue({})
     mocks.mockTaskUpdate.mockResolvedValue({})
     mocks.mockTaskFindMany.mockResolvedValue([oldCodeTask])
+    mocks.mockTaskCount.mockResolvedValue(1)
     mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
   }
 

@@ -30,7 +30,10 @@ const mocks = vi.hoisted(() => ({
   mockTaskFindMany: vi.fn(),
   mockTaskCreate: vi.fn(),
   mockTaskFindFirst: vi.fn(),
+  mockTaskUpdate: vi.fn(),
+  mockTransaction: vi.fn(),
   mockSessionUpdate: vi.fn(),
+  mockSessionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockSessionFindUnique: vi.fn(),
   mockMessageFindMany: vi.fn().mockResolvedValue([]),
   mockMessageCreate: vi.fn(),
@@ -44,8 +47,9 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => ({
   prisma: {
-    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst },
-    session: { update: mocks.mockSessionUpdate, findUnique: mocks.mockSessionFindUnique },
+    task: { findMany: mocks.mockTaskFindMany, create: mocks.mockTaskCreate, findFirst: mocks.mockTaskFindFirst, update: mocks.mockTaskUpdate },
+    $transaction: mocks.mockTransaction,
+    session: { update: mocks.mockSessionUpdate, updateMany: mocks.mockSessionUpdateMany, findUnique: mocks.mockSessionFindUnique },
     message: { findMany: mocks.mockMessageFindMany, create: mocks.mockMessageCreate },
     sessionMember: { findUnique: mocks.mockSessionMemberFindUnique },
   },
@@ -64,6 +68,15 @@ vi.mock('@/lib/orchestrator', async () => {
 
 import { handleArchitectPlan } from '@/lib/services/alignment'
 
+mocks.mockTransaction.mockImplementation(async (fn: (tx: any) => Promise<any>) => fn({
+  task: {
+    create: mocks.mockTaskCreate,
+    findFirst: mocks.mockTaskFindFirst,
+    update: mocks.mockTaskUpdate,
+    findMany: mocks.mockTaskFindMany,
+  },
+}))
+
 describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () => {
   const archAgent = {
     id: 'arch1', name: '架构师', systemPrompt: '', platform: 'claude-code',
@@ -73,7 +86,7 @@ describe('contract v1 §1.2 a: handleArchitectPlan 持久化 outputSchema', () =
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '建一个登录页' }])
-    mocks.mockSessionFindUnique.mockResolvedValue({ projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
     mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
     mocks.mockSessionUpdate.mockResolvedValue({})
     mocks.mockMessageCreate.mockResolvedValue({})

@@ -6,7 +6,7 @@ import { topologicalSort, type ScheduledTask } from '@/lib/orchestrator/schedule
 import { handleExecution } from './execution'
 import type { SendEvent } from './review'
 import type { AgentConfig } from '@/lib/adapter/types'
-import { transitionPhase } from '@/lib/orchestrator/state-machine'
+import { stateFromSession, transitionPhase } from '@/lib/orchestrator/state-machine'
 import { isSessionCancelled } from '@/lib/cancellation'
 
 function sendStopped(sendEvent: SendEvent) {
@@ -276,21 +276,6 @@ export async function handleArchitectPlan(
   }
 
   const agentNameToId = new Map(agents.map(a => [a.name, a.id]))
-  for (const task of scheduledTasks) {
-    await prisma.task.create({
-      data: {
-        id: task.id,
-        description: task.description,
-        status: 'pending',
-        assignedAgentId: agentNameToId.get(task.assignedAgent) || null,
-        sessionId,
-        dependencies: JSON.stringify(task.dependencies),
-        declaredFiles: JSON.stringify(task.declaredFiles),
-        outputSchema: task.outputSchema ?? null,
-      },
-    })
-  }
-
   // ISSUE-008: 执行层强制 verify —— LLM 倾向直接 done 而非 verify,仅靠 prompt 无法改变决策。
   // 拆解出代码任务时自动追加验证任务:依赖全部代码任务,经既有依赖就绪门控在代码完成后自动执行
   // (handleExecution readyTasks 要求 deps 全 completed,verify 自然排在代码任务之后)。
@@ -299,50 +284,87 @@ export async function handleArchitectPlan(
   // 多轮对齐条件式：老 verify 仍 pending → 把本轮新代码并入其依赖（去重）；已终结/执行中 →
   // 新建本轮 verify（往终结任务上追加等于漏检）。无新任务时静默无操作。
   const codeTasks = scheduledTasks.filter(t => isCodeTask(t) && !t.id.startsWith('verify-'))
-  // P6 T7: verify 维度实验开关——EXPERIMENT_VERIFY=off 只关自动创建(实验 harness),生产默认未设零影响。
-  // done 守卫(chat-router.ts:127)天然正交:OFF 下已跳过,ON+no-verify 无 verify 可查。
-  if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {
-    const existingVerify = await prisma.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } } })
-    const verifyAgent = agents.find(a => a.name.includes('测试'))
-    const createVerify = (tasks: ScheduledTask[]) =>
-      prisma.task.create({
-        data: {
-          id: `verify-${crypto.randomUUID()}`,
-          description: buildVerifyDescription(tasks),
-          status: 'pending',
-          // 优先测试工程师;无则 null,executeTaskBatch 的 findBestAgent 会按"验证/测试"关键词匹配,最终兜底到其他 agent
-          assignedAgentId: verifyAgent?.id ?? null,
-          sessionId,
-          dependencies: JSON.stringify(tasks.map(t => t.id)),
-          // 验证任务不产生文件,跳过文件校验(不误报越界);代码任务结果经 <dependency> 块注入
-          declaredFiles: '[]',
-        },
-      })
-    if (!existingVerify) {
-      await createVerify(codeTasks)
-      sendEvent({ agentId: 'orchestrator', type: 'text', content: `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物` })
-    } else if (existingVerify.status === 'pending') {
-      const oldDeps: string[] = JSON.parse(existingVerify.dependencies || '[]')
-      const fresh = codeTasks.filter(t => !oldDeps.includes(t.id))
-      if (fresh.length > 0) {
-        const oldTasks = await prisma.task.findMany({ where: { id: { in: oldDeps } } })
-        const covered = [
-          ...oldTasks.map(t => ({ description: t.description, declaredFiles: JSON.parse(t.declaredFiles || '[]') as string[] })),
-          ...fresh,
-        ]
-        await prisma.task.update({
-          where: { id: existingVerify.id },
+  const verifyAgent = agents.find(a => a.name.includes('测试'))
+  let verifyNotice: string | null = null
+
+  // 任务 + verify 必须同事务：中途失败要么全建、要么全不建，避免半套任务
+  // （缺 verify 会让代码任务直接收尾，缺任务会让 phase 与任务板不一致）。
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const task of scheduledTasks) {
+        await tx.task.create({
           data: {
-            dependencies: JSON.stringify([...oldDeps, ...fresh.map(t => t.id)]),
-            description: buildVerifyDescription(covered),
+            id: task.id,
+            description: task.description,
+            status: 'pending',
+            assignedAgentId: agentNameToId.get(task.assignedAgent) || null,
+            sessionId,
+            dependencies: JSON.stringify(task.dependencies),
+            declaredFiles: JSON.stringify(task.declaredFiles),
+            outputSchema: task.outputSchema ?? null,
           },
         })
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `验证任务已扩展：新增 ${fresh.length} 个代码任务纳入验证` })
       }
-    } else {
-      await createVerify(codeTasks)
-      sendEvent({ agentId: 'orchestrator', type: 'text', content: `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物` })
+
+      // P6 T7: verify 维度实验开关——EXPERIMENT_VERIFY=off 只关自动创建(实验 harness),生产默认未设零影响。
+      // done 守卫(chat-router.ts:127)天然正交:OFF 下已跳过,ON+no-verify 无 verify 可查。
+      if (codeTasks.length > 0 && process.env.EXPERIMENT_VERIFY !== 'off') {
+        const existingVerify = await tx.task.findFirst({ where: { sessionId, id: { startsWith: 'verify-' } } })
+        const createVerify = (tasks: ScheduledTask[]) =>
+          tx.task.create({
+            data: {
+              id: `verify-${crypto.randomUUID()}`,
+              description: buildVerifyDescription(tasks),
+              status: 'pending',
+              // 优先测试工程师;无则 null,executeTaskBatch 的 findBestAgent 会按"验证/测试"关键词匹配,最终兜底到其他 agent
+              assignedAgentId: verifyAgent?.id ?? null,
+              sessionId,
+              dependencies: JSON.stringify(tasks.map(t => t.id)),
+              // 验证任务不产生文件,跳过文件校验(不误报越界);代码任务结果经 <dependency> 块注入
+              declaredFiles: '[]',
+            },
+          })
+        if (!existingVerify) {
+          await createVerify(codeTasks)
+          verifyNotice = `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物`
+        } else if (existingVerify.status === 'pending') {
+          const oldDeps: string[] = JSON.parse(existingVerify.dependencies || '[]')
+          const fresh = codeTasks.filter(t => !oldDeps.includes(t.id))
+          if (fresh.length > 0) {
+            const oldTasks = await tx.task.findMany({ where: { id: { in: oldDeps } } })
+            const covered = [
+              ...oldTasks.map(t => ({ description: t.description, declaredFiles: JSON.parse(t.declaredFiles || '[]') as string[] })),
+              ...fresh,
+            ]
+            await tx.task.update({
+              where: { id: existingVerify.id },
+              data: {
+                dependencies: JSON.stringify([...oldDeps, ...fresh.map(t => t.id)]),
+                description: buildVerifyDescription(covered),
+              },
+            })
+            verifyNotice = `验证任务已扩展：新增 ${fresh.length} 个代码任务纳入验证`
+          }
+        } else {
+          await createVerify(codeTasks)
+          verifyNotice = `已自动创建验证任务：将验证 ${codeTasks.length} 个代码任务的产出物`
+        }
+      }
+    })
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    const msg = `任务创建失败，未进入执行：${reason}`
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+    } catch {
+      // 错误提示落库失败不掩盖原始错误；至少保证 SSE 可见。
     }
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+    return false
+  }
+
+  if (verifyNotice) {
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: verifyNotice })
   }
 
   // 任务已落库但取消发生在创建过程中：不推进 phase，返回 false；任务保留，
@@ -354,8 +376,20 @@ export async function handleArchitectPlan(
 
   // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
   // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
-  // P4 T1: recordTrace 默认 true(代码驱动补拆补记),LLM 决策路径由 chat-router 传 false
-  await transitionPhase(sessionId, 'align_decompose', { recordTrace: opts?.recordTrace ?? true })
+  // P4 T1: recordTrace 默认 true(代码驱动补拆补记),LLM 决策路径由 chat-router 传 false。
+  // 失败必须显式返回 false：任务已落库但 phase 未推进，交给 ensureExecutableState 恢复，
+  // 绝不能继续发 plan/done（否则用户以为拆解成功，实际 phase 仍停在旧态）。
+  const phaseRes = await transitionPhase(sessionId, 'align_decompose', { recordTrace: opts?.recordTrace ?? true })
+  if (!phaseRes.ok) {
+    const msg = `任务已创建，但进入对齐状态失败：${phaseRes.reason ?? '未知错误'}，请重试执行。`
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+    } catch {
+      // 提示落库失败不掩盖 phase 失败；至少保证 SSE 可见。
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+    return false
+  }
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const planSummary = formatArchitectPlan(scheduledTasks, agents)
@@ -460,6 +494,63 @@ export async function handleAgentQA(
   }
 }
 
+export type EnsureExecutableStateResult =
+  | { ok: true; atExec: boolean }
+  | { ok: false; reason: string }
+
+/**
+ * 执行恢复边界：任务已落库但 phase 未推进（拆解后崩溃/phase 写失败）时，
+ * 沿转移表合法边把会话恢复到 exec；不重新拆解、不重复建任务。
+ *
+ * - align_pm → align_decompose(align_arch) → execute(exec)
+ * - align_arch / align_qa → execute(exec)
+ * - exec → no-op
+ * - idle / done → 交由调用方执行合法 execute（本函数不写 phase）
+ *
+ * 每一步 transitionPhase 都检查返回值；任一步失败立即返回错误，绝不继续发 done。
+ */
+export async function ensureExecutableState(
+  sessionId: string,
+  opts?: { recordExecuteTrace?: boolean },
+): Promise<EnsureExecutableStateResult> {
+  const [session, taskCount] = await Promise.all([
+    prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true } }),
+    prisma.task.count({ where: { sessionId } }),
+  ])
+  if (!session) return { ok: false, reason: '会话不存在' }
+  if (taskCount === 0) return { ok: false, reason: '没有可执行任务' }
+
+  const rawStep = session.phaseStep ?? ''
+  const knownPhase = session.phase === 'idle'
+    || session.phase === 'execution'
+    || session.phase === 'done'
+    || (session.phase === 'alignment' && ['pm_confirm', 'architect_plan', 'agent_qa'].includes(rawStep))
+  if (!knownPhase) {
+    return { ok: false, reason: `会话 phase 异常（${session.phase}/${rawStep || '空'}），拒绝恢复执行` }
+  }
+
+  const state = stateFromSession(session.phase, rawStep)
+  if (state === 'exec') return { ok: true, atExec: true }
+
+  if (state === 'align_pm') {
+    const decompose = await transitionPhase(sessionId, 'align_decompose', { recordTrace: true })
+    if (!decompose.ok) {
+      return { ok: false, reason: `恢复 align_decompose 失败：${decompose.reason ?? '未知错误'}` }
+    }
+  }
+
+  if (state === 'align_pm' || state === 'align_arch' || state === 'align_qa') {
+    const execute = await transitionPhase(sessionId, 'execute', { recordTrace: opts?.recordExecuteTrace ?? true })
+    if (!execute.ok) {
+      return { ok: false, reason: `恢复 execute 失败：${execute.reason ?? '未知错误'}` }
+    }
+    return { ok: true, atExec: true }
+  }
+
+  if (state === 'idle' || state === 'done') return { ok: true, atExec: false }
+  return { ok: false, reason: `当前状态 ${state} 不支持恢复执行` }
+}
+
 export async function transitionToExecution(
   sessionId: string,
   agents: AgentConfig[],
@@ -477,6 +568,7 @@ export async function transitionToExecution(
   // 顺序关键：不能先写 exec 再补拆（会写回 align_arch，执行期间 phase 停在对齐态、
   // allDone 时 align_arch+done 在转移表非法、fail-closed 拒绝写 done）。先补拆到 align_arch，再 execute -> exec 是合法转移。
   const existingTasks = await prisma.task.findMany({ where: { sessionId } })
+  let atExec = false
   if (existingTasks.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'status', content: '任务列表为空，正在自动拆解...' })
     // P2 待办④: 补拆 0 任务(handleArchitectPlan 返回 false)则中止,不进 execute 空跑 handleExecution
@@ -486,6 +578,18 @@ export async function transitionToExecution(
     // "决策点已记 execute + 补拆补记 align_decompose"的转移分歧 + 缺 align_arch→exec 边,禁止打破此前提。
     const ok = await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
     if (!ok) return
+  } else {
+    // 执行恢复边界：任务已存在但 phase 可能停在 align_pm/align_arch/align_qa（拆解后崩溃或
+    // phase 写失败）。先沿合法边恢复到 exec，避免直接 execute 被转移表 fail-closed 拒绝后
+    // 仍继续 handleExecution（phase 与执行脱节、allDone→done 也写不进去）。
+    const ensured = await ensureExecutableState(sessionId, { recordExecuteTrace: opts?.recordExecuteTrace })
+    if (!ensured.ok) {
+      const msg = `执行状态恢复失败：${ensured.reason}，本次未启动执行。`
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+      sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
+      return
+    }
+    atExec = ensured.atExec
   }
 
   if (isSessionCancelled(sessionId)) {
@@ -493,8 +597,16 @@ export async function transitionToExecution(
     return
   }
 
-  // P4 T1: recordTrace 默认 true(代码驱动补记);LLM 决策路径(chat-router 'execute')显式传 false 防双记
-  await transitionPhase(sessionId, 'execute', { recordTrace: opts?.recordExecuteTrace ?? true })
+  if (!atExec) {
+    // P4 T1: recordTrace 默认 true(代码驱动补记);LLM 决策路径(chat-router 'execute')显式传 false 防双记
+    const phaseRes = await transitionPhase(sessionId, 'execute', { recordTrace: opts?.recordExecuteTrace ?? true })
+    if (!phaseRes.ok) {
+      const msg = `进入执行状态失败：${phaseRes.reason ?? '未知错误'}，本次未启动执行。`
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+      sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
+      return
+    }
+  }
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'execution' })
 
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: '' })
