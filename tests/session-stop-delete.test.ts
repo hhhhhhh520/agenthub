@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { clearSessionDeleting, isSessionDeleting } from '@/lib/session-lifecycle'
 
 const mocks = vi.hoisted(() => ({
   sessionFindUnique: vi.fn(),
@@ -49,8 +50,23 @@ function req() {
   return new Request('http://localhost/api/sessions/s1', { method: 'DELETE' })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitUntil timeout')
+    await new Promise(r => setTimeout(r, 5))
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  clearSessionDeleting('s1')
   mocks.sessionFindUnique.mockResolvedValue({ projectDir: '/tmp/project' })
   mocks.sessionDelete.mockResolvedValue({})
   mocks.attachmentFindMany.mockResolvedValue([])
@@ -75,6 +91,46 @@ describe('DELETE /api/sessions/[id] — 取消 → 退出 → 锁释放 → 删�
     expect(order(mocks.cancelByOwnerSession)).toBeLessThan(order(mocks.waitForSessionUnlock))
     expect(order(mocks.waitForSessionUnlock)).toBeLessThan(order(mocks.sessionDelete))
     expect(order(mocks.sessionDelete)).toBeLessThan(order(mocks.clearSessionCancel))
+    expect(isSessionDeleting('s1')).toBe(false)
+  })
+
+  it('P2-03: DELETE 清理窗口内并发 stop 不清取消标记', async () => {
+    const gate = deferred<void>()
+    mocks.attachmentFindMany.mockImplementationOnce(async () => {
+      await gate.promise
+      return []
+    })
+
+    const deleting = DELETE(req(), params)
+    await waitUntil(() => mocks.attachmentFindMany.mock.calls.length > 0)
+    expect(isSessionDeleting('s1')).toBe(true)
+
+    const stopRes = await stopPOST(new Request('http://localhost', { method: 'POST' }), params)
+    expect(stopRes.status).toBe(202)
+    expect(await stopRes.json()).toMatchObject({ stopped: false, deleting: true })
+    expect(mocks.clearSessionCancel).not.toHaveBeenCalled()
+
+    gate.resolve()
+    const res = await deleting
+    expect(res.status).toBe(200)
+    expect(isSessionDeleting('s1')).toBe(false)
+  })
+
+  it('P2-03: deleting 保持到 DB 删除完成', async () => {
+    const gate = deferred<void>()
+    mocks.sessionDelete.mockImplementationOnce(async () => {
+      await gate.promise
+      return {}
+    })
+
+    const deleting = DELETE(req(), params)
+    await waitUntil(() => mocks.sessionDelete.mock.calls.length > 0)
+    expect(isSessionDeleting('s1')).toBe(true)
+
+    gate.resolve()
+    const res = await deleting
+    expect(res.status).toBe(200)
+    expect(isSessionDeleting('s1')).toBe(false)
   })
 
   it('进程未确认退出 → 409，不删 DB、不清取消标记', async () => {
@@ -86,6 +142,7 @@ describe('DELETE /api/sessions/[id] — 取消 → 退出 → 锁释放 → 删�
     expect(await res.json()).toMatchObject({ unconfirmed: ['key-1'] })
     expect(mocks.sessionDelete).not.toHaveBeenCalled()
     expect(mocks.clearSessionCancel).not.toHaveBeenCalled()
+    expect(isSessionDeleting('s1')).toBe(false)
   })
 
   it('业务锁未释放 → 409，不删 DB', async () => {
@@ -96,6 +153,28 @@ describe('DELETE /api/sessions/[id] — 取消 → 退出 → 锁释放 → 删�
     expect(res.status).toBe(409)
     expect(mocks.sessionDelete).not.toHaveBeenCalled()
     expect(mocks.clearSessionCancel).not.toHaveBeenCalled()
+    expect(isSessionDeleting('s1')).toBe(false)
+  })
+
+  it('P2-03: DELETE 失败路径清理 deleting 标记，允许重试', async () => {
+    const gate = deferred<void>()
+    mocks.cancelByOwnerSession.mockImplementationOnce(async () => {
+      await gate.promise
+      return { total: 1, exited: 0, unconfirmed: ['key-1'] }
+    })
+
+    const first = DELETE(req(), params)
+    await waitUntil(() => mocks.cancelByOwnerSession.mock.calls.length > 0)
+    expect(isSessionDeleting('s1')).toBe(true)
+
+    gate.resolve()
+    const firstRes = await first
+    expect(firstRes.status).toBe(409)
+    expect(isSessionDeleting('s1')).toBe(false)
+
+    const retryRes = await DELETE(req(), params)
+    expect(retryRes.status).toBe(200)
+    expect(isSessionDeleting('s1')).toBe(false)
   })
 })
 

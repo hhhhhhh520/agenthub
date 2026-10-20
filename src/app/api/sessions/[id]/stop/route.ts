@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { processRegistry } from '@/lib/adapter/process-registry'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
+import { isSessionDeleting } from '@/lib/session-lifecycle'
 import { waitForSessionUnlock } from '@/lib/session-lock'
 
 /**
@@ -30,14 +31,18 @@ export async function POST(
   // 3) 等待业务 finally 收敛（当前 chat/redo 持锁流退出后释放）。
   const unlocked = await waitForSessionUnlock(sessionId, 15_000)
 
-  const stopped = kill.unconfirmed.length === 0 && unlocked
-  // 只有确认进程全退出且业务锁释放后才清除取消标记，允许用户再次执行。
-  // 未确认时保留标记，避免旧进程被杀期间又被新请求重建。
+  // DELETE 可能已经进入清理/删库阶段；此时 stop 不能把取消标记清掉，
+  // 否则新执行会在“锁已释放、记录尚未删除”的窗口重新启动。
+  const deleting = isSessionDeleting(sessionId)
+  const stopped = kill.unconfirmed.length === 0 && unlocked && !deleting
+  // 只有确认进程全退出、业务锁释放且没有并发删除时才清除取消标记，允许用户再次执行。
+  // 未确认或删除中保留标记，避免旧进程被杀期间又被新请求重建。
   if (stopped) clearSessionCancel(sessionId)
 
   return NextResponse.json(
     {
       stopped,
+      deleting,
       unlocked,
       total: kill.total,
       exited: kill.exited,

@@ -5,6 +5,7 @@ import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
 import { createEventLogger, type EventLogger } from '@/lib/services/event-log'
 import { isSessionCancelled } from '@/lib/cancellation'
+import { isSessionDeleting } from '@/lib/session-lifecycle'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -29,8 +30,8 @@ export async function POST(
   if (!session) {
     return new Response('Session not found', { status: 404 })
   }
-  if (isSessionCancelled(sessionId)) {
-    return Response.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
+  if (isSessionCancelled(sessionId) || isSessionDeleting(sessionId)) {
+    return Response.json({ error: '会话正在停止或删除，请稍后重试' }, { status: 409 })
   }
 
   const permissionMode = session.permissionMode as 'default' | 'auto'
@@ -58,8 +59,8 @@ export async function POST(
   let lockHandedOff = false
   try {
     // 等锁期间可能已被 stop/delete 标记；拿到锁后再检查一次，避免取消后启动新执行。
-    if (isSessionCancelled(sessionId)) {
-      return Response.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
+    if (isSessionCancelled(sessionId) || isSessionDeleting(sessionId)) {
+      return Response.json({ error: '会话正在停止或删除，请稍后重试' }, { status: 409 })
     }
 
     // /permission command

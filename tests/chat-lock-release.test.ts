@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
+import { markSessionDeleting, clearSessionDeleting } from '@/lib/session-lifecycle'
 
 const mocks = vi.hoisted(() => ({
   sessionFindUnique: vi.fn(),
@@ -86,8 +87,18 @@ function makeReq(body: Record<string, unknown>) {
   })
 }
 
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitUntil timeout')
+    await new Promise(r => setTimeout(r, 5))
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  clearSessionCancel('s1')
+  clearSessionDeleting('s1')
   mocks.sessionFindUnique.mockResolvedValue(session)
   mocks.sessionUpdate.mockResolvedValue(session)
   mocks.attachmentFindMany.mockResolvedValue([])
@@ -110,7 +121,10 @@ beforeEach(() => {
   mocks.executeSingleAgent.mockResolvedValue({ result: 'ok' })
 })
 
-afterEach(() => clearSessionCancel('s1'))
+afterEach(() => {
+  clearSessionCancel('s1')
+  clearSessionDeleting('s1')
+})
 
 describe('chat route — 统一锁释放', () => {
   it('拿锁后、建流前的 DB 异常会释放锁（防永久 429）', async () => {
@@ -225,5 +239,46 @@ describe('chat route — 统一锁释放', () => {
 
     expect(res.status).toBe(429)
     expect(mocks.releaseLock).not.toHaveBeenCalled()
+  })
+
+  it('P2-03: 删除中的会话在拿锁前拒绝新 chat', async () => {
+    markSessionDeleting('s1')
+
+    const res = await POST(makeReq({ message: 'hi' }), params)
+    await res.text()
+
+    expect(res.status).toBe(409)
+    expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+    expect(mocks.handleOrchestratorDecision).not.toHaveBeenCalled()
+  })
+
+  it('P2-03: 等锁期间进入 deleting → 拿锁后拒绝且不写消息', async () => {
+    let resolveLock!: (release: () => void) => void
+    mocks.acquireSessionLock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveLock = resolve
+    }))
+
+    const pending = POST(makeReq({ message: 'hi' }), params)
+    await waitUntil(() => mocks.acquireSessionLock.mock.calls.length > 0)
+    markSessionDeleting('s1')
+    resolveLock(mocks.releaseLock)
+
+    const res = await pending
+    await res.text()
+
+    expect(res.status).toBe(409)
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+    expect(mocks.handleOrchestratorDecision).not.toHaveBeenCalled()
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('P2-03: 删除完成后 session 不存在 → 404', async () => {
+    mocks.sessionFindUnique.mockResolvedValueOnce(null)
+
+    const res = await POST(makeReq({ message: 'hi' }), params)
+
+    expect(res.status).toBe(404)
+    expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
   })
 })
