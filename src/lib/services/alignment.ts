@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { prisma } from '@/lib/db'
 import { executeSingleAgent, callLLMForAnalysis, analyzeScene, generateRoles, decomposeTasks, parseJSON, formatArchitectPlan } from '@/lib/orchestrator'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
@@ -29,6 +30,70 @@ export function buildVerifyDescription(codeTasks: Array<{ description: string; d
     `- ${t.description}${t.declaredFiles.length > 0 ? `（产出文件：${t.declaredFiles.join('、')}）` : ''}`
   )
   return `[系统验证任务] 验证以下代码任务的产出物是否真实可用。请逐项实际检查产出文件（是否存在、语法是否正确、能否运行），不要修改任何文件，只检查并报告：\n${lines.join('\n')}\n逐项给出结论；全部通过回复"验证通过"，有问题的项列明具体问题。`
+}
+
+/**
+ * 计划 ID：任务 ID 集合的稳定指纹（P2-04）。
+ * 不引入 schema 字段：plan ID 写进架构师计划消息的可见编号行；恢复时按当前任务集重算，
+ * 只有同一任务集的计划消息才能作为执行依据。描述修改不改变任务身份，任务增删/重拆会改变。
+ */
+export function buildPlanId(taskIds: string[]): string {
+  return createHash('sha256')
+    .update([...taskIds].sort().join('\0'))
+    .digest('hex')
+    .slice(0, 16)
+}
+
+const PLAN_MARKER_PREFIX = '计划编号：plan-'
+
+function formatPlanMessage(planSummary: string, planId: string): string {
+  return `${planSummary}\n\n> ${PLAN_MARKER_PREFIX}${planId}`
+}
+
+interface PlanMessageLike {
+  role: string
+  agentId?: string | null
+  rawContent: string
+}
+
+function findPlanMessageIndex(messages: PlanMessageLike[], planId: string): number {
+  const marker = `${PLAN_MARKER_PREFIX}${planId}`
+  let found = -1
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.role === 'agent' && m.agentId === '架构师' && m.rawContent.endsWith(marker)) found = i
+  }
+  return found
+}
+
+function parseStringArray(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+interface RecoveryTask {
+  id: string
+  description: string
+  assignedAgentId?: string | null
+  dependencies?: string | null
+  declaredFiles?: string | null
+  outputSchema?: string | null
+}
+
+function toScheduledTask(task: RecoveryTask, agents: AgentConfig[]): ScheduledTask {
+  return {
+    id: task.id,
+    description: task.description,
+    assignedAgent: agents.find(a => a.id === task.assignedAgentId)?.name || task.assignedAgentId || '未分配',
+    dependencies: parseStringArray(task.dependencies),
+    declaredFiles: parseStringArray(task.declaredFiles),
+    outputSchema: task.outputSchema ?? undefined,
+    batch: 0,
+  }
 }
 
 /**
@@ -374,6 +439,17 @@ export async function handleArchitectPlan(
     return false
   }
 
+  // P2-04: 计划 ID 是当前任务集（含自动 verify）的稳定指纹。查询失败时退回本批任务 ID，
+  // 恢复侧会因任务集不匹配而拒绝自动执行并重新呈现，属于 fail-closed。
+  let planTaskIds = scheduledTasks.map(t => t.id)
+  try {
+    const allTasks = await prisma.task.findMany({ where: { sessionId }, select: { id: true } })
+    if (Array.isArray(allTasks) && allTasks.length > 0) planTaskIds = allTasks.map(t => t.id)
+  } catch (err) {
+    console.warn('[alignment] 计算计划 ID 失败，使用本批任务 ID 兜底:', err instanceof Error ? err.message : err)
+  }
+  const planId = buildPlanId(planTaskIds)
+
   // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
   // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
   // P4 T1: recordTrace 默认 true(代码驱动补拆补记),LLM 决策路径由 chat-router 传 false。
@@ -393,7 +469,7 @@ export async function handleArchitectPlan(
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const planSummary = formatArchitectPlan(scheduledTasks, agents)
-  await prisma.message.create({ data: { role: 'agent', rawContent: planSummary, sessionId, agentId: '架构师' } })
+  await prisma.message.create({ data: { role: 'agent', rawContent: formatPlanMessage(planSummary, planId), sessionId, agentId: '架构师' } })
   sendEvent({ agentId: '架构师', type: 'done', content: planSummary })
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
   return true
@@ -496,7 +572,7 @@ export async function handleAgentQA(
 
 export type EnsureExecutableStateResult =
   | { ok: true; atExec: boolean }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; needsPlan?: boolean }
 
 /**
  * 执行恢复边界：任务已落库但 phase 未推进（拆解后崩溃/phase 写失败）时，
@@ -513,9 +589,15 @@ export async function ensureExecutableState(
   sessionId: string,
   opts?: { recordExecuteTrace?: boolean },
 ): Promise<EnsureExecutableStateResult> {
-  const [session, taskCount] = await Promise.all([
+  const [session, taskCount, taskRows, messages] = await Promise.all([
     prisma.session.findUnique({ where: { id: sessionId }, select: { phase: true, phaseStep: true } }),
     prisma.task.count({ where: { sessionId } }),
+    prisma.task.findMany({ where: { sessionId }, select: { id: true } }),
+    prisma.message.findMany({
+      where: { sessionId },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, agentId: true, rawContent: true },
+    }),
   ])
   if (!session) return { ok: false, reason: '会话不存在' }
   if (taskCount === 0) return { ok: false, reason: '没有可执行任务' }
@@ -531,6 +613,20 @@ export async function ensureExecutableState(
 
   const state = stateFromSession(session.phase, rawStep)
   if (state === 'exec') return { ok: true, atExec: true }
+  // idle/done 的 execute 是调用方的合法动作，不经过对齐恢复；计划检查只约束 align_* 的自动推进。
+  if (state === 'idle' || state === 'done') return { ok: true, atExec: false }
+
+  // P2-04: 任务已建但 phase 未推进时不能凭 taskCount 直接执行。计划消息必须对应当前任务集，
+  // 且之后有用户消息（用户确认/执行指令）。缺失时返回 needsPlan，由 transitionToExecution
+  // 重新展示计划并等待确认，绝不自动执行未呈现或未获用户回应的计划。
+  const planId = buildPlanId((taskRows ?? []).map(t => t.id))
+  const planIndex = findPlanMessageIndex(messages ?? [], planId)
+  if (planIndex < 0) {
+    return { ok: false, needsPlan: true, reason: '计划尚未呈现给用户，拒绝自动执行' }
+  }
+  if (!(messages ?? []).slice(planIndex + 1).some(m => m.role === 'user')) {
+    return { ok: false, needsPlan: true, reason: '计划尚未获得用户确认，拒绝自动执行' }
+  }
 
   if (state === 'align_pm') {
     const decompose = await transitionPhase(sessionId, 'align_decompose', { recordTrace: true })
@@ -547,8 +643,79 @@ export async function ensureExecutableState(
     return { ok: true, atExec: true }
   }
 
-  if (state === 'idle' || state === 'done') return { ok: true, atExec: false }
   return { ok: false, reason: `当前状态 ${state} 不支持恢复执行` }
+}
+
+/**
+ * P2-04: 恢复时计划缺失/未获批，用现有任务重新展示计划并停在对齐态等待用户确认。
+ * 不重新拆解、不重复建任务，也不启动 handleExecution。
+ */
+async function presentPlanForConfirmation(
+  sessionId: string,
+  agents: AgentConfig[],
+  sendEvent: SendEvent,
+  existingTasks: RecoveryTask[],
+) {
+  if (existingTasks.length === 0) {
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: '没有可展示的任务计划，无法恢复执行' })
+    return
+  }
+
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: { phase: true, phaseStep: true },
+  })
+  if (!session) {
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: '会话不存在，无法恢复执行' })
+    return
+  }
+
+  const state = stateFromSession(session.phase, session.phaseStep ?? '')
+  if (state !== 'align_arch') {
+    if (state !== 'align_pm' && state !== 'align_qa') {
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: `当前状态 ${state} 不支持重新展示计划` })
+      return
+    }
+    const phase = await transitionPhase(sessionId, 'align_decompose', { recordTrace: true })
+    if (!phase.ok) {
+      sendEvent({
+        agentId: 'orchestrator',
+        type: 'error',
+        content: `无法回到计划确认状态：${phase.reason ?? '未知错误'}，本次未启动执行。`,
+      })
+      return
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
+  }
+
+  const planId = buildPlanId(existingTasks.map(t => t.id))
+  const messages = await prisma.message.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: 'asc' },
+    select: { role: true, agentId: true, rawContent: true },
+  })
+  if (findPlanMessageIndex(messages, planId) < 0) {
+    let scheduledTasks: ScheduledTask[]
+    try {
+      scheduledTasks = topologicalSort(existingTasks.map(t => toScheduledTask(t, agents)))
+    } catch (err) {
+      sendEvent({
+        agentId: 'orchestrator',
+        type: 'error',
+        content: `计划任务依赖异常，无法重新展示：${err instanceof Error ? err.message : String(err)}`,
+      })
+      return
+    }
+    const planSummary = formatArchitectPlan(scheduledTasks, agents)
+    await prisma.message.create({
+      data: { role: 'agent', rawContent: formatPlanMessage(planSummary, planId), sessionId, agentId: '架构师' },
+    })
+    sendEvent({ agentId: '架构师', type: 'done', content: planSummary })
+  } else {
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: '计划已生成，请先确认计划后再执行。' })
+  }
+
+  sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
 }
 
 export async function transitionToExecution(
@@ -584,6 +751,10 @@ export async function transitionToExecution(
     // 仍继续 handleExecution（phase 与执行脱节、allDone→done 也写不进去）。
     const ensured = await ensureExecutableState(sessionId, { recordExecuteTrace: opts?.recordExecuteTrace })
     if (!ensured.ok) {
+      if (ensured.needsPlan) {
+        await presentPlanForConfirmation(sessionId, agents, sendEvent, existingTasks)
+        return
+      }
       const msg = `执行状态恢复失败：${ensured.reason}，本次未启动执行。`
       sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
       sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })

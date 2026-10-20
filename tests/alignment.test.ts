@@ -48,7 +48,7 @@ vi.mock('@/lib/services/execution', () => ({
   handleExecution: mocks.mockHandleExecution,
 }))
 
-import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans } from '@/lib/services/alignment'
+import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans, buildPlanId } from '@/lib/services/alignment'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 
 // 交互式事务 mock：把 tx.task.* 映射到同一组 task mock，既有断言无需改。
@@ -294,12 +294,31 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
     })
   }
 
+  const planMessages = (taskIds: string[] = ['t1']) => [
+    { role: 'user', rawContent: '做个网站' },
+    {
+      role: 'agent',
+      agentId: '架构师',
+      rawContent: `plan summary\n\n> 计划编号：plan-${buildPlanId(taskIds)}`,
+    },
+    { role: 'user', rawContent: '确认执行' },
+  ]
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.mockSessionUpdateMany.mockResolvedValue({ count: 1 })
     mocks.mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', projectDir: '', permissionMode: 'default' })
-    mocks.mockTaskFindMany.mockResolvedValue([{ id: 't1', description: 'task1' }])
+    mocks.mockTaskFindMany.mockResolvedValue([{
+      id: 't1',
+      description: 'task1',
+      assignedAgentId: 'a1',
+      dependencies: '[]',
+      declaredFiles: '[]',
+      outputSchema: null,
+    }])
     mocks.mockTaskCount.mockResolvedValue(1)
+    mocks.mockMessageFindMany.mockResolvedValue(planMessages())
+    mocks.mockMessageCreate.mockResolvedValue({})
     mocks.mockHandleExecution.mockResolvedValue(undefined)
     mocks.mockSendEvent.mockResolvedValue(undefined)
   })
@@ -349,6 +368,103 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
       .map(c => c[0]?.data)
       .filter(d => d && Object.hasOwn(d, 'phase'))
     expect(phaseWrites).toHaveLength(0)
+  })
+
+  it('P2-04: align_pm + 有任务但计划未呈现：拒绝恢复，不写 phase', async () => {
+    setupState('alignment', 'pm_confirm')
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toMatchObject({ ok: false, needsPlan: true })
+    expect(result).not.toMatchObject({ ok: true })
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toHaveLength(0)
+  })
+
+  it('P2-04: align_arch + 计划已呈现但没有用户确认：拒绝执行', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockMessageFindMany.mockResolvedValue(planMessages().slice(0, 2))
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toMatchObject({ ok: false, needsPlan: true })
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toHaveLength(0)
+  })
+
+  it('P2-04: 计划 ID 与当前任务集不匹配：拒绝执行', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockMessageFindMany.mockResolvedValue(planMessages(['other-task']))
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toMatchObject({ ok: false, needsPlan: true })
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toHaveLength(0)
+  })
+
+  it('P2-04: handleArchitectPlan 写入的计划消息编码当前任务集 ID', async () => {
+    setupState('alignment', 'pm_confirm')
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
+    mocks.mockTaskFindMany.mockResolvedValue([{ id: 'task-a' }, { id: 'task-b' }])
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'task-a', description: '任务 A', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+      { id: 'task-b', description: '任务 B', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+    ])
+    mocks.mockTaskCreate.mockResolvedValue({})
+
+    const result = await handleArchitectPlan('做个网站', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(true)
+    const planMessage = mocks.mockMessageCreate.mock.calls
+      .map(c => c[0]?.data)
+      .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
+    expect(planMessage?.rawContent).toContain(`plan-${buildPlanId(['task-a', 'task-b'])}`)
+  })
+
+  it('P2-04: 计划已呈现但无用户确认：不重复建计划，等待确认且不执行', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockMessageFindMany.mockResolvedValue(planMessages().slice(0, 2))
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '继续执行')
+
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+    expect(mocks.mockMessageCreate).not.toHaveBeenCalled()
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: 'architect_plan' }),
+    )
+  })
+
+  it('P2-04: 任务已建、phase 未推进、无计划：重新展示并等待确认，不执行', async () => {
+    setupState('alignment', 'pm_confirm')
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '继续执行')
+
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+    expect(mocks.mockMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: 'agent',
+          agentId: '架构师',
+          rawContent: expect.stringContaining('plan-'),
+        }),
+      }),
+    )
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toEqual([{ phase: 'alignment', phaseStep: 'architect_plan' }])
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: 'architect_plan' }),
+    )
   })
 
   it('phase 恢复失败：报错并中止，不启动 handleExecution', async () => {
