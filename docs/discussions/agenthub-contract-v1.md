@@ -59,15 +59,16 @@ orchestrator 在生成下游 Agent 的 prompt 时,**确定性地**从以下两�
 - 与动作 6(declaredFiles 分级校验)对称的软语义:警告可见 + 不阻断流程
 - 留升级空间:未来若有"非 LLM 步骤需要读结构化上游产出",可改为硬失败
 
-**b. declaredFiles 分级校验**(2026-06-23 实施动作 6 时修订)
+**b. declaredFiles 分级校验**(2026-06-23 实施动作 6 时修订；2026-10-19 批次级归责修订)
 - 架构师在拆 task 时,为每个 task 声明 declaredFiles(声明会改哪些文件)
 - 任务跑完后,通过影子 git(`git --git-dir=... --work-tree=<workDir> diff`)实际验证
-- **分级判定**:
-  - **敏感路径越界** → 任务标记失败,下游不启动(硬失败)
+- **审计三态**：影子 git 快照/diff 读取失败 → `unavailable`，本批任务 failed，下游 blocked，**不写 result、不发布 completed**，可 redo
+- **批次级归责**（2026-10-19）：以本批所有任务 `declaredFiles` 的并集判定；不再拿 batch diff 逐任务比较（会把同批 A 的文件误判成 B 的越界）
+  - **敏感路径越界** → **整批任务 failed**，下游不启动(硬失败)
     - 敏感路径包括: `.env*`, `package.json`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `prisma/schema.prisma`, `.gitignore`, `tsconfig*.json`, `next.config*`, `node_modules/**` 等
-  - **普通越界** → 自动清理越界文件(保留其他批次声明的文件) + 任务仍 completed,下游照常启动
+  - **普通越界** → 批次级告警 + 任务仍 completed,下游照常启动；**共享 projectDir 绝不自动删除文件**（自动清理仅限隔离工作区，当前未启用）
   - **遗漏(声明了但实际没改)** → 警告并记录,不影响任务状态(软警告)
-- declaredFiles 为空数组 → 跳过文件校验(允许无文件改动的任务存在,如纯讨论/分析)
+- 本批所有任务 declaredFiles 为空数组 → 跳过文件校验(允许无文件改动的任务存在,如纯讨论/分析)
 
 **为什么不按 contract 原版"声明全等"硬校验**:
 - 架构师 LLM 不掌握真实代码结构,文件声明本质是猜测;
@@ -76,7 +77,7 @@ orchestrator 在生成下游 Agent 的 prompt 时,**确定性地**从以下两�
 - 敏感路径硬失败兜住"重大破坏"(改 `.env` / 改依赖),其他越界靠告警 + monitoring 纠偏即可。
 - 这是实施中发现"合同字面与现实冲突"的明确妥协,见第 6 节失效条件"实施中发现 what 站不住,回来改这份"。
 
-任一层不过 → 任务失败 → 下游不启动(b 的"任一层"指敏感路径越界)。
+任一层不过 → 本批任务失败 → 下游不启动(b 的"任一层"指审计不可用或敏感路径越界)。
 
 #### 强制前提
 
@@ -203,7 +204,7 @@ Agent 跨 task **默认保留 cliSessionId**(`claude --resume`)。Agent 在跨 t
   - [x] 动作 2: task.result 持久化到 DB(2026-06-23) — Task 表加 `result String?`,executeTaskBatch 接受 priorResults,handleExecution 启动时从 DB 读旧 result、跑完后写回 DB
   - [x] 动作 3: 架构师 prompt 重写 + outputSchema 持久化(2026-06-23) — Task 表加 `outputSchema String?`,TASK_DECOMPOSITION_PROMPT 增加 output_schema 字段+强化 declared_files 校验语义,alignment.ts 和 decomposeTasks 同步解析持久化(校验逻辑留待动作 5)
   - [x] 动作 4: orchestrator prompt 确定性注入(2026-06-23, commit a552db3) — executeTaskBatch 新增 priorTaskMeta 参数,依赖结果以 `<dependency name="..." output_schema="...">` 结构化注入下游 prompt,删除 discussionSummary 注入,截断保护改为通用形式
-  - [x] 动作 6: declaredFiles 分级校验(2026-06-23) — 实施时修订 contract §1.2 b 为分级语义。新增 sensitive-paths.ts(敏感路径黑名单:.env / package.json / prisma/schema.prisma / node_modules/ / 配置文件等)。execution.ts 越界检测后:敏感越界 → 任务硬失败 + 下游 blocked + 不写 result;普通越界 → 自动清理越界文件(保留其他批次声明的文件) + 任务仍 completed;declaredFiles 为空 → 跳过校验。20 sensitive-paths 单测 + 5 集成测试 + 8 越界清理单测
+  - [x] 动作 6: declaredFiles 分级校验(2026-06-23；2026-10-19 批次级归责修订) — 新增 sensitive-paths.ts(敏感路径黑名单:.env / package.json / prisma/schema.prisma / node_modules/ / 配置文件等)。execution.ts 批次审计:审计不可用 → 整批 failed + 下游 blocked + 不写 result;敏感越界 → 整批 failed + 下游 blocked;普通越界 → 批次级告警 + 任务仍 completed + 共享 projectDir 不自动删除;本批 declaredFiles 全空 → 跳过校验。20 sensitive-paths 单测 + 5 集成测试 + 8 越界清理单测
   - [x] 动作 5: outputSchema 软校验(2026-06-23) — 实施时修订 contract §1.2 a 为软语义,与动作 6 对称。新增 schema-validator.ts(提取 result 末尾 JSON 块 + 字段名比对)。execution.ts 在普通越界检测后插入校验:no-schema/ok 静默,no-json/parse-error/missing-fields 发警告但任务仍 completed。20 schema-validator 单测 + 3 集成测试
   - [x] 动作 7: cliSessionId invalidate 机制(2026-06-23) — §1.3 P0 护栏。execution.ts 在两个事件清 cliSessionId:**敏感越界硬失败** → 同时清 task.cliSessionId 和 SessionMember.cliSessionId(避免该 agent 进程内存里"我交付成功"的错误信念污染后续任务);**monitoring 纠偏退回 pending** → 同时清两层 cliSessionId(task.result 即将被推翻,agent 历史里"我做对了"的认知是脏数据)。正常完成路径不动 cliSessionId。3 集成测试
   - [x] 动作 8: prompt 权威包装(2026-06-23) — §1.3 P0 护栏。orchestrator/index.ts 的 prompt 组装在依赖块 + 文件约束 + 任务描述外层包一层 `<authoritative_input> ... </authoritative_input>`,头部声明"如与历史冲突,以下内容为准,历史作废"。CLI 历史在 prompt 之前由 --resume 拼接,本包装放在历史之后利用 LLM 末尾注意力偏向。截断保护同步保留头尾标签完整。4 测试

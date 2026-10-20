@@ -258,6 +258,7 @@
 
 | Batch 0 续·会话取消全链路 + 进程真实退出 + 有界清理（commit c5930d3） | `cancellation.ts` 统一取消源；chat/redo/stop/delete + orchestrator 决策/对齐/执行/讨论/adapter 全链路检查；`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认，unconfirmed 不删 DB）；`handleExecution` 取消时本批未落地任务条件写回 pending、不 completed/不 auto-done；`stop` 端点只停不删；`withTimeout` onTimeout 有界 10s、eventLogger.flush 有界 5s。新增取消/退出/stop/delete/timeout/flush 测试；全量 1368 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 | Batch 1 第一小项·执行恢复边界 + 任务/verify 单事务（commit 55d5012） | 新增 `ensureExecutableState`：任务已存在但 phase 停在 `align_pm`/`align_arch`/`align_qa` 时沿转移表合法边恢复到 `exec`；`transitionToExecution` 在恢复/推进失败时发 error + escalate 并中止，不再 fail-closed 后继续 `handleExecution`。`handleArchitectPlan` 的任务与 verify 改为同一 `prisma.$transaction` 创建，中途失败整段中止、不推进 phase、不发 plan/done；`transitionPhase` 返回值显式检查。新增 8 条恢复/事务/失败中止测试（含“移除 ensure 调用”变异精确红后还原）；全量 1376 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
+| Batch 1 第二小项·批次审计三态 + 批次级归责 + 共享目录停止自动删除（commit e75339d） | `shadow-git` 新增 `getGitSnapshotDetailed`/`getChangedFilesDetailed`（`{ok,reason}`），旧兼容入口失败改为抛错；`execution.ts` 新增 `auditBatchChanges`（pass/violation/unavailable）+ `failBatchForAudit`：批次开始快照失败→不执行、任务 failed + trace `audit_unavailable`；批次结束 diff 失败→不写 result/completed、不跑监控/不 done；敏感路径按本批 `declaredFiles` 并集整批 failed；普通越界只发批次告警，共享 projectDir 不再自动删除文件；审计通过前禁止 success。新增 4 条审计测试 + 更新受影响断言（含“审计不可用改回 pass”变异精确红后还原）；全量 1384 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

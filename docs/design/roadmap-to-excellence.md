@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v15（Batch 0 锁队列/取消链路；下一批执行恢复 + 审计三态） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v16（Batch 0 锁队列/取消链路 + Batch 1 审计三态/批次归责；下一批权限/事件/配置） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -22,6 +22,7 @@
 | v13 | 2026-09-30 | **ISSUE-027 LLM 通路死亡修复（四 commit e4d7796/d62f5cf/f64d2e7/1ab265f）+ §4.1 盲测验收（未过，开 ISSUE-028）**。根因三层：① claude.exe v2.1.270 -p 模式无视进程 env 的 ANTHROPIC_BASE_URL（8 组活体实验，spawn env 注入失效——治理观测与管线路径的连线是 issue 之外的独立发现）；② 首次换线 tokenrhythm 后冒烟撞出网关拒收 claude CLI 必发的 anthropic-beta: interleaved-thinking 头（10 模型全 400，curl 实证网关层拒绝）；③ opencode 的 env 注入路径同样触发该头，唯一可通 = 配置文件显式 provider options。落地：受管 CLAUDE_CONFIG_DIR settings.json 通道（claude-code-env.ts，哨兵+sweep+scheme 校验+resume 降级+instrumentation 启动兜底）；isPermanentError 补 5 签名快速失败；looksLikeCliSyntheticError（前缀+<300+CJK 放行）拦 orchestrator 三堆积点 + skipMsg 透传真错误；**8 agent 切 platform=opencode** + tokenrhythm/v1 + mimo-v2.6-flash（OpenCodeAdapter 生成 XDG 配置文件替代 env 注入，agentId hash 目录防路径逃逸，fail-fast，agentId 消毒防 arg-safety 拒启）。全程双审查+pre-commit-audit，测试 1303 passed。**§4.1 盲测（代用户执行）：讨论/工具执行全通（8/8 agent 两轮 0 超时）但决策时间线全库 0 条**——chat-router:71-78 决策 LLM 解析失败静默回退 handleOrchestratorChat（带工具直连），绕过状态机与全部 trace 写点不打日志；agenthub_read_messages MCP 有消息会话返回空； Tasks 恒 0（管线从未触发）。→ ISSUE-028（回退显性化+记 trace / 决策换快模型 / read_messages 排查）。教训：**「CLI+第三方网关」冒烟必须用真实 CLI 走全链路——curl 探针不带 beta 头会假绿**；决策模型与执行模型应分离 |
 | v14 | 2026-09-30 | **ISSUE-028 决策链路修复（四 commit d0a122c/a7fec72/75cfa28/9a5e113）+ §4.1 验收复测通过**。① **回退显性化**（d0a122c）：chat-router catch 分支 console.error（JSON.stringify 转义防日志注入）+ sendEvent 告知用户 + decision-fallback trace 条目（与正常 self 决策同构，'self'∈NON_TRANSITIONING 不污染 conformance 口径）；reasonToString 抽叶子模块（ISSUE-011 防线复用）。② **决策/执行模型分离**（a7fec72+9a5e113）：decision-llm.ts OpenAI 兼容直连快通道，env AGENTHUB_DECISION_MODEL 启用（凭据缺省复用 Orchestrator Agent DB 配置，key 不落盘；BASE_URL/API_KEY 可显式覆盖），收口 getOrchestratorDecision + callLLM（analyzeScene/角色生成/架构师拆解），callLLMForAnalysis 明确排除（钉住测试）；redirect:'error' 禁重定向 + 错误体脱敏 sk- 形态 + AbortSignal 超时转译自定义 TimeoutError；**验收实测追加根因**：tokenrhythm 的 qwen3.8-flash 为混合思考模型，长 prompt 下思考耗尽 max_tokens（finish_reason=length，content 空）→ 请求体固定 enable_thinking:false（实测 5.0s vs 45.7s，快 9 倍）+ max_tokens 8192 兜底 + 空 content 错误带 finish_reason 诊断。③ **read_messages 全角色可见**（75cfa28）：旧 where 硬过滤 role:'agent' 是 orchestrator"失忆"根因，buildChannelWhere 三角色过滤 + 接线守卫。**验收复测（真实 UI 全链路，会话 bfa9f2c6）**：对齐→拆解→执行管线完整走通（PM 确认→架构师拆解 Tasks 3→后端交付 convert.js→测试交付 convert.test.js，node --test 独立复跑 pass 2/fail 0）；**决策时间线 4 条一致性 100%**（含 0-task 守卫真实拦截记录）；全量 1337 passed / 3 skipped。教训：**混合思考模型做结构化决策必须关思考（enable_thinking:false）或给足 max_tokens——思考耗尽预算时 content 为空且极易误诊**；空 content 错误要把 finish_reason 带出来 |
 | v15 | 2026-10-19 | **Batch 0：锁队列重写 + 统一释放 + 取消全链路（commit b6b2deb/c5930d3）**。旧 Map 链式锁在 A 持锁、B/C 排队、B 超时后 A 释放时 C 永久卡死（已复现）→ 显式 waiter 队列（超时/abort 移除自己、release handoff 队首、release 幂等）；持有者 abort 不释放锁，chat route 用 `lockHandedOff` + stream finally 统一释放。新增 `cancellation.ts`：stop/delete 取消执行，`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认）；未确认时 stop 202 / delete 409 且不删 DB。`handleExecution` 取消时本批未落地任务条件写回 pending，不 completed/不 auto-done；`withTimeout` onTimeout 有界 10s、`eventLogger.flush` 有界 5s。全量 1368 passed / 3 skipped。**下一批**：执行恢复边界 + 审计三态（审计通过前禁止成功）+ 批次级归责/停止自动删除；再后：权限模型双维度、事件 seq 不可变、配置 owner 清扫。 |
+| v16 | 2026-10-19 | **Batch 1 审计三态 + 批次级归责 + 共享目录停止自动删除（commit 55d5012/e75339d）**。`shadow-git` 新增 `getGitSnapshotDetailed`/`getChangedFilesDetailed`（`{ok,reason}`），旧兼容入口失败改为抛错，不再把 git 失败伪装成空 diff。`execution.ts` 新增 `auditBatchChanges`（`pass/violation/unavailable`）+ `failBatchForAudit`：批次开始快照失败 → 本批不执行、任务 failed + trace `audit_unavailable`；批次结束 diff 失败 → 不写 result/completed、不跑监控/不 done；敏感路径按本批 `declaredFiles` 并集整批 failed；普通越界只发批次级告警，**共享 projectDir 不再自动删除文件**；审计通过前禁止任何成功发布。全量 1384 passed / 3 skipped。**下一批**：权限模型双维度 + CLI 探针、事件 seq 不可变/单 logger、OpenCode 配置清扫前缀 bug、Pin 独立短锁、UI 权限恢复。 |
 
 ---
 
@@ -224,7 +225,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1368 passed / 3 skipped（2026-10-19；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1384 passed / 3 skipped（2026-10-19；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

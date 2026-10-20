@@ -1,6 +1,6 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `55d5012`（Batch 1 第一小项；本交接文档随后单独提交）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `e75339d`（Batch 1 审计三态；本交接文档随后单独提交）
 > 适用对象: 接手 Batch 1 的 AI/开发者  
 > 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」、本文、`docs/design/roadmap-to-excellence.md` v15
 
@@ -13,10 +13,11 @@
 | `b6b2deb` | 锁队列重写 + chat 统一释放 |
 | `c5930d3` | 取消全链路 + 进程真实退出 + 有界清理 + stop/delete |
 | `55d5012` | Batch 1 第一小项：执行恢复态 + 任务/verify 单事务 |
+| `e75339d` | Batch 1 审计三态 + 批次级归责 + 共享目录停止自动删除 |
 
 回归基线（2026-10-19）：
 
-- `npx vitest run`：117 files / **1376 passed / 3 skipped**
+- `npx vitest run`：118 files / **1384 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -55,7 +56,7 @@
 
 ### Batch 1：执行恢复边界 + 审计三态 + 禁止提前发布成功
 
-**已完成第一小项（commit `55d5012`）**：`ensureExecutableState` + 任务/verify 单事务 + `transitionPhase` 返回值检查。以下第 3-6 项仍未完成。
+**Batch 1 的 1-6 项已全部完成**：`55d5012` 负责执行恢复态 + 任务/verify 单事务；`e75339d` 负责审计三态、批次级归责、共享目录停止自动删除、审计通过前禁止成功。
 
 - `src/lib/services/alignment.ts`（任务创建、phase 推进）
 - `src/lib/services/execution.ts`（审计、result、completed、done）
@@ -78,27 +79,26 @@
    - 中途失败要么全建、要么全不建；
    - 加测试：任务已建但 phase 未推进 → 恢复不重复建任务。
 
-3. **审计三态**
+3. ✅ **审计三态**（commit `e75339d`）
    - `pass | violation | unavailable`；
    - `shadow-git` 的 `getGitSnapshot` / `getChangedFiles` 不再 `catch { return empty }`；新增 detailed 返回值；
    - 批次开始快照失败 → 不执行本批，任务 failed + `trace event:'audit_unavailable'`；
    - 批次结束 diff 失败 → 本批任务 failed，不写 result、不跑监控、不标 completed；
    - downstream blocked；`allDone` 不成立，不 done。
 
-4. **批次级归责**
+4. ✅ **批次级归责**（commit `e75339d`）
    - 当前 `execution.ts` 把批次级 `changedFiles` 拿去逐任务比较 `declaredFiles`，会误判（A 声明 package.json、B 只声明 foo.ts，B 被误判敏感越界）；
    - 改为 `batchDeclared = union(本批任务 declaredFiles)`；敏感路径检查基于 `changedFiles - batchDeclared`；未声明敏感文件 → **整批失败**；
    - 普通越界按批次告警；
    - 不做不可靠的逐任务硬归责；如需逐任务硬边界，必须上 worktree/隔离工作区（另立项）。
 
-5. **共享 projectDir 停止自动删除**
+5. ✅ **共享 projectDir 停止自动删除**（commit `e75339d`）
    - 用户真实项目目录下不自动删任何文件；
    - 普通越界只警告；敏感路径整批失败；
    - 自动清理仅限 AgentHub 管理的隔离工作区（当前默认不做）。
 
-6. **审计通过前禁止成功**
-   - 任务状态机：`executed → audit_pending → audit_passed → completed`；
-   - `audit_failed / audit_unavailable → failed`；
+6. ✅ **审计通过前禁止成功**（commit `e75339d`）
+   - 不新增 `Task.status` 枚举：审计在 completed 事务之前完成，`audit_unavailable / violation → failed`，通过后才写 `completed/result`；
    - 审计通过前不写 `Task.result`、不写 `status=completed`、不发 `task_status completed`、不启动下游、不跑成功监控、不 done；
    - 批次级审计时本批结果先留内存，审计通过后统一事务提交；
    - verify 任务同样过审计。
@@ -118,7 +118,7 @@
 
 1. **普通 retry / idle cleanup 仍用 `killEntryIfCurrent`**：该函数在 Windows 发出 taskkill 后立即删 registry，不等待真实退出。stop/delete/cancel 已走 `terminateEntry`，但 retry 路径仍需下一批统一；在此之前不要宣称“所有 kill 都等待退出”。
 2. **fast LLM 决策是 HTTP fetch**，未绑定会话 AbortSignal；stop/delete 撞上快模型调用时会在 15/30s 后返回 202/409，需要用户重试。
-3. **审计三态尚未实现**：恢复边界已落地（`55d5012`）；当前取消只做“不发布成功”，还没有“审计不可用 → failed”。
+3. **批次审计已实现，但共享 projectDir 的外部并发修改仍可能落入本批 diff**：审计窗口内用户/其他会话改的敏感文件会被本批判 violation；逐任务硬边界需 worktree 隔离，当前未启用。
 4. **事件 seq 仍可能在冲突时丢失/重复**：本批只做了 flush 有界；seq 不可变 / 单 logger 未做。
 5. **stop/delete 的 UI 只做了 stop 按钮接线**；删除按钮走原 DELETE，已有取消链。
 

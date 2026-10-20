@@ -42,6 +42,7 @@
 | B10 | `alignment.ts:297` | verify 依赖/描述扩展（status='pending' 分支内） | 无条件 | 锁内对齐路径 + 非状态字段，不纳入 |
 | B11 | `execution.ts` S3 preflight 块（监控纠偏决策之后） | preflight trace（event:'preflight'） | `updateMany where {id, status:'completed'}` | 1A/2A/3A 拍板（2026-09-22）：仅 EXPERIMENT_PREFLIGHT_VERIFY=on 且任务仍 completed 时采数；count=0 弃权（纠偏/转移后不落旧 completion 的灯，重做后有新 completion 再采） |
 | B12 | `execution.ts` resetBatchToPending（会话取消，2026-10-19） | in_progress/failed → pending | 取消时对本批任务批量 update | where `{id, status:{in:['in_progress','failed']}}`；count=0 → 重读同步（`syncTaskStatusFromDb`）；只处理本批 `batchTasks`，completed 不重置；与 `stop/delete` 的取消链配套，取消后不 auto-done |
+| B13 | `execution.ts` failBatchForAudit（批次审计三态，2026-10-19） | pending→failed（开始快照不可用）/ in_progress→failed（结束 diff 不可用） | 审计失败时按批次条件写 | where `{id, status: expectedStatus}`；count=0 → 重读同步弃权；unavailable 保留 `cliSessionId`（基础设施失败可复用会话）；敏感越界走 B6 `invalidateCliSession` expectedFrom='in_progress'（清 session）；未成功写 completed 前绝不发 result/completed |
 
 ### C. SessionMember
 
