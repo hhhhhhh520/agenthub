@@ -2,7 +2,7 @@
 
 > 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `be969e0`（结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `be969e0` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v19
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v19
 
 ## 1. 当前状态
 
