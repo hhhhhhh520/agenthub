@@ -3,7 +3,7 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v21：CI 门禁、架构守卫、SSE 重放、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单；阶段一/阶段二已收口）
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v22：CI 门禁、架构守卫、SSE 重放、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离；阶段一/阶段二已收口）
 - [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前唯一未闭环 P1/P2/P3 清单**（审计内容、tools 透传、OpenCode 会话隔离、取消/恢复、旧 36 项映射与验收顺序）
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测

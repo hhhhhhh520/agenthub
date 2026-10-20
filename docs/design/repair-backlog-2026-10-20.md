@@ -1,8 +1,8 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`a5e6991`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`121 files / 1400 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`ae39e00`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`121 files / 1405 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 当前代码复核
 
@@ -36,6 +36,7 @@
 | `0dd751a` | 审计内容证据 | `GitEvidence` 按内容 hash + key 存在性比较；覆盖已脏同路径再改、忽略 `.env`、删除；失败仍 `unavailable` |
 | `ce2703b` | 忽略目录 `.env` 补漏 | pathspec glob 枚举 `**/.env*`，覆盖被 `--directory` 折叠的忽略目录 |
 | `a5e6991` | 主批次工具白名单 | 批次映射保留 `tools`；两条入口共用 `parseAgentTools`，非空透传 `allowedTools` |
+| `ae39e00` | OpenCode 会话隔离 | 文件名/XDG 加 chatSessionId+权限/配置指纹+实例 nonce；退出/取消清理，retry 保留，sweep 保护活跃目录 |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -51,11 +52,11 @@
 
 ---
 
-## 2. P1（P1-01/02 已修；P1-03 待修）
+## 2. P1（P1-01/02/03 已修；P1 全部闭环）
 
 ### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
-**状态：** ✅ 已修（commit `0dd751a` + `ce2703b`，2026-10-20）。保留本节作为验收记录；后续 P1 见 P1-02/P1-03。
+**状态：** ✅ 已修（commit `0dd751a` + `ce2703b`，2026-10-20）。保留本节作为验收记录。
 **旧编号：** 原 36 项 #2（原“部分修”，现已闭环）
 **位置：**
 - `src/lib/services/shadow-git.ts:111` `getGitSnapshotDetailed`
@@ -106,7 +107,7 @@ return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 
 ### ✅ P1-02 主批次执行入口丢失 Agent 工具白名单
 
-**状态：** ✅ 已修（commit `a5e6991`，2026-10-20）。保留本节作为验收记录；下一项 P1-03。
+**状态：** ✅ 已修（commit `a5e6991`，2026-10-20）。保留本节作为验收记录；P1-03 已随后修复（`ae39e00`）。
 **旧编号：** 审查报告 P1 #3
 **位置：**
 - `src/lib/services/execution.ts:433` 批次 agent 映射
@@ -139,9 +140,10 @@ return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 
 ---
 
-### P1-03 OpenCode 不同会话覆盖同一权限文件
+### ✅ P1-03 OpenCode 不同会话覆盖同一权限文件
 
-**旧编号：** 原 36 项 #13（未修）；审查报告 P1 #4
+**状态：** ✅ 已修（commit `ae39e00`，2026-10-20）。保留本节作为验收记录；P1 全部闭环，下一项 P2-05。
+**旧编号：** 原 36 项 #13（原“未修”，现已闭环）；审查报告 P1 #4
 **位置：**
 - `src/lib/adapter/opencode-adapter.ts:149` `ensureAgentConfig`
 - `src/lib/adapter/opencode-adapter.ts:153` agent md 文件名
@@ -282,7 +284,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 4. 旧 36 项未闭环映射
 
-> 已修/已关闭：#1 越界自动删除、#2 审计内容证据（`0dd751a`/`ce2703b`）、#4 OpenCode 默认权限、#7 删除停止 CLI、#11 锁、#20 timeout cleanup、#35 Tailwind 动态色。
+> 已修/已关闭：#1 越界自动删除、#2 审计内容证据（`0dd751a`/`ce2703b`）、#4 OpenCode 默认权限、#7 删除停止 CLI、#11 锁、#13 OpenCode 会话隔离（`ae39e00`）、#20 timeout cleanup、#35 Tailwind 动态色。
 > **注意：** 原 36 项 #2 是“审计漏报/失效放行”，已由 P1-01/`0dd751a`+`ce2703b` 闭环；质量复核报告里的第 2 项是“completed CAS 后成功摘要”，已由 `be969e0` 修复，两者编号相同但内容不同。
 > 下表的“部分”表示主要风险已缓解但仍有明确缺口。
 
@@ -295,7 +297,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 9 | 未修 | attachments 上传/下载 | SVG 仍允许并 `inline` 返回；改 `attachment` 或加 CSP/sandbox |
 | 10 | 部分 | `arg-safety.ts:8`、`opencode-adapter.ts:246` | Windows cmd 元字符已挡；POSIX 字符未覆盖（Windows-only 接受）；临时配置中的 API key 仍未做 ACL/清理 |
 | 12 | 部分 | `alignment.ts:83,421`、`execution.ts:819`、`chat-router.ts:289` | 仍有 4 处 `transitionPhase` 返回值未检查；补检查/测试 |
-| 13 | 未修 | `opencode-adapter.ts` | 见 P1-03：同 Agent 不同会话共用权限文件 |
+
 | 14 | 未修 | `attachments/route.ts:34` | 先全量 `formData()`；无总数量/总大小；中途 413 留下已写文件和记录 |
 | 15 | 部分 | `chat/route.ts:109` | `POST /messages` 已校验 replyTo；`POST /chat` 未校验 |
 | 16 | 未修 | `redo/route.ts:83,95` | `transitionPhase` 后才 `trim()`；非字符串 → 500。先校验类型再推进 |
@@ -315,7 +317,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1400 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1405 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -347,16 +349,15 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 6. 建议执行顺序
 
-1. **P1-03 OpenCode 权限文件会话隔离**（安全边界）
-2. **P2-05 Claude MDS 隔离**（小改动，安全）
-3. **P2-01 timeout iterator 收尾**
-4. **P2-02 regenerate chatSessionId**
-5. **P2-03 stop/delete 生命周期**
-6. **P2-04 恢复计划审批关联**
-7. **P2-06/07 HTTP cancel/旧快照**
-8. **P2-08/09 进程树/Agent 创建取消**
-9. **P2-10/11/12 提示/清扫/事件**
-10. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+1. **P2-05 Claude MDS 隔离**（小改动，安全）
+2. **P2-01 timeout iterator 收尾**
+3. **P2-02 regenerate chatSessionId**
+4. **P2-03 stop/delete 生命周期**
+5. **P2-04 恢复计划审批关联**
+6. **P2-06/07 HTTP cancel/旧快照**
+7. **P2-08/09 进程树/Agent 创建取消**
+8. **P2-10/11/12 提示/清扫/事件**
+9. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -378,7 +379,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `121 files / 1400 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `121 files / 1405 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -404,6 +405,6 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- 取消/退出/清理、执行恢复、批次审计、双维度权限：仍有实质缺口。
-- 最危险的剩余项是：**OpenCode 权限文件跨会话覆盖**（审计内容漏检已由 `0dd751a`+`ce2703b` 闭环；主批次工具白名单已由 `a5e6991` 闭环）。
-- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复。
+- 取消/退出/清理、执行恢复、批次审计、双维度权限：P1 安全边界已全部闭环；剩余 P2 仍需逐项处理。
+- 最危险的剩余项转为：**P2-05 Claude MDS 隔离、P2-01 timeout iterator、P2-02 regenerate 归属、P2-03 stop/delete 生命周期**。
+- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）已由 `ae39e00` 修复。
