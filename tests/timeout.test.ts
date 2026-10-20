@@ -10,6 +10,15 @@ function stuckSource() {
   }
 }
 
+/** 非合作 generator：next 和 return 都永不 settle；return 不能无限拖住超时错误。 */
+function nonCooperativeSource() {
+  return {
+    [Symbol.asyncIterator]() { return this },
+    next: () => new Promise<IteratorResult<number>>(() => {}),
+    return: () => new Promise<IteratorResult<number>>(() => {}),
+  }
+}
+
 async function drain(iterable: AsyncIterable<number>) {
   for await (const value of iterable) { void value }
 }
@@ -38,6 +47,31 @@ describe('withTimeout — 有界清理', () => {
     expect(onTimeout).toHaveBeenCalledTimes(1)
     expect(Date.now() - start).toBeLessThan(500)
   })
+
+  it('P2-01: iterator.return() 永不 settle 时仍能在 cleanupTimeoutMs 内有界抛 TimeoutError', async () => {
+    const onTimeout = vi.fn(async () => {})
+    const source = nonCooperativeSource()
+    const start = Date.now()
+
+    await expect(
+      drain(withTimeout(source, 20, { onTimeout, cleanupTimeoutMs: 30 })),
+    ).rejects.toBeInstanceOf(TimeoutError)
+
+    expect(onTimeout).toHaveBeenCalledTimes(1)
+    expect(Date.now() - start).toBeLessThan(500)
+  }, 2000)
+
+  it('P2-01: iterator.return() reject 不能覆盖 TimeoutError', async () => {
+    const source = {
+      [Symbol.asyncIterator]() { return this },
+      next: () => new Promise<IteratorResult<number>>(() => {}),
+      return: async () => { throw new Error('return failed') },
+    }
+
+    await expect(
+      drain(withTimeout(source, 20, { cleanupTimeoutMs: 30 })),
+    ).rejects.toBeInstanceOf(TimeoutError)
+  }, 2000)
 
   it('正常完成不触发 onTimeout', async () => {
     const onTimeout = vi.fn(async () => {})

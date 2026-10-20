@@ -9,14 +9,18 @@
 /** 清理回调自身的硬上限：onTimeout 里的 kill/wait 再慢，也不能让超时语义无限挂起。 */
 export const CLEANUP_TIMEOUT_MS = 10_000
 
-async function runCleanupBounded(fn: () => Promise<void>, timeoutMs: number): Promise<void> {
+async function runCleanupBounded(
+  fn: () => Promise<void>,
+  timeoutMs: number,
+  label = 'cleanup',
+): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
       fn(),
       new Promise<void>((resolve) => {
         timer = setTimeout(() => {
-          console.warn(`[withTimeout] onTimeout cleanup exceeded ${timeoutMs}ms; timeout still wins`)
+          console.warn(`[withTimeout] ${label} exceeded ${timeoutMs}ms; timeout still wins`)
           resolve()
         }, timeoutMs)
       }),
@@ -53,7 +57,13 @@ export async function* withTimeout<T>(
         timedOut = true
         // 清理失败不能吞掉 TimeoutError：超时语义必须始终兑现（否则调用方会永久挂起）。
         try {
-          if (options?.onTimeout) await runCleanupBounded(options.onTimeout, options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS)
+          if (options?.onTimeout) {
+            await runCleanupBounded(
+              options.onTimeout,
+              options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS,
+              'onTimeout cleanup',
+            )
+          }
         } catch (err) {
           console.warn('[withTimeout] onTimeout cleanup failed:', err instanceof Error ? err.message : err)
         }
@@ -66,7 +76,13 @@ export async function* withTimeout<T>(
           timer = setTimeout(async () => {
             timedOut = true
             try {
-              if (options?.onTimeout) await runCleanupBounded(options.onTimeout, options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS)
+              if (options?.onTimeout) {
+                await runCleanupBounded(
+                  options.onTimeout,
+                  options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS,
+                  'onTimeout cleanup',
+                )
+              }
             } catch (err) {
               console.warn('[withTimeout] onTimeout cleanup failed:', err instanceof Error ? err.message : err)
             } finally {
@@ -86,8 +102,21 @@ export async function* withTimeout<T>(
   } finally {
     if (timer) clearTimeout(timer)
     // 超时时调用 iterator.return() 让子 generator 的 finally 触发
-    // （readRound/readNdjsonRound 的 finally 会移除 stdout listener）
-    if (timedOut) await iterator.return?.()
+    // （readRound/readNdjsonRound 的 finally 会移除 stdout listener）。
+    // P2-01: 非合作 generator 的 return() 可能永不 settle；必须与 onTimeout 一样有界。
+    // wrapper 只能保证自身有界返回，不能强制停掉底层 generator——超时后它迟到的
+    // 写入不会再被 yield，也不会覆盖已经抛出的 TimeoutError。
+    if (timedOut && iterator.return) {
+      try {
+        await runCleanupBounded(
+          async () => { await iterator.return!() },
+          options?.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS,
+          'iterator.return cleanup',
+        )
+      } catch (err) {
+        console.warn('[withTimeout] iterator.return cleanup failed:', err instanceof Error ? err.message : err)
+      }
+    }
   }
 }
 
