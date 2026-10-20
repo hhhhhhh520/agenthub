@@ -73,7 +73,7 @@ claude -p --output-format stream-json --input-format stream-json --verbose \
 ### OpenCode 权限（v2.0.27 实测，2026-10-20）
 
 - `OPENCODE_CONFIG` / `OPENCODE_PERMISSION` **不生效**，已删除；
-- 权限写入 `.opencode/agents/agenthub-*.md` frontmatter：
+- 权限写入 `.opencode/agents/agenthub-<agentId>-<scope>.md` frontmatter；scope 含 chatSessionId、permissionMode、tools/model/baseUrl/workDir/mcpConfig 指纹与 adapter 实例 nonce，避免 default/auto 或并发任务互相覆盖：
   - `tools`：可用性（true/false）
   - `permission`：`ask | allow | deny`（`bash` 映射为 OpenCode `shell` 规则）
   - `read` 用对象规则保留 `.env` ask（`*` allow 不会覆盖敏感文件默认审批）

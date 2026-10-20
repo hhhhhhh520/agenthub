@@ -207,6 +207,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ### P2-03 stop 与 DELETE 的取消屏障竞态
 
+**接续提示：** `docs/design/handoff-2026-10-20-p2-03.md`
 **位置：** `src/app/api/sessions/[id]/stop/route.ts:31`、`src/app/api/sessions/[id]/route.ts:103`
 **现状：** DELETE 等锁释放后仍要查/清附件；并发 stop 可能在此时认为停止完成并 `clearSessionCancel`，新 chat 拿到锁，DELETE 随后仍删记录。
 **最小修法：** 串行化 stop/delete 生命周期，或引入 `deleting` 标记；删除完成前拒绝新执行，stop 不得清理 deleting 会话的取消屏障。
@@ -323,7 +324,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1409 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1409 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---

@@ -2,7 +2,8 @@
 
 > 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `74bda96`（regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `74bda96` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v25
+> 历史说明: P1 安全边界已全部闭环，Batch 1 的 1-6 项已完成；**当前下一项是 P2-03**，见 `docs/design/handoff-2026-10-20-p2-03.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 接续提示、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v25
 
 ## 1. 当前状态
 
@@ -62,7 +63,7 @@
 - `eventLogger.flush`：5s 上限；超时只警告，不阻塞锁释放。
 - `terminateEntry` / stop / delete 全部有硬上限。
 
-## 3. 仍然未完成（下一批的直接任务）
+## 3. Batch 1 历史任务（均已完成；当前任务见 P2-03 接续提示）
 
 ### Batch 1：执行恢复边界 + 审计三态 + 禁止提前发布成功
 

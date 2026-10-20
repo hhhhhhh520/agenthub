@@ -140,8 +140,8 @@ prisma/
 - **Wall-clock 超时**：`orchestrator/timeout.ts` 的 `withTimeout` 包装 async generator，超时抛 `TimeoutError` 并调用 `onTimeout` 清理（`gracefulKillEntry` 两阶段杀进程）。5 个核心函数有超时保护：callLLM/callLLMForAnalysis(2min)、executeSingleAgent/executeTaskBatch(15min)、runDiscussion(3min/轮)。全局 50 分钟 deadline 从 SSE 流开始算。catch 块区分 `TimeoutError` 不走 fallback 防连锁挂起
 - `platform: 'opencode'` → OpenCodeAdapter（NDJSON 事件流，通过 ProcessRegistry 管理，format='ndjson'，一次性进程自动清理）
   - **prompt 通过 CLI 参数传递**：只传用户消息，systemPrompt 通过配置文件注入
-  - **System Prompt 注入**：写入 `.opencode/agents/agenthub-{agentId}.md`，通过 `--agent` 参数选择
-  - **MCP 配置注入**：通过 `XDG_CONFIG_HOME` 环境变量注入独立配置目录，每个 Agent 独立配置避免并发冲突
+  - **System Prompt 注入**：写入 `.opencode/agents/agenthub-{agentId}-{scope}.md`，`--agent` 使用同一隔离名；scope = chatSessionId + permissionMode + tools/model/baseUrl/workDir/mcpConfig 指纹 + adapter 实例 nonce
+  - **MCP 配置注入**：通过 `XDG_CONFIG_HOME` 注入每会话/每配置隔离目录；进程退出或取消时清理，sweep 保留 ProcessRegistry 活跃目录
   - **附件支持**：通过 `--file` 参数传递附件路径（图片和非图片都走 `--file`）
   - **工具/权限双维度**：写入 agent frontmatter `tools`（可用性）与 `permission`（ask/allow/deny）；
     `OPENCODE_CONFIG` / `OPENCODE_PERMISSION` 在 v2.0.27 实测不生效，已删除
@@ -161,7 +161,7 @@ prisma/
 - **SSE 错误处理**：`use-chat.ts` fetch 后必须检查 `res.ok`，4xx/5xx 时解析错误信息显示给用户，不静默失败
 - **MCP 协作**：两个适配器都支持 MCP Server，给 Agent 提供共享工具（`read_artifact`、`list_files`、`list_tasks`、`post_message`、`read_messages`）
   - **ClaudeCodeAdapter**：通过 `--mcp-config` 参数传递，MCP 配置写入临时文件避免 shell 转义问题
-  - **OpenCodeAdapter**：通过 `XDG_CONFIG_HOME` 环境变量注入独立配置目录，每个 Agent 独立配置避免并发冲突。配置格式从 Claude Code MCP 格式自动转换为 OpenCode MCP 格式（`type: 'local'`, `command: [cmd, ...args]`, `environment: {}`）
+  - **OpenCodeAdapter**：通过 `XDG_CONFIG_HOME` 注入按会话/权限/配置指纹隔离的目录，避免 default/auto 与并发任务互相覆盖；配置格式从 Claude Code MCP 格式自动转换为 OpenCode MCP 格式（`type: 'local'`, `command: [cmd, ...args]`, `environment: {}`）
   - **路径安全**：`isPathSafe()` 用 `realpathSync` 解析后比较 `REAL_WORK_DIR + sep`，防 symlink 和前缀目录绕过；文件不存在时 fallback 到 `resolve + startsWith(WORK_DIR + sep)`
 - **LLM fallback 已移除**：CLI 不可用时直接报错，不静默降级到 LLM API
 - **附件支持**：两个适配器都支持文件附件
@@ -341,7 +341,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **执行收敛**：`handleExecution` 取消时把本批 `in_progress/failed` 条件写回 `pending`，不写 completed/result、不跑监控、不 auto-done；已完成任务保留，未完成可续跑/redo。
 - **删除顺序**：`requestSessionCancel` → 杀并等进程退出 → `waitForSessionUnlock`（30s）→ 清附件/影子 git → 删 DB → `clearSessionCancel`；任一步未确认不得删数据。
 - **停止端点**：`POST /api/sessions/[id]/stop` 只停止不删除；确认退出且锁释放后才清取消标记（15s 上限）。前端 stop 按钮必须先 POST 该端点再 abort 本地流（abort 本身不是停止）。
-- **有界清理**：`withTimeout` 的 `onTimeout` 清理上限 10s；`eventLogger.flush` 上限 5s；超时只警告，不得跳过锁释放/阻塞流关闭。
+- **有界清理**：`withTimeout` 的 `onTimeout` 与 `iterator.return()` 各 10s 上限；`eventLogger.flush` 5s；超时只警告，不得跳过锁释放/阻塞流关闭。`iterator.return()` 挂起或抛错不得覆盖 `TimeoutError`。
 
 ### 会话类型
 
@@ -354,7 +354,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
 - **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v25):阶段一/阶段二收口、CI 门禁、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全与 P11 harness
-- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — 当前唯一未闭环 P1/P2/P3 清单、复现材料、验收顺序（接手先读）
+- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — 当前唯一未闭环 P2/P3 清单（P1 已全部闭环）、复现材料、验收顺序（接手先读）
 - **写入点清单**:`docs/design/phase2-3.2-write-points.md` — §3.2 全部状态写点的条件写语义、竞态窗口分析、"不纳入"清单（新增写点前必读）
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`（CLI 实测证据：`docs/design/permission-cli-probe-2026-10-20.md`）
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
