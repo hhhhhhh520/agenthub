@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`6292cdd`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`122 files / 1422 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`7520866`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`122 files / 1424 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P2-03/P2-04 保留完成记录供追溯；旧 36 项中已修/部分修的映射见 §4。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P2-03/P2-04/P2-06 保留完成记录供追溯；旧 36 项中已修/部分修的映射见 §4。
 
 ---
 
@@ -42,6 +42,7 @@
 | `74bda96` | regenerate 取消安全 | regenerate 传 `chatSessionId`/`workDir`；返回后复查取消，不写回、不发成功 done |
 | `31c5946` | stop/delete 生命周期屏障 | `session-lifecycle` deleting 标记；DELETE 取消前 mark、删库后清，失败 finally 清；stop 对 deleting 不清取消；chat 拿锁前后拒绝 |
 | `6292cdd` | 恢复计划审批关联 | 计划消息写任务集 plan ID；恢复要求计划已呈现且之后有用户消息；缺失时重展示到 align_arch，不自动执行 |
+| `7520866` | SSE body cancel 安全 | safeEnqueue 捕获推流异常；ReadableStream cancel 置关闭标记并清超时；后台执行与锁释放不变 |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -223,12 +224,9 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 **最小修法：** 把 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 与 provider 凭据分支分离，所有 Claude spawn 都注入；保留 `CLAUDE_CONFIG_DIR`/`--settings` 仅在凭据存在时使用。
 **测试：** 无 baseUrl/apiKey 的 adapter 到 registry config 边界仍含该 env。
 
-### P2-06 HTTP body cancel 未保护 enqueue
+### P2-06 HTTP body cancel 未保护 enqueue ✅
 
-**位置：** `src/app/api/sessions/[id]/chat/route.ts:133`
-**现状：** `controller.enqueue` 没有 `streamClosed` 保护；stream 也没有 `cancel()` 分支设置关闭标记。客户端关闭 body 后继续推流可能抛错，中断后台处理并释放锁。
-**最小修法：** 统一 `safeEnqueue`，`cancel()`/异常时置 `streamClosed`；关闭后只落库不推流；保持后台执行与锁语义不变。
-**测试：** mock reader `cancel()` 后继续发事件，不得抛错/中断后台；锁仍由 stream finally 释放。
+**状态：** ✅ 已闭环（commit `7520866`，2026-10-20）。统一 `safeEnqueue` 捕获 enqueue 异常并停止推流；`ReadableStream.cancel()` 置 `streamClosed` 并清理 60min 超时；后台执行继续，锁仍由 `stream.start` 的 finally 释放。新增 body cancel 后继续发事件、cancel 清理定时器回归。
 
 ### P2-07 拿锁前读取的会话快照可能过期
 
@@ -317,7 +315,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1422 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1424 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -349,7 +347,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 6. 建议执行顺序
 
-1. **P2-06/07 HTTP cancel/旧快照**
+1. **P2-07 拿锁前旧快照**
 2. **P2-08/09 进程树/Agent 创建取消**
 3. **P2-10/11/12 提示/清扫/事件**
 4. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
@@ -374,7 +372,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `122 files / 1422 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `122 files / 1424 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -401,5 +399,5 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - 取消/退出/清理、执行恢复、批次审计、双维度权限：P1 安全边界已全部闭环；剩余 P2 仍需逐项处理。
-- 最危险的剩余项转为：**P2-06/07 HTTP cancel/旧快照、P2-08/09 进程树/Agent 创建取消**（P2-05 Claude MDS 由 `a24ca60` 闭环，P2-01 timeout 由 `ff53430` 闭环，P2-02 regenerate 由 `74bda96` 闭环，P2-03 stop/delete 由 `31c5946` 闭环，P2-04 恢复审批由 `6292cdd` 闭环）。
+- 最危险的剩余项转为：**P2-07 拿锁前旧快照、P2-08/09 进程树/Agent 创建取消**（P2-05 Claude MDS 由 `a24ca60` 闭环，P2-01 timeout 由 `ff53430` 闭环，P2-02 regenerate 由 `74bda96` 闭环，P2-03 stop/delete 由 `31c5946` 闭环，P2-04 恢复审批由 `6292cdd` 闭环，P2-06 SSE cancel 由 `7520866` 闭环）。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）已由 `ae39e00` 修复。

@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `6292cdd`（恢复计划审批关联 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `6292cdd` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `7520866`（SSE body cancel 安全 + 恢复计划审批关联 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `7520866` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1 安全边界已全部闭环，Batch 1 的 1-6 项已完成，P2-03/P2-04 已完成；**当前下一项是 P2-06/07**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v27
+> 历史说明: P1 安全边界已全部闭环，Batch 1 的 1-6 项已完成，P2-03/P2-04/P2-06 已完成；**当前下一项是 P2-07**，见 `docs/design/repair-backlog-2026-10-20.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v28
 
 ## 1. 当前状态
 
@@ -27,10 +27,11 @@
 | `74bda96` | regenerate 传 chatSessionId/workDir；取消后不写回、不发成功 done |
 | `31c5946` | stop/delete deleting 屏障；DELETE 失败可重试；chat 拿锁前后拒绝删除中会话 |
 | `6292cdd` | 恢复执行关联同一获批计划；计划 ID + 用户确认；缺失时重展示等待确认 |
+| `7520866` | SSE body cancel 安全；safeEnqueue、cancel 清理超时、后台执行与锁释放不变 |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：122 files / **1422 passed / 3 skipped**
+- `npx vitest run`：122 files / **1424 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -127,7 +128,8 @@
 - ✅ P2-01 timeout iterator 收尾（commit `ff53430`）：return 有界，挂起/抛错不覆盖超时；
 - ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；
 - ✅ P2-03 stop/delete deleting 屏障（commit `31c5946`）：删除完成前拒绝新执行，stop 不清 deleting 会话的取消标记；
-- ✅ P2-04 恢复执行计划审批关联（commit `6292cdd`）：计划 ID + 用户确认，缺失/不匹配时重展示等待确认，不自动执行；下一项 P2-06/07；
+- ✅ P2-04 恢复执行计划审批关联（commit `6292cdd`）：计划 ID + 用户确认，缺失/不匹配时重展示等待确认，不自动执行；
+- ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；下一项 P2-07；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - 事件 seq 不可变 + 单 logger；
 - ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；
