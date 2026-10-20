@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v22（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 安全修复；下一批 P2-05 Claude MDS） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v23（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1 全部闭环 + P2-05 MDS；下一批 timeout/regenerate/stop-delete） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -29,6 +29,7 @@
 | v20 | 2026-10-20 | **P1-01 审计内容证据（commit 0dd751a/ce2703b）**。`shadow-git` 新增 `GitEvidence`（路径 → sha256/null），快照覆盖 tracked dirty、untracked 与 ignored 敏感文件（`.env*`，目录型敏感前缀折叠）；`auditBatchChanges` 改用 Map，按内容 hash + key 存在性比较，覆盖已脏同一路径再次修改、删除和忽略 `.env`；被忽略目录内的 `.env` 用 pathspec glob 补抓。证据读取失败仍走 `unavailable`。新增真实临时 Git 回归与 execution 接线守卫，变异验证 Map 分支回退精确红。全量 121 files / 1397 passed / 3 skipped。**下一批 P1**：主批次 tools 透传、OpenCode 权限文件按会话隔离；随后 timeout/regenerate/stop-delete/恢复审批。 |
 | v21 | 2026-10-20 | **P1-02 主批次工具白名单透传（commit a5e6991）**。`execution.ts` 批次 agent 映射保留 `tools`；`executeTaskBatch` 与 `executeSingleAgent` 共用 `parseAgentTools`，非空 tools 透传为 `allowedTools`，空/缺失保持不限制。新增批次 connect、单 Agent connect、空 tools、auto 不放大及 execution 接线测试；变异验证移除映射/透传均精确红。全量 121 files / 1400 passed / 3 skipped。**下一批 P1**：OpenCode 权限文件按会话隔离；随后 Claude MDS、timeout/regenerate/stop-delete/恢复审批。 |
 | v22 | 2026-10-20 | **P1-03 OpenCode 权限文件按会话隔离（commit ae39e00）**。agent md/XDG 目录加入 chatSessionId + permissionMode + tools/model/baseUrl/workDir/mcpConfig 指纹与 adapter 实例 nonce；`--agent` 与文件同名，default/auto 并发不再覆盖。ProcessRegistry 记录 managedAgentFile/managedConfigDir，进程退出/取消清理，共享路径按存活 entry 保护，retry 重建前 preserveManaged；sweep 保留 registry 活跃 per-session 目录。新增隔离、清理、retry、sweep 回归并做变异验证。全量 121 files / 1405 passed / 3 skipped。**下一批**：P2-05 Claude MDS 隔离、timeout/regenerate/stop-delete/恢复审批。 |
+| v23 | 2026-10-20 | **P2-05 Claude MDS 隔离（commit a24ca60）**。根因：`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 只在有 provider 凭据时注入，已有登录认证的空配置 agent 跳过，workDir 的 CLAUDE.md 自动发现未隔离。修复：MDS 开关与 provider 分支解耦，所有 Claude spawn 注入；`CLAUDE_CONFIG_DIR`/`--settings`/envScrub 仍只在凭据存在时使用。新增空配置 registry 边界断言与 provider 分支 MDS 断言，变异验证删除 env 注入精确红。全量 121 files / 1405 passed / 3 skipped。**下一批**：P2-01 timeout、P2-02 regenerate、P2-03 stop-delete、P2-04 恢复审批。 |
 
 
 ---
