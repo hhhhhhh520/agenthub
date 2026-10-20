@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 // --- Mock setup ---
 const { mockSend } = vi.hoisted(() => ({
@@ -11,7 +14,7 @@ vi.mock('@/lib/adapter/process-registry', () => ({
   },
 }))
 
-import { OpenCodeAdapter } from '@/lib/adapter/opencode-adapter'
+import { OpenCodeAdapter, sanitizeOpencodeAgentId } from '@/lib/adapter/opencode-adapter'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -113,13 +116,52 @@ describe('OpenCodeAdapter', () => {
     expect(fullPrompt).toBe('do it')
   })
 
-  it('send sets OPENCODE_PERMISSION in env', async () => {
+  it('不再使用 OPENCODE_PERMISSION env（v2.0.27 不生效）', async () => {
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', workDir: '/dir' })
     const gen = adapter.send({ prompt: 'test' })
     for await (const _ of gen) { /* consume */ }
     const config = mockSend.mock.calls[0][2]
-    expect(config.env.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    expect(config.env.OPENCODE_PERMISSION).toBeUndefined()
+  })
+
+  it('auto 模式传 --auto，default 不传', async () => {
+    const autoAdapter = new OpenCodeAdapter()
+    await autoAdapter.connect({ platform: 'opencode', workDir: '/dir', permissionMode: 'auto' })
+    for await (const _ of autoAdapter.send({ prompt: 'test' })) { /* consume */ }
+    expect(mockSend.mock.calls[0][2].args).toContain('--auto')
+
+    vi.clearAllMocks()
+    mockSend.mockImplementation(async function* () {})
+    const defaultAdapter = new OpenCodeAdapter()
+    await defaultAdapter.connect({ platform: 'opencode', workDir: '/dir', permissionMode: 'default' })
+    for await (const _ of defaultAdapter.send({ prompt: 'test' })) { /* consume */ }
+    expect(mockSend.mock.calls[0][2].args).not.toContain('--auto')
+  })
+
+  it('writes tools + permission frontmatter to agent md (dual dimension)', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'oc-adapter-perm-'))
+    try {
+      const adapter = new OpenCodeAdapter()
+      await adapter.connect({
+        platform: 'opencode', workDir, agentId: 'agent-perm', permissionMode: 'auto',
+        allowedTools: ['Read', 'Edit', 'Bash'],
+      })
+      for await (const _ of adapter.send({ prompt: 'test', systemPrompt: 'sys' })) { /* consume */ }
+      const md = readFileSync(join(workDir, '.opencode', 'agents', `agenthub-${sanitizeOpencodeAgentId('agent-perm')}.md`), 'utf8')
+      expect(md).toContain('tools:')
+      expect(md).toContain('  read: true')
+      expect(md).toContain('  bash: true')
+      expect(md).toContain('permission:')
+      expect(md).toContain('  read:')
+      expect(md).toContain('    "*": allow')
+      expect(md).toContain('    "*.env": ask')
+      expect(md).toContain('  edit: allow')
+      expect(md).toContain('  execute: allow')
+      expect(md).toContain('  webfetch: deny')
+    } finally {
+      rmSync(workDir, { recursive: true, force: true })
+    }
   })
 
   it('send sets ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL in env', async () => {

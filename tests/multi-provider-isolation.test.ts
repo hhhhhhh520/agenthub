@@ -258,7 +258,7 @@ describe('OpenCodeAdapter — provider config file (ISSUE-027 commit 3)', () => 
       stdout: localStdout,
       stderr: localStderr,
       exitCode: null,
-      on: vi.fn((event: string, cb: Function) => {
+      on: vi.fn((event: string, cb: (...args: unknown[]) => void) => {
         if (event === 'exit') localProcess._exitCb = cb
       }),
       kill: vi.fn(),
@@ -298,7 +298,7 @@ describe('OpenCodeAdapter — provider config file (ISSUE-027 commit 3)', () => 
     const spawnEnv = newEnvs[0]
     expect(spawnEnv.ANTHROPIC_API_KEY).toBeUndefined()
     expect(spawnEnv.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(spawnEnv.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    expect(spawnEnv.OPENCODE_PERMISSION).toBeUndefined()
     expect(spawnEnv.XDG_CONFIG_HOME).toBeTruthy()
 
     // 配置文件内容：provider.anthropic.options 承载凭据与端点，模型带 provider 前缀

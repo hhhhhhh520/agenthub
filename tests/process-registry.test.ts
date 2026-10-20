@@ -109,11 +109,12 @@ describe('ProcessRegistry', () => {
       expect(args).toContain('--mcp-config')
     })
 
-    it('adds --permission-mode arg', () => {
+    it('always passes --permission-mode default; auto approval is registry-side', () => {
       processRegistry.getOrCreate('key1', { workDir: '/dir', permissionMode: 'auto' })
       const args = mockSpawn.mock.calls[0][1]
       expect(args).toContain('--permission-mode')
-      expect(args).toContain('auto')
+      expect(args).toContain('default')
+      expect(args).not.toContain('auto')
     })
 
     it('adds --model arg', () => {

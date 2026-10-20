@@ -90,7 +90,7 @@ describe('OpenCode adapter — argument building', () => {
     expect(config.env.OPENAI_BASE_URL).toBeUndefined()
   })
 
-  it('should always set OPENCODE_PERMISSION in env', async () => {
+  it('should NOT set OPENCODE_PERMISSION in env (v2.0.27 ignores it)', async () => {
     const { OpenCodeAdapter } = await import('../src/lib/adapter/opencode-adapter')
     const adapter = new OpenCodeAdapter()
     await adapter.connect({ platform: 'opencode', workDir: '/dir' })
@@ -99,7 +99,7 @@ describe('OpenCode adapter — argument building', () => {
     for await (const _ of gen) { /* consume */ }
 
     const config = mockSend.mock.calls[0][2]
-    expect(config.env.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    expect(config.env.OPENCODE_PERMISSION).toBeUndefined()
   })
 
   it('should generate workDir when not provided', async () => {
@@ -384,7 +384,7 @@ describe('ProcessRegistry — env merge for Claude Code and OpenCode', () => {
     const config = mockSend.mock.calls[callBefore][2]
     expect(config.env.ANTHROPIC_API_KEY).toBe('sk-oc-key')
     expect(config.env.ANTHROPIC_BASE_URL).toBe('https://oc.proxy.com')
-    expect(config.env.OPENCODE_PERMISSION).toBe('{"*":"allow"}')
+    expect(config.env.OPENCODE_PERMISSION).toBeUndefined()
     // 不应该设置 OPENAI 环境变量
     expect(config.env.OPENAI_API_KEY).toBeUndefined()
     expect(config.env.OPENAI_BASE_URL).toBeUndefined()

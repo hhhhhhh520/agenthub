@@ -53,210 +53,85 @@ describe('Tool Restriction', () => {
     processRegistry.killAll()
   })
 
-  describe('Claude Code — CLI 参数拼接', () => {
-    it('传 --allowedTools 参数', () => {
-      processRegistry.getOrCreate('test-key-1', {
+  describe('Claude Code — 可用性 vs 审批', () => {
+    it('agent.tools 走 --tools（可用性），不再使用受 --bare 限制的 3 工具集', () => {
+      processRegistry.getOrCreate('claude-tools', {
         workDir: '/tmp/test',
-        allowedTools: ['Read', 'Write', 'Edit'],
-      })
-
-      expect(mockSpawn).toHaveBeenCalled()
-      const args = mockSpawn.mock.calls[0][1] as string[]
-      const allowedIdx = args.indexOf('--allowedTools')
-      expect(allowedIdx).toBeGreaterThanOrEqual(0)
-      expect(args[allowedIdx + 1]).toBe('Read,Write,Edit')
-    })
-
-    it('传 --disallowedTools 参数', () => {
-      processRegistry.getOrCreate('test-key-2', {
-        workDir: '/tmp/test',
-        disallowedTools: ['Agent', 'WebSearch'],
+        allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
       })
 
       const args = mockSpawn.mock.calls[0][1] as string[]
-      const disallowedIdx = args.indexOf('--disallowedTools')
-      expect(disallowedIdx).toBeGreaterThanOrEqual(0)
-      expect(args[disallowedIdx + 1]).toBe('Agent,WebSearch')
+      const toolsIdx = args.indexOf('--tools')
+      expect(toolsIdx).toBeGreaterThanOrEqual(0)
+      expect(args[toolsIdx + 1]).toBe('Read,Write,Edit,Bash,Glob,Grep')
+      expect(args).not.toContain('--bare')
+      expect(args[args.indexOf('--setting-sources') + 1]).toBe('user')
+      // default 模式不预批准，必须走 control_request
+      expect(args).not.toContain('--allowedTools')
+      expect(args[args.indexOf('--permission-mode') + 1]).toBe('default')
     })
 
-    it('同时传 --allowedTools 和 --disallowedTools', () => {
-      processRegistry.getOrCreate('test-key-3', {
+    it('auto 模式把可用工具加入 --allowedTools（减少往返），CLI 仍用 default 拿 control_request', () => {
+      processRegistry.getOrCreate('claude-auto', {
         workDir: '/tmp/test',
-        allowedTools: ['Read', 'Bash'],
-        disallowedTools: ['Agent'],
+        permissionMode: 'auto',
+        allowedTools: ['Read', 'Edit'],
       })
 
       const args = mockSpawn.mock.calls[0][1] as string[]
-      const allowedIdx = args.indexOf('--allowedTools')
-      const disallowedIdx = args.indexOf('--disallowedTools')
-      expect(allowedIdx).toBeGreaterThanOrEqual(0)
-      expect(disallowedIdx).toBeGreaterThanOrEqual(0)
-      expect(args[allowedIdx + 1]).toBe('Read,Bash')
-      expect(args[disallowedIdx + 1]).toBe('Agent')
+      expect(args[args.indexOf('--allowedTools') + 1]).toBe('Read,Edit')
+      expect(args[args.indexOf('--permission-mode') + 1]).toBe('default')
     })
 
-    it('空数组不传工具参数', () => {
-      processRegistry.getOrCreate('test-key-4', {
+    it('空 tools → --tools default（不限制内置工具），不是无参数', () => {
+      processRegistry.getOrCreate('claude-empty', {
         workDir: '/tmp/test',
         allowedTools: [],
       })
 
       const args = mockSpawn.mock.calls[0][1] as string[]
+      expect(args[args.indexOf('--tools') + 1]).toBe('default')
       expect(args).not.toContain('--allowedTools')
-      expect(args).not.toContain('--disallowedTools')
     })
 
-    it('不传 allowedTools 时无工具参数', () => {
-      processRegistry.getOrCreate('test-key-5', {
+    it('显式 disallowedTools 仍透传', () => {
+      processRegistry.getOrCreate('claude-disallowed', {
         workDir: '/tmp/test',
+        allowedTools: ['Read'],
+        disallowedTools: ['Agent', 'WebSearch'],
       })
 
       const args = mockSpawn.mock.calls[0][1] as string[]
-      expect(args).not.toContain('--allowedTools')
-      expect(args).not.toContain('--disallowedTools')
+      expect(args[args.indexOf('--disallowedTools') + 1]).toBe('Agent,WebSearch')
+    })
+
+    it('settingsPath 走 --settings（受管 provider 配置）', () => {
+      processRegistry.getOrCreate('claude-settings', {
+        workDir: '/tmp/test',
+        settingsPath: 'C:/safe/settings.json',
+      })
+
+      const args = mockSpawn.mock.calls[0][1] as string[]
+      expect(args[args.indexOf('--settings') + 1]).toBe('C:/safe/settings.json')
     })
   })
 
-  describe('OpenCode — 权限配置文件', () => {
-    it('有 allowedTools 时写临时 opencode.json', () => {
+  describe('OpenCode — 权限不再走临时配置/env', () => {
+    it('不写 agenthub-oc-* 临时权限文件，也不注入 OPENCODE_CONFIG', () => {
       processRegistry.getOrCreate('oc-key-1', {
         workDir: '/tmp/test',
         command: 'opencode',
-        args: ['-p', '-f', 'json'],
+        args: ['run', '--format', 'json'],
         format: 'ndjson',
         allowedTools: ['Read', 'Edit'],
       })
 
-      // 应该写了一个临时配置文件
-      expect(mockWriteFileSync).toHaveBeenCalled()
-      const writeCall = mockWriteFileSync.mock.calls.find(
-        (c: any[]) => typeof c[0] === 'string' && c[0].includes('agenthub-oc-')
-      )
-      expect(writeCall).toBeDefined()
-
-      // 配置文件内容包含 permission 字段
-      const config = JSON.parse(writeCall![1] as string)
-      expect(config.permission).toBeDefined()
-      expect(config.permission.read).toBe('allow')
-      expect(config.permission.edit).toBe('allow')
-      expect(config.permission.bash).toBe('deny')
-    })
-
-    it('OpenCode 权限配置包含完整工具列表', () => {
-      processRegistry.getOrCreate('oc-key-2', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-        allowedTools: ['Read'],
-      })
-
-      const writeCall = mockWriteFileSync.mock.calls.find(
-        (c: any[]) => typeof c[0] === 'string' && c[0].includes('agenthub-oc-')
-      )
-      const config = JSON.parse(writeCall![1] as string)
-
-      // 应该包含所有 OpenCode 工具
-      expect(config.permission.read).toBe('allow')
-      expect(config.permission.edit).toBe('deny')
-      expect(config.permission.bash).toBe('deny')
-      expect(config.permission.glob).toBe('deny')
-      expect(config.permission.grep).toBe('deny')
-      expect(config.permission.task).toBe('deny')
-      expect(config.permission.skill).toBe('deny')
-      expect(config.permission.lsp).toBe('deny')
-      expect(config.permission.webfetch).toBe('deny')
-      expect(config.permission.websearch).toBe('deny')
-      expect(config.permission.question).toBe('deny')
-    })
-
-    it('Write 映射到 OpenCode 的 edit 权限', () => {
-      processRegistry.getOrCreate('oc-key-3', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-        allowedTools: ['Write'],
-      })
-
-      const writeCall = mockWriteFileSync.mock.calls.find(
-        (c: any[]) => typeof c[0] === 'string' && c[0].includes('agenthub-oc-')
-      )
-      const config = JSON.parse(writeCall![1] as string)
-      expect(config.permission.edit).toBe('allow')
-    })
-
-    it('Agent 映射到 OpenCode 的 task 权限', () => {
-      processRegistry.getOrCreate('oc-key-4', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-        allowedTools: ['Agent'],
-      })
-
-      const writeCall = mockWriteFileSync.mock.calls.find(
-        (c: any[]) => typeof c[0] === 'string' && c[0].includes('agenthub-oc-')
-      )
-      const config = JSON.parse(writeCall![1] as string)
-      expect(config.permission.task).toBe('allow')
-    })
-
-    it('有 allowedTools 时注入 OPENCODE_CONFIG 环境变量', () => {
-      processRegistry.getOrCreate('oc-key-5', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-        allowedTools: ['Read'],
-      })
-
-      expect(mockSpawn).toHaveBeenCalled()
-      const spawnEnv = mockSpawn.mock.calls[0][2]?.env
-      expect(spawnEnv?.OPENCODE_CONFIG).toBeDefined()
-      expect(spawnEnv.OPENCODE_CONFIG).toContain('agenthub-oc-')
-    })
-
-    it('无 allowedTools 时不注入 OPENCODE_CONFIG', () => {
-      processRegistry.getOrCreate('oc-key-6', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-      })
-
+      expect(mockWriteFileSync.mock.calls.some(
+        (c: any[]) => typeof c[0] === 'string' && String(c[0]).includes('agenthub-oc-')
+      )).toBe(false)
       const spawnEnv = mockSpawn.mock.calls[0][2]?.env
       expect(spawnEnv?.OPENCODE_CONFIG).toBeUndefined()
-    })
-
-    it('killEntry 清理 OpenCode 临时配置文件', () => {
-      const entry = processRegistry.getOrCreate('oc-key-7', {
-        workDir: '/tmp/test',
-        command: 'opencode',
-        args: ['-p', '-f', 'json'],
-        format: 'ndjson',
-        allowedTools: ['Read'],
-      })
-
-      // getOrCreate 内部会附加 tools hash，需要用 send 的 config 获取实际 key
-      // 直接用 send 触发 killEntry 路径（ndjson 格式在 send 后自动清理）
-      const fakeProc2 = createFakeProcess()
-      mockSpawn.mockReturnValue(fakeProc2)
-
-      // 模拟进程正常退出
-      setTimeout(() => {
-        fakeProc2.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'text', part: { text: 'ok' } }) + '\n'))
-        fakeProc2.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'step_finish', part: { type: 'step-finish' } }) + '\n'))
-        fakeProc2.emit('exit', 0)
-      }, 10)
-
-      // ndjson 格式在 send 完成后会自动 killEntry
-      // 验证 writeFileSync 被调用（写了临时配置文件）
-      expect(mockWriteFileSync).toHaveBeenCalled()
-      const writeCall = mockWriteFileSync.mock.calls.find(
-        (c: any[]) => typeof c[0] === 'string' && c[0].includes('agenthub-oc-')
-      )
-      expect(writeCall).toBeDefined()
+      expect(spawnEnv?.OPENCODE_PERMISSION).toBeUndefined()
     })
   })
 
@@ -272,7 +147,6 @@ describe('Tool Restriction', () => {
         allowedTools: ['Read', 'Bash'],
       })
 
-      // 应该 spawn 了两次（不同 key）
       expect(mockSpawn).toHaveBeenCalledTimes(2)
     })
 
@@ -287,7 +161,6 @@ describe('Tool Restriction', () => {
         allowedTools: ['Read', 'Write'],
       })
 
-      // 应该只 spawn 了一次
       expect(mockSpawn).toHaveBeenCalledTimes(1)
       expect(entry1).toBe(entry2)
     })
@@ -303,7 +176,6 @@ describe('Tool Restriction', () => {
         allowedTools: ['Write', 'Read'],
       })
 
-      // 应该只 spawn 了一次（排序后 hash 相同）
       expect(mockSpawn).toHaveBeenCalledTimes(1)
     })
 

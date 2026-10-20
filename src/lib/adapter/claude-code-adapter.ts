@@ -1,5 +1,6 @@
 import type { ChildProcess } from 'child_process'
 import { readFileSync } from 'fs'
+import { join } from 'path'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 import { processRegistry, type SpawnConfig } from './process-registry'
 import { ensureClaudeConfigDir, claudeEnvScrub } from './claude-code-env'
@@ -113,7 +114,15 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // env 注入仅作冗余。baseUrl/apiKey 缺失（如空配置 agent）→ ensure 返回 null → 维持旧行为。
     const cfgDir = ensureClaudeConfigDir({ baseUrl: this.baseUrl, apiKey: this.apiKey, model: this.model })
     if (cfgDir) {
-      spawnConfig.env = { CLAUDE_CONFIG_DIR: cfgDir }
+      spawnConfig.env = {
+        CLAUDE_CONFIG_DIR: cfgDir,
+        // 关闭 workDir 的 CLAUDE.md 自动发现（项目内容不可信，防 prompt 注入；
+        // 与 --setting-sources user 配合，只加载受管配置目录）。
+        CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
+      }
+      // v2.1.270 实测：CLAUDE_CONFIG_DIR 负责隔离 transcript/插件，但 provider env
+      // 需 --settings 显式投递（否则 -p 回落到用户级设置）。两者必须同时传。
+      spawnConfig.settingsPath = join(cfgDir, 'settings.json')
       spawnConfig.envScrub = claudeEnvScrub()
     }
 

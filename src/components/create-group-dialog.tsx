@@ -223,6 +223,9 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                   <div className="text-xs text-gray-500 mt-1">自动处理，减少打扰</div>
                 </button>
               </div>
+              <p className="text-xs text-gray-500">
+                OpenCode 的默认模式无法弹出确认（CLI headless 限制），写文件/执行命令会被拒绝；需要写入请选择自动模式。
+              </p>
             </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}

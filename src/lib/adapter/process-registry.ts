@@ -16,7 +16,7 @@ interface ProcessEntry {
   state: 'idle' | 'working'
   mcpConfigFile: string | null
   mcpConfig: string | null  // Original mcpConfig JSON string for process rebuild
-  openCodeConfigFile: string | null  // OpenCode 临时权限配置文件
+
   workDir: string
   permissionMode: string
   pendingPermissions: Map<string, PendingPermission>
@@ -68,9 +68,12 @@ interface SpawnConfig {
   // ISSUE-027：继承 env 清洗（claude 路径专用）——CLI v2.1.270 -p 模式无视 env 的
   // ANTHROPIC_BASE_URL，继承的 provider/会话 env 只剩双头鉴权混乱风险，剥除后按受管配置重建
   envScrub?: { prefixes: string[]; exact: string[] }
-  // 工具硬限制
-  allowedTools?: string[]       // CLI 工具白名单
-  disallowedTools?: string[]    // CLI 工具黑名单
+  // 工具可用性（Claude: --tools；OpenCode: agent frontmatter tools/permission）
+  allowedTools?: string[]       // 可用工具列表（非审批白名单）
+  disallowedTools?: string[]    // 显式禁用工具（Claude: --disallowedTools）
+  // Claude v2.1.270：--restricted 会忽略 CLAUDE_CONFIG_DIR 的 provider 配置，
+  // 必须用 --settings 显式投递受管 settings.json；其他平台忽略此字段。
+  settingsPath?: string
   // OpenCode 模式：prompt 已作为 CLI 位置参数，不要写 stdin
   promptAsArg?: boolean
   // 禁用 shell 模式（用于 OpenCode 等需要传递多行 prompt 的场景）
@@ -133,10 +136,11 @@ export function isPermanentError(error: string): boolean {
 
 /**
  * spawn env 组合（ISSUE-027 抽出为纯函数）：
- * 继承 env（可选 envScrub 清洗）→ providerEnv（config 派生 + OPENCODE_CONFIG）→ config.env → 固定编码项。
+ * 继承 env（可选 envScrub 清洗）→ providerEnv（config 派生）→ config.env → 固定编码项。
  * ⚠️ providerEnv 的 ANTHROPIC_API_KEY/BASE_URL 对 claude -p 路由**无效**（CLI v2.1.270 无视 env
- * BASE_URL，实际端点由 CLAUDE_CONFIG_DIR settings.json 决定，2026-09-28 八组实验，
- * issues/ISSUE-027）——保留它只为 opencode 路径与 x-api-key 冗余头，不得再把它当 claude 路径的有效通道。
+ * BASE_URL；2026-10-20 探针进一步确认 provider 需 --settings 显式投递，CLAUDE_CONFIG_DIR 负责
+ * transcript/插件隔离，见 docs/design/permission-cli-probe-2026-10-20.md）——保留它只为
+ * opencode 旧路径与 x-api-key 冗余头，不得再把它当 claude 路径的有效通道。
  */
 export function composeSpawnEnv(
   inheritedEnv: Record<string, string | undefined>,
@@ -171,38 +175,6 @@ export function getRetryDelay(attempt: number): number {
 export function isSessionNotFoundError(error: string): boolean {
   const lower = error.toLowerCase()
   return lower.includes('no conversation found') || lower.includes('session not found')
-}
-
-// OpenCode 工具名（全小写）→ 对应的权限键
-// 注意：OpenCode 的 edit 权限同时覆盖 write 和 apply_patch
-const OPENCODE_ALL_TOOLS = ['read', 'edit', 'bash', 'glob', 'grep', 'task', 'skill', 'lsp', 'webfetch', 'websearch', 'question']
-
-// Claude Code 工具名 → OpenCode 权限键的映射
-const TOOL_NAME_MAP: Record<string, string> = {
-  'Read': 'read',
-  'Write': 'edit',     // OpenCode 中 write 由 edit 权限控制
-  'Edit': 'edit',
-  'Bash': 'bash',
-  'Glob': 'glob',
-  'Grep': 'grep',
-  'Agent': 'task',     // OpenCode 中子代理对应 task
-  'Skill': 'skill',
-  'WebFetch': 'webfetch',
-  'WebSearch': 'websearch',
-  'AskUserQuestion': 'question',
-  'LSP': 'lsp',
-  'TodoWrite': 'task', // OpenCode 中 todo 由 task 权限控制
-}
-
-function buildOpenCodePermission(allowedTools: string[]): Record<string, string> {
-  const allowSet = new Set(
-    allowedTools.map(t => TOOL_NAME_MAP[t] || t.toLowerCase())
-  )
-  const permission: Record<string, string> = {}
-  for (const tool of OPENCODE_ALL_TOOLS) {
-    permission[tool] = allowSet.has(tool) ? 'allow' : 'deny'
-  }
-  return permission
 }
 
 function buildToolsHash(tools?: string[]): string {
@@ -253,6 +225,7 @@ function buildConfigHash(config?: SpawnConfig): string {
     format: config.format ?? '',
     promptAsArg: config.promptAsArg ?? false,
     disallowedTools: sortedDisallowed,
+    settingsPath: config.settingsPath ?? '',
   })
 
   // 空对象的 hash 也是固定值,所以"全 undefined"的 config 仍会产生一个 hash
@@ -260,7 +233,7 @@ function buildConfigHash(config?: SpawnConfig): string {
   // 用一个常量比较来判断是否"无指纹相关字段",避免给每个无配置 entry 都加一个相同的尾巴
   const EMPTY_FINGERPRINT = JSON.stringify({
     permissionMode: '', mcpConfig: '', apiKey: '', baseUrl: '', model: '',
-    command: '', args: [], format: '', promptAsArg: false, disallowedTools: '',
+    command: '', args: [], format: '', promptAsArg: false, disallowedTools: '', settingsPath: '',
   })
   if (fingerprint === EMPTY_FINGERPRINT) return ''
 
@@ -342,21 +315,22 @@ class ProcessRegistry {
     const command = config.command || 'claude'
     let args: string[]
     let mcpConfigFile: string | null = null
-    let openCodeConfigFile: string | null = null
 
     if (config.args) {
-      // OpenCode 等自定义 CLI：使用完整参数
+      // OpenCode 等自定义 CLI：使用完整参数（工具/权限已由 adapter 写入 agent frontmatter；
+      // OPENCODE_CONFIG / OPENCODE_PERMISSION 在 v2.0.27 实测不生效，已移除）
       args = config.args
-
-      // 工具硬限制：写临时 opencode.json，通过 OPENCODE_CONFIG 注入
-      if (config.allowedTools && config.allowedTools.length > 0) {
-        const permission = buildOpenCodePermission(config.allowedTools)
-        openCodeConfigFile = join(tmpdir(), `agenthub-oc-${Date.now()}.json`)
-        writeFileSync(openCodeConfigFile, JSON.stringify({ permission }), 'utf-8')
-      }
     } else {
-      // Claude Code CLI：现有逻辑不变
-      args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--bare', '--permission-prompt-tool', 'stdio']
+      // Claude Code CLI：--bare 只暴露 Bash/Edit/Read 且忽略 --tools（2026-10-20 v2.1.270 实测），
+      // 已移除。用 CLAUDE_CONFIG_DIR 隔离子进程配置/transcript + --settings 显式投递 provider 配置，
+      // 用 --tools 精确控制“可用工具”，与审批模式解耦。
+      args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--permission-prompt-tool', 'stdio']
+
+      if (config.settingsPath) {
+        args.push('--settings', config.settingsPath)
+      }
+      // 只加载受管配置目录的 user 层，忽略 workDir 的 project/local 设置与 hooks/plugins
+      args.push('--setting-sources', 'user')
 
       if (config.mcpConfig) {
         mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
@@ -364,9 +338,10 @@ class ProcessRegistry {
         args.push('--mcp-config', mcpConfigFile)
       }
 
-      if (config.permissionMode) {
-        args.push('--permission-mode', config.permissionMode)
-      }
+      // CLI 始终用 default 以拿到 control_request；auto 审批由 ProcessRegistry 的
+      // entry.permissionMode === 'auto' 分支统一 allow（CLI 的 auto 模式在 -p/stdio 下
+      // 实测不发 control_request，会报 permission stream closed）。
+      args.push('--permission-mode', 'default')
 
       if (config.sessionId) {
         args.push('--resume', config.sessionId)
@@ -381,8 +356,14 @@ class ProcessRegistry {
         args.push('--model', cleanModel)
       }
 
-      // 工具硬限制：通过 CLI 参数传递
-      if (config.allowedTools && config.allowedTools.length > 0) {
+      // 可用性维度：--tools 精确列出 agent.tools；空列表 = 不限制（default 暴露全部内置工具）
+      args.push('--tools', config.allowedTools && config.allowedTools.length > 0
+        ? config.allowedTools.join(',')
+        : 'default')
+
+      // 审批维度：仅 auto 模式把可用工具加入 --allowedTools（减少 control_request 往返）；
+      // default 模式不传，CLI 对每次工具调用发 control_request 由前端确认。
+      if (config.permissionMode === 'auto' && config.allowedTools && config.allowedTools.length > 0) {
         args.push('--allowedTools', config.allowedTools.join(','))
       }
       if (config.disallowedTools && config.disallowedTools.length > 0) {
@@ -399,9 +380,6 @@ class ProcessRegistry {
       providerEnv.ANTHROPIC_BASE_URL = config.baseUrl
     }
     // 不设 ANTHROPIC_BASE_URL 时保留系统环境变量（用户 CLI 配置）
-    if (openCodeConfigFile) {
-      providerEnv.OPENCODE_CONFIG = openCodeConfigFile
-    }
     if (Object.keys(providerEnv).length > 0) {
       console.log(`[ProcessRegistry ${key}] inject provider env:`, Object.keys(providerEnv))
     }
@@ -428,7 +406,6 @@ class ProcessRegistry {
       state: 'idle',
       mcpConfigFile,
       mcpConfig: config.mcpConfig || null,
-      openCodeConfigFile,
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
@@ -579,9 +556,6 @@ class ProcessRegistry {
     // 清理临时配置文件
     if (entry.mcpConfigFile) {
       try { unlinkSync(entry.mcpConfigFile) } catch {}
-    }
-    if (entry.openCodeConfigFile) {
-      try { unlinkSync(entry.openCodeConfigFile) } catch {}
     }
   }
 

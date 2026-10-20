@@ -58,6 +58,9 @@ describe('ClaudeCodeAdapter', () => {
     expect(config.apiKey).toBe('sk-test')
     expect(config.baseUrl).toBe('https://api.test.com')
     expect(config.model).toBe('claude-sonnet-4-20250514')
+    // v2.1.270 实测：provider 配置必须经 --settings 显式投递（CLAUDE_CONFIG_DIR 只负责隔离/transcript）
+    expect(config.settingsPath).toMatch(/settings\.json$/)
+    expect(config.settingsPath).toContain(cfgRoot)
   })
 
   it('getRegistryKey format: chatSessionId:agentId:workDir', async () => {

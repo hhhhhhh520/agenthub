@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import type { AgentAdapter, AdapterConfig, AgentTask, StreamChunk } from './types'
 import { processRegistry, type SpawnConfig } from './process-registry'
 import { claudeEnvScrub } from './claude-code-env'
+import { buildOpenCodePermissionYaml, buildOpenCodeToolsYaml } from './opencode-permissions'
 
 /**
  * ISSUE-027 commit 3：opencode provider 配置文件生成。
@@ -151,8 +152,11 @@ export class OpenCodeAdapter implements AgentAdapter {
     const agentDir = join(this.workDir, '.opencode', 'agents')
     const agentFile = join(agentDir, `agenthub-${sanitizeOpencodeAgentId(this.agentId)}.md`)
 
-    const toolsYaml = this.buildToolsYaml()
-    const content = `---\ndescription: AgentHub Agent\n${toolsYaml}---\n${systemPrompt}`
+    // v2.0.27 实测：agent frontmatter 的 tools/permission 才会被加载；
+    // OPENCODE_CONFIG / OPENCODE_PERMISSION 环境变量通道不生效（见 opencode-permissions.ts）。
+    const toolsYaml = buildOpenCodeToolsYaml(this.allowedTools)
+    const permissionYaml = buildOpenCodePermissionYaml(this.allowedTools, this.permissionMode)
+    const content = `---\ndescription: AgentHub Agent\n${toolsYaml}${permissionYaml}---\n${systemPrompt}`
 
     // 检查是否需要更新（内容没变则跳过）
     try {
@@ -251,33 +255,6 @@ export class OpenCodeAdapter implements AgentAdapter {
     return configDir
   }
 
-  /**
-   * 将 allowedTools 映射为 OpenCode agent 配置的 tools YAML 字段
-   * 只在有限制时写入（空 allowedTools 时用 OPENCODE_PERMISSION 环境变量全部放行）
-   */
-  private buildToolsYaml(): string {
-    if (!this.allowedTools || this.allowedTools.length === 0) return ''
-
-    // AgentHub 工具名 → OpenCode 工具名映射
-    const TOOL_MAP: Record<string, string> = {
-      'Read': 'read',
-      'Write': 'write',
-      'Edit': 'edit',
-      'Bash': 'bash',
-      'Glob': 'glob',
-      'Grep': 'grep',
-      'WebFetch': 'webfetch',
-      'Agent': 'task',
-    }
-
-    const lines = ['tools:']
-    for (const [hubTool, ocTool] of Object.entries(TOOL_MAP)) {
-      const allowed = this.allowedTools.includes(hubTool)
-      lines.push(`  ${ocTool}: ${allowed}`)
-    }
-    return lines.join('\n') + '\n'
-  }
-
   async *send(task: AgentTask): AsyncIterable<StreamChunk> {
     const key = this.getRegistryKey()
 
@@ -303,7 +280,9 @@ export class OpenCodeAdapter implements AgentAdapter {
       args.push('--model', providerCfg ? `anthropic/${cleanModel(this.config.model)}` : this.config.model)
     }
     if (this.workDir) args.push('--dir', this.workDir)
-    if (this.permissionMode === 'auto') args.push('--dangerously-skip-permissions')
+    // v2.0.27：--auto 自动批准 ask、但仍尊重 deny；旧的 dangerously-skip-permissions
+    // 是隐藏别名且语义更宽，改用文档化 flag。default 模式不传，ask 会被 CLI 拒绝。
+    if (this.permissionMode === 'auto') args.push('--auto')
 
     // 附件：通过 --file 参数传递（图片和非图片都走 --file）
     if (task.attachments && task.attachments.length > 0) {
@@ -314,11 +293,8 @@ export class OpenCodeAdapter implements AgentAdapter {
       }
     }
 
-    // 构建环境变量
+    // 构建环境变量（权限走 agent frontmatter；OPENCODE_PERMISSION 在 v2.0.27 不生效）
     const env: Record<string, string> = {}
-    if (!this.allowedTools || this.allowedTools.length === 0) {
-      env.OPENCODE_PERMISSION = '{"*":"allow"}'
-    }
     if (!providerCfg) {
       // 旧路径（无 apiKey/baseUrl 的 agent）：保留 env 注入（用户自配 opencode 场景）。
       // ⚠️ 有 provider 配置时必须跳过——env 的 ANTHROPIC_* 会触发 opencode 的
