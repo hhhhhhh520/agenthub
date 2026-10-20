@@ -1,8 +1,23 @@
 import { execFileSync } from 'child_process'
+import { createHash } from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
+import { isSensitivePath } from './sensitive-paths'
 
 const SHADOW_GIT_REL = '.agenthub/shadow-git'
+
+/** 不在内容证据里展开的目录型敏感前缀：避免 hash 整个 node_modules/.next/.git */
+const IGNORED_EVIDENCE_SKIP_PREFIXES = [
+  'node_modules/',
+  '.next/',
+  '.git/',
+  '.agenthub/',
+]
+
+/** Git 输出统一成正斜杠相对路径（证据 Map 的 key 与比较口径） */
+function normalizeGitPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/^\.\//, '')
+}
 
 // ── 内部函数 ──
 
@@ -94,8 +109,11 @@ export class ShadowGitUnavailableError extends Error {
   }
 }
 
+/** 路径 → 内容指纹（sha256；删除/不存在为 null）。 */
+export type GitEvidence = Map<string, string | null>
+
 export type ShadowGitSnapshotResult =
-  | { ok: true; files: Set<string> }
+  | { ok: true; files: Set<string>; evidence: GitEvidence }
   | { ok: false; reason: string }
 
 export type ShadowGitChangedResult =
@@ -103,10 +121,34 @@ export type ShadowGitChangedResult =
   | { ok: false; reason: string }
 
 /**
- * 获取 workDir 当前"脏文件"集合（三态详细版）。
+ * 读取单文件内容指纹。
+ *
+ * - 不存在 → null（删除也是变化，由 before/after 对比表达）；
+ * - 非普通文件 → null；
+ * - 权限/IO 错误 → 抛出，外层转为 unavailable，不能降级成“无变化”。
+ */
+function hashFileEvidence(projectRoot: string, relPath: string): string | null {
+  const fullPath = path.resolve(projectRoot, relPath)
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(fullPath)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw e
+  }
+  if (!stat.isFile()) return null
+  return createHash('sha256').update(fs.readFileSync(fullPath)).digest('hex')
+}
+
+/**
+ * 获取 workDir 当前"脏文件"集合 + 内容证据（三态详细版）。
  *
  * 审计路径必须用本函数：失败返回 `{ok:false, reason}`，绝不把 git 失败
  * 伪装成"空 diff"（后者会被误判为任务没有改动，从而放行假成功）。
+ *
+ * `files` 保持旧语义（tracked dirty + untracked），供旧调用方兼容；
+ * `evidence` 额外覆盖被 .gitignore 忽略的敏感文件（至少 .env*），
+ * 并记录每个路径的内容 hash，供批次开始/结束做内容级差异。
  */
 export function getGitSnapshotDetailed(projectRoot: string, sessionId: string): ShadowGitSnapshotResult {
   try {
@@ -114,12 +156,30 @@ export function getGitSnapshotDetailed(projectRoot: string, sessionId: string): 
     ensureShadowInit(shadowDir, projectRoot)
 
     const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
-      .trim().split('\n').filter(Boolean)
+      .trim().split('\n').filter(Boolean).map(normalizeGitPath)
 
     const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
-      .trim().split('\n').filter(Boolean)
+      .trim().split('\n').filter(Boolean).map(normalizeGitPath)
 
-    return { ok: true, files: new Set([...modified, ...untracked]) }
+    // .env 等被忽略文件不会出现在 diff/untracked；单独枚举 ignored 中的敏感文件。
+    // 目录型敏感前缀不展开，避免 hash 整个 node_modules/.next/.git。
+    const ignoredSensitive = gitSync(
+      // --directory 把整个被忽略目录折叠成一项（如 node_modules/），避免枚举数万文件；
+      // .env 仍是文件项，可被下面的敏感过滤保留。
+      gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'),
+      10_000,
+    )
+      .trim().split('\n').filter(Boolean)
+      .map(normalizeGitPath)
+      .filter(p => isSensitivePath(p) && !IGNORED_EVIDENCE_SKIP_PREFIXES.some(prefix => p.startsWith(prefix)))
+
+    const files = new Set([...modified, ...untracked])
+    const evidence: GitEvidence = new Map()
+    for (const relPath of new Set([...files, ...ignoredSensitive])) {
+      evidence.set(relPath, hashFileEvidence(projectRoot, relPath))
+    }
+
+    return { ok: true, files, evidence }
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : String(e) }
   }
@@ -136,15 +196,35 @@ export function getGitSnapshot(projectRoot: string, sessionId: string): Set<stri
 }
 
 /**
- * 获取自 `before` 快照以来新出现的脏文件（三态详细版）。
+ * 获取自 `before` 以来的变化（三态详细版）。
+ *
+ * - `before` 为 Set：兼容旧路径差集语义（只看新出现的脏路径）；
+ * - `before` 为 GitEvidence：内容级比较，覆盖“批次前已脏、批次中再次修改”、
+ *   删除、以及被忽略 .env 的变化。审计路径必须传 evidence。
  */
 export function getChangedFilesDetailed(
   projectRoot: string,
   sessionId: string,
-  before: Set<string>,
+  before: Set<string> | GitEvidence,
 ): ShadowGitChangedResult {
   const snapshot = getGitSnapshotDetailed(projectRoot, sessionId)
   if (!snapshot.ok) return snapshot
+
+  if (before instanceof Map) {
+    const changed: string[] = []
+    for (const relPath of new Set([...before.keys(), ...snapshot.evidence.keys()])) {
+      const inBefore = before.has(relPath)
+      const inAfter = snapshot.evidence.has(relPath)
+      // 关键：key 是否存在也要比较。before 不存在（clean 路径）→ after 以 null
+      // 出现表示删除；before 有 hash → after 不存在表示回退/删除。不能把
+      // “不存在”和“存在但内容为 null”都折叠成 null。
+      if (inBefore !== inAfter || (inBefore && before.get(relPath) !== snapshot.evidence.get(relPath))) {
+        changed.push(relPath)
+      }
+    }
+    return { ok: true, files: changed.sort() }
+  }
+
   return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 }
 
@@ -155,7 +235,7 @@ export function getChangedFilesDetailed(
 export function getChangedFiles(
   projectRoot: string,
   sessionId: string,
-  before: Set<string>,
+  before: Set<string> | GitEvidence,
 ): string[] {
   const result = getChangedFilesDetailed(projectRoot, sessionId, before)
   if (!result.ok) throw new ShadowGitUnavailableError(result.reason)

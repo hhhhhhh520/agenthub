@@ -33,8 +33,9 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // 默认:影子 git 已存在,跳过 init
+  // 默认:影子 git 已存在,跳过 init；第三次 ignore 列表查询返回空
   mockExistsSync.mockReturnValue(true)
+  mockExecFileSync.mockReturnValue('')
 })
 
 describe('getGitSnapshot', () => {
@@ -65,13 +66,18 @@ describe('getGitSnapshot', () => {
     expect(() => getGitSnapshot('/project', 'sess-1')).toThrow(/影子 git 不可用.*git command failed/)
   })
 
-  it('detailed: 成功返回 ok + 文件集合', () => {
+  it('detailed: 成功返回 ok + 文件集合 + 内容证据', () => {
     mockExecFileSync.mockReturnValueOnce('src/a.ts\n')
     mockExecFileSync.mockReturnValueOnce('src/b.ts\n')
-    expect(getGitSnapshotDetailed('/project', 'sess-1')).toEqual({
-      ok: true,
-      files: new Set(['src/a.ts', 'src/b.ts']),
-    })
+    const result = getGitSnapshotDetailed('/project', 'sess-1')
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.files).toEqual(new Set(['src/a.ts', 'src/b.ts']))
+    // 测试目录不存在：证据存在但内容指纹为 null
+    expect(result.evidence).toEqual(new Map([
+      ['src/a.ts', null],
+      ['src/b.ts', null],
+    ]))
   })
 
   it('detailed: 失败返回 ok:false + reason（审计三态可区分空集合）', () => {

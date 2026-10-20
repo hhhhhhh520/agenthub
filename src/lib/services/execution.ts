@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db'
 import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent, type PriorTaskMeta } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
-import { getChangedFilesDetailed, getGitSnapshotDetailed } from './shadow-git'
+import { getChangedFilesDetailed, getGitSnapshotDetailed, type GitEvidence } from './shadow-git'
 import { pickSensitive } from './sensitive-paths'
 import { invalidateCliSession } from './cli-session'
 import type { AgentConfig } from '@/lib/adapter/types'
@@ -44,7 +44,7 @@ export type BatchAuditResult =
 export function auditBatchChanges(
   projectRoot: string,
   sessionId: string,
-  before: Set<string>,
+  before: Set<string> | GitEvidence,
   batchTasks: Array<{ declaredFiles: string }>,
 ): BatchAuditResult {
   const changed = getChangedFilesDetailed(projectRoot, sessionId, before)
@@ -367,7 +367,9 @@ export async function handleExecution(
       await cascadeBlockedTasks()
       break
     }
-    const gitBefore = snapshot.files
+    // 批次开始的内容证据（路径 → hash/null）：结束审计按内容差异归责，
+    // 不再按“脏路径是否新出现”判断，覆盖已脏同一路径再次修改与忽略 .env。
+    const gitBefore = snapshot.evidence
 
     // §3.2 B1: 互斥闸门——pending→in_progress 条件写。双流并发（abort 释放锁后的僵尸流 + 新流）
     // 时后到者 count=0 被剔除出批：同一任务同时只有一个执行流，重复执行结构性不可能。

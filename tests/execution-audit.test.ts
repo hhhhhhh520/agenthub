@@ -121,6 +121,25 @@ describe('execution batch audit — tri-state / attribution', () => {
     mocks.mockGetChangedFilesDetailed.mockReturnValue({ ok: true, files: [] })
   })
 
+  it('批次审计把内容证据 Map 传给 diff（不是旧路径 Set）', async () => {
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'ok', sessionId: 'cli-1' }]]),
+      failedTaskIds: [],
+    })
+    const evidence = new Map<string, string | null>([['src/app/page.tsx', 'hash-before']])
+    mocks.mockGetGitSnapshotDetailed.mockReturnValue({ ok: true, files: new Set(), evidence })
+    mocks.mockGetChangedFilesDetailed.mockReturnValue({ ok: true, files: [] })
+
+    const { handleExecution } = await import('@/lib/services/execution')
+    await handleExecution('test', 'sess-1', AGENTS, vi.fn())
+
+    const auditCall = mocks.mockGetChangedFilesDetailed.mock.calls[0]
+    expect(auditCall[2]).toBeInstanceOf(Map)
+    expect((auditCall[2] as Map<string, string | null>).get('src/app/page.tsx')).toBe('hash-before')
+  })
+
   it('批次开始快照失败 → 不执行本批，任务 failed + audit_unavailable，下游 blocked', async () => {
     const upstream = makeTask({ id: 'task-1', description: '上游' })
     const downstream = makeTask({ id: 'task-2', description: '下游', dependencies: '["task-1"]' })
