@@ -248,6 +248,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **启动 reconcile（§3.3）**：`reconcileInterruptedSessions()`（`src/lib/services/reconcile.ts`）在 instrumentation 启动时把 in_progress 任务条件写置 pending + SessionMember.working 置 idle（无条件）——主动收敛，不依赖前端在线；phase 留 execution 是有意设计（便于续跑）
 - **运行中兜底**：GET `/api/sessions/[id]` 重置超过 5 分钟未更新的 `in_progress` 任务为 `pending`（updateMany where 带 `status: 'in_progress'` 前置——防 findMany 与 updateMany 之间任务被写 completed 被打回），返回 `recoveredTaskCount`；前端弹恢复 Dialog
 - 二者互补：启动收敛=主动无条件（单实例启动时刻必无活跃流）；运行中收敛=被动 5min 阈值+心跳保护。周期 reconcile tick 不做（拍板）
+- **execute 入口恢复**：任务已存在但 phase 停在 `align_pm`/`align_arch`/`align_qa` 时，`transitionToExecution` 先调 `ensureExecutableState` 沿合法边恢复到 `exec`；恢复/推进失败必须报错并中止，绝不继续 `handleExecution`。`handleArchitectPlan` 的任务 + verify 必须同一 `prisma.$transaction` 创建，失败整段中止（不推进 phase、不发 plan/done）
 - 实现：`src/lib/services/reconcile.ts` + `src/instrumentation.ts` + `src/app/api/sessions/[id]/route.ts` GET handler
 
 ### Diff Accept 文件修改检测

@@ -1,6 +1,6 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `c5930d3`（本交接文档随后单独提交）  
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `55d5012`（Batch 1 第一小项；本交接文档随后单独提交）
 > 适用对象: 接手 Batch 1 的 AI/开发者  
 > 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」、本文、`docs/design/roadmap-to-excellence.md` v15
 
@@ -12,10 +12,11 @@
 |---|---|
 | `b6b2deb` | 锁队列重写 + chat 统一释放 |
 | `c5930d3` | 取消全链路 + 进程真实退出 + 有界清理 + stop/delete |
+| `55d5012` | Batch 1 第一小项：执行恢复态 + 任务/verify 单事务 |
 
 回归基线（2026-10-19）：
 
-- `npx vitest run`：117 files / **1368 passed / 3 skipped**
+- `npx vitest run`：117 files / **1376 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -54,7 +55,7 @@
 
 ### Batch 1：执行恢复边界 + 审计三态 + 禁止提前发布成功
 
-目标文件：
+**已完成第一小项（commit `55d5012`）**：`ensureExecutableState` + 任务/verify 单事务 + `transitionPhase` 返回值检查。以下第 3-6 项仍未完成。
 
 - `src/lib/services/alignment.ts`（任务创建、phase 推进）
 - `src/lib/services/execution.ts`（审计、result、completed、done）
@@ -65,14 +66,14 @@
 
 必须实现：
 
-1. **`ensureExecutableState(sessionId)`**
+1. ✅ **`ensureExecutableState(sessionId)`**（commit `55d5012`）
    - 任务已存在但 phase 停在 `align_pm`：`align_pm → align_decompose(align_arch) → execute(exec)`；
    - `align_arch / align_qa → execute`；
    - `exec → no-op`；
    - 每一步检查 `transitionPhase` 返回值；失败报错，不继续发 done；
    - 不重新拆解、不重复建任务。
 
-2. **任务 + verify 单事务创建**
+2. ✅ **任务 + verify 单事务创建**（commit `55d5012`）
    - `handleArchitectPlan` 的任务创建循环与 verify 创建放入一个 `prisma.$transaction`；
    - 中途失败要么全建、要么全不建；
    - 加测试：任务已建但 phase 未推进 → 恢复不重复建任务。
@@ -117,7 +118,7 @@
 
 1. **普通 retry / idle cleanup 仍用 `killEntryIfCurrent`**：该函数在 Windows 发出 taskkill 后立即删 registry，不等待真实退出。stop/delete/cancel 已走 `terminateEntry`，但 retry 路径仍需下一批统一；在此之前不要宣称“所有 kill 都等待退出”。
 2. **fast LLM 决策是 HTTP fetch**，未绑定会话 AbortSignal；stop/delete 撞上快模型调用时会在 15/30s 后返回 202/409，需要用户重试。
-3. **审计三态/恢复边界尚未实现**：当前取消只做“不发布成功”，还没有“审计不可用 → failed”。
+3. **审计三态尚未实现**：恢复边界已落地（`55d5012`）；当前取消只做“不发布成功”，还没有“审计不可用 → failed”。
 4. **事件 seq 仍可能在冲突时丢失/重复**：本批只做了 flush 有界；seq 不可变 / 单 logger 未做。
 5. **stop/delete 的 UI 只做了 stop 按钮接线**；删除按钮走原 DELETE，已有取消链。
 

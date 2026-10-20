@@ -257,6 +257,7 @@
 | 会话锁队列重写 + 统一释放（Batch 0，commit b6b2deb） | 旧 Map 链式队列在 A 持锁/B/C 等待、B 超时后 A 释放时 C 永久卡死（已复现）→ 显式 waiter 队列：超时/abort 等待者移除自己，release handoff 队首，release 幂等；持有者 abort 不再释放锁（HTTP 断开≠后台结束），chat route 用 lockHandedOff + stream.finally 统一释放，eventLogger 创建失败/flush 异常也不漏锁。新增/改写 17 条针对性测试；全量 1349 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
 | Batch 0 续·会话取消全链路 + 进程真实退出 + 有界清理（commit c5930d3） | `cancellation.ts` 统一取消源；chat/redo/stop/delete + orchestrator 决策/对齐/执行/讨论/adapter 全链路检查；`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认，unconfirmed 不删 DB）；`handleExecution` 取消时本批未落地任务条件写回 pending、不 completed/不 auto-done；`stop` 端点只停不删；`withTimeout` onTimeout 有界 10s、eventLogger.flush 有界 5s。新增取消/退出/stop/delete/timeout/flush 测试；全量 1368 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
+| Batch 1 第一小项·执行恢复边界 + 任务/verify 单事务（commit 55d5012） | 新增 `ensureExecutableState`：任务已存在但 phase 停在 `align_pm`/`align_arch`/`align_qa` 时沿转移表合法边恢复到 `exec`；`transitionToExecution` 在恢复/推进失败时发 error + escalate 并中止，不再 fail-closed 后继续 `handleExecution`。`handleArchitectPlan` 的任务与 verify 改为同一 `prisma.$transaction` 创建，中途失败整段中止、不推进 phase、不发 plan/done；`transitionPhase` 返回值显式检查。新增 8 条恢复/事务/失败中止测试（含“移除 ensure 调用”变异精确红后还原）；全量 1376 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |
