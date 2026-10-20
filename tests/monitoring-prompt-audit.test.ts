@@ -74,6 +74,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
 vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: mocks.mockGetChangedFiles,
   getGitSnapshot: mocks.mockGetGitSnapshot,
+  getChangedFilesDetailed: () => ({ ok: true, files: mocks.mockGetChangedFiles() }),
+  getGitSnapshotDetailed: () => ({ ok: true, files: mocks.mockGetGitSnapshot() }),
 }))
 
 const AGENTS = [
@@ -103,8 +105,7 @@ function makeTask(overrides: Record<string, unknown> = {}) {
 describe('监控 prompt 审计诚实性（audit.declared = 真实交集）', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>
   const prevEnv = process.env.EXPERIMENT_STRUCTURED_MONITOR
-  // fs 隔离（审查建议）：projectDir 用临时目录——projectDir:'' 会触发 cwd 回退，
-  // cleanupUndeclared 的真实 unlink 将落在"cwd 下恰好不存在同名文件"的隐式依赖上
+  // fs 隔离：projectDir 用临时目录——共享目录已不再自动删除，但仍避免测试写入真实 cwd
   let tmpDir: string
 
   beforeEach(() => {
@@ -140,12 +141,10 @@ describe('监控 prompt 审计诚实性（audit.declared = 真实交集）', () 
     return mocks.mockBuildMonitoringPrompt.mock.calls[0][3] as { declared: string[]; undeclared: string[] }
   }
 
-  it('ghost 场景（声明文件未动，只写杂散文件）→ audit.declared 为空（不谎报声明已修改）', async () => {
+  it('ghost 场景（声明文件未动，只写杂散文件）→ audit.declared 为空，undeclared 如实上报', async () => {
     const audit = await runGhostScenario(['src/lib/other.ts'])
-    // undeclared 为空是既有设计（cleanupUndeclared 先于审查 splice 清空，execution.ts:51-52——
-    // 越界文件已清理，不喂给审查防纠偏重试）；谎言只在 declared 一栏
-    expect(audit.undeclared).toEqual([])
-    // 缺陷现状：declared = ['src/app/page.tsx']（声明清单）→ 谎报"实际修改" → 此断言红
+    // 共享 projectDir 不再自动清理；批次级未声明文件必须如实喂给审查，不能谎报为空
+    expect(audit.undeclared).toEqual(['src/lib/other.ts'])
     expect(audit.declared).toEqual([])
   })
 

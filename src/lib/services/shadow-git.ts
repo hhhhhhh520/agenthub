@@ -87,56 +87,79 @@ function ensureAgenthubGitignore(workDir: string): void {
 
 // ── 公开 API ──
 
-/**
- * 获取 workDir 当前"脏文件"集合:
- * - 被修改的已跟踪文件
- * - 未跟踪文件(按 .gitignore 排除)
- *
- * 相当于原 getGitSnapshot,但通过影子 git 实现,不依赖 workDir 自身的 git 状态。
- */
-export function getGitSnapshot(projectRoot: string, sessionId: string): Set<string> {
-  const shadowDir = getShadowDir(projectRoot, sessionId)
-  ensureShadowInit(shadowDir, projectRoot)
+export class ShadowGitUnavailableError extends Error {
+  constructor(public readonly reason: string) {
+    super(`影子 git 不可用：${reason}`)
+    this.name = 'ShadowGitUnavailableError'
+  }
+}
 
+export type ShadowGitSnapshotResult =
+  | { ok: true; files: Set<string> }
+  | { ok: false; reason: string }
+
+export type ShadowGitChangedResult =
+  | { ok: true; files: string[] }
+  | { ok: false; reason: string }
+
+/**
+ * 获取 workDir 当前"脏文件"集合（三态详细版）。
+ *
+ * 审计路径必须用本函数：失败返回 `{ok:false, reason}`，绝不把 git 失败
+ * 伪装成"空 diff"（后者会被误判为任务没有改动，从而放行假成功）。
+ */
+export function getGitSnapshotDetailed(projectRoot: string, sessionId: string): ShadowGitSnapshotResult {
   try {
+    const shadowDir = getShadowDir(projectRoot, sessionId)
+    ensureShadowInit(shadowDir, projectRoot)
+
     const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
       .trim().split('\n').filter(Boolean)
 
     const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
       .trim().split('\n').filter(Boolean)
 
-    return new Set([...modified, ...untracked])
+    return { ok: true, files: new Set([...modified, ...untracked]) }
   } catch (e) {
-    // git 失败时(如工作目录过大导致超时),返回空集合让上层降级
-    return new Set()
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) }
   }
 }
 
 /**
- * 获取自 `before` 快照以来新出现的脏文件。
- *
- * 相当于原 getChangedFiles,但通过影子 git 实现。
+ * 兼容入口：失败时抛 ShadowGitUnavailableError，不再返回空集合。
+ * 新代码/审计路径请直接用 getGitSnapshotDetailed。
+ */
+export function getGitSnapshot(projectRoot: string, sessionId: string): Set<string> {
+  const result = getGitSnapshotDetailed(projectRoot, sessionId)
+  if (!result.ok) throw new ShadowGitUnavailableError(result.reason)
+  return result.files
+}
+
+/**
+ * 获取自 `before` 快照以来新出现的脏文件（三态详细版）。
+ */
+export function getChangedFilesDetailed(
+  projectRoot: string,
+  sessionId: string,
+  before: Set<string>,
+): ShadowGitChangedResult {
+  const snapshot = getGitSnapshotDetailed(projectRoot, sessionId)
+  if (!snapshot.ok) return snapshot
+  return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
+}
+
+/**
+ * 兼容入口：失败时抛 ShadowGitUnavailableError，不再返回空数组。
+ * 新代码/审计路径请直接用 getChangedFilesDetailed。
  */
 export function getChangedFiles(
   projectRoot: string,
   sessionId: string,
   before: Set<string>,
 ): string[] {
-  const shadowDir = getShadowDir(projectRoot, sessionId)
-  ensureShadowInit(shadowDir, projectRoot)
-
-  try {
-    const modified = gitSync(gitArgs(shadowDir, projectRoot, 'diff', '--name-only', 'HEAD'), 10_000)
-      .trim().split('\n').filter(Boolean)
-
-    const untracked = gitSync(gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--exclude-standard'), 10_000)
-      .trim().split('\n').filter(Boolean)
-
-    const all = new Set([...modified, ...untracked])
-    return [...all].filter(f => !before.has(f))
-  } catch {
-    return []
-  }
+  const result = getChangedFilesDetailed(projectRoot, sessionId, before)
+  if (!result.ok) throw new ShadowGitUnavailableError(result.reason)
+  return result.files
 }
 
 /**

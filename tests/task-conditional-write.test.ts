@@ -72,6 +72,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
 vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: mocks.mockGetChangedFiles,
   getGitSnapshot: mocks.mockGetGitSnapshot,
+  getChangedFilesDetailed: () => ({ ok: true, files: mocks.mockGetChangedFiles() }),
+  getGitSnapshotDetailed: () => ({ ok: true, files: mocks.mockGetGitSnapshot() }),
 }))
 
 vi.mock('@/lib/services/context-builder', () => ({

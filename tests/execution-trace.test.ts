@@ -64,6 +64,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
 vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: vi.fn().mockReturnValue([]),
   getGitSnapshot: vi.fn().mockReturnValue(new Set()),
+  getChangedFilesDetailed: vi.fn().mockReturnValue({ ok: true, files: [] }),
+  getGitSnapshotDetailed: vi.fn().mockReturnValue({ ok: true, files: new Set() }),
 }))
 
 // Mock context-builder

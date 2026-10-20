@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db'
 import { executeTaskBatch, callLLMForAnalysis, executeSingleAgent, getOrchestratorAgent, type PriorTaskMeta } from '@/lib/orchestrator'
 import { buildMonitoringPrompt } from '@/lib/orchestrator/prompts'
 import { enforceFileOverlap } from '@/lib/orchestrator/scheduler'
-import { getChangedFiles, getGitSnapshot } from './shadow-git'
+import { getChangedFilesDetailed, getGitSnapshotDetailed } from './shadow-git'
 import { pickSensitive } from './sensitive-paths'
 import { invalidateCliSession } from './cli-session'
 import type { AgentConfig } from '@/lib/adapter/types'
@@ -19,9 +19,63 @@ import type { SendEvent } from './review'
 /** 路径归一化：统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写) */
 export const normalizePath = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase()
 
+function parseDeclaredFilesForAudit(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw || '[]')
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export type BatchAuditResult =
+  | { status: 'unavailable'; reason: string }
+  | { status: 'pass'; changedFiles: string[]; batchDeclared: string[]; batchUndeclared: string[] }
+  | { status: 'violation'; changedFiles: string[]; batchDeclared: string[]; batchUndeclared: string[]; sensitiveViolations: string[] }
+
+/**
+ * 批次级文件审计：一次 diff 结果按“本批所有任务 declaredFiles 的并集”归责。
+ *
+ * - diff 读取失败 → unavailable，调用方必须整批失败且禁止发布 result/completed；
+ * - 未声明的敏感路径 → violation，整批失败；
+ * - 普通未声明文件 → pass + batchUndeclared（只告警，不删除共享目录文件）；
+ * - 本批所有任务 declaredFiles 都为空 → 跳过文件校验（契约 §1.2 b）。
+ */
+export function auditBatchChanges(
+  projectRoot: string,
+  sessionId: string,
+  before: Set<string>,
+  batchTasks: Array<{ declaredFiles: string }>,
+): BatchAuditResult {
+  const changed = getChangedFilesDetailed(projectRoot, sessionId, before)
+  if (!changed.ok) return { status: 'unavailable', reason: changed.reason }
+
+  const declaredByNorm = new Map<string, string>()
+  for (const task of batchTasks) {
+    for (const file of parseDeclaredFilesForAudit(task.declaredFiles)) {
+      const norm = normalizePath(file)
+      if (!declaredByNorm.has(norm)) declaredByNorm.set(norm, file)
+    }
+  }
+  const batchDeclared = [...declaredByNorm.values()]
+  const batchUndeclared = batchDeclared.length === 0
+    ? []
+    : changed.files.filter(f => !declaredByNorm.has(normalizePath(f)))
+  const sensitiveViolations = pickSensitive(batchUndeclared)
+
+  if (sensitiveViolations.length > 0) {
+    return { status: 'violation', changedFiles: changed.files, batchDeclared, batchUndeclared, sensitiveViolations }
+  }
+  return { status: 'pass', changedFiles: changed.files, batchDeclared, batchUndeclared }
+}
+
 /**
  * 清理越界文件:删除不属于任何批次的文件,保留其他批次声明的文件。
  * 会原地清空 undeclared 数组(避免监控审查再次触发纠偏)。
+ *
+ * ⚠️ 仅限 AgentHub 管理的隔离工作区使用；共享 projectDir 严禁调用（会误删
+ * 用户/其他会话的真实文件）。当前生产执行路径已改为“只告警、不删除”，
+ * 本函数仅保留给未来的隔离工作区实现与既有单测。
  *
  * @returns cleanedCount: 已清理文件数, protectedCount: 受保护文件数
  */
@@ -57,7 +111,7 @@ export function cleanupUndeclared(
 
 interface TraceEntry {
   ts: string
-  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction' | 'monitor' | 'preflight'
+  event: 'start' | 'error' | 'retry' | 'success' | 'blocked' | 'correction' | 'monitor' | 'preflight' | 'audit_unavailable'
   agent?: string
   message?: string
   attempt?: number
@@ -183,6 +237,82 @@ export async function handleExecution(
     }
   }
 
+  type ExecutionTask = (typeof tasks)[number]
+
+  /** 依赖失败级联：只把仍为 pending 的任务置 blocked（§3.2 B4 条件写）。 */
+  const cascadeBlockedTasks = async () => {
+    for (const task of tasks) {
+      if (task.status !== 'pending') continue
+      const deps: string[] = JSON.parse(task.dependencies || '[]')
+      const hasFailedDep = deps.some(depId => {
+        const dep = tasks.find(t2 => t2.id === depId)
+        return dep?.status === 'failed'
+      })
+      if (!hasFailedDep) continue
+      const blockedTrace = appendTrace(task.trace || '[]', {
+        ts: new Date().toISOString(), event: 'blocked', message: '依赖任务失败',
+      })
+      const blocked = await prisma.task.updateMany({ where: { id: task.id, status: 'pending' }, data: { status: 'blocked', trace: blockedTrace } })
+      if (blocked.count === 0) { await syncTaskStatusFromDb(task); continue }
+      task.status = 'blocked'
+      task.trace = blockedTrace
+      sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'blocked' }) })
+    }
+  }
+
+  /**
+   * 审计失败统一收敛：本批任务全部 failed，不写 result、不发 completed、不跑监控。
+   * - unavailable：基础设施失败，保留 cliSessionId（修好后可复用会话重试）
+   * - sensitive：契约 §1.3 动作 7，清 cliSessionId，避免 agent 错误信念污染后续任务
+   */
+  const failBatchForAudit = async (
+    batch: ExecutionTask[],
+    message: string,
+    mode: 'unavailable' | 'sensitive',
+    expectedStatus: 'pending' | 'in_progress',
+  ) => {
+    for (const task of batch) {
+      const trace = appendTrace(task.trace || '[]', mode === 'sensitive'
+        ? { ts: new Date().toISOString(), event: 'error', message }
+        : { ts: new Date().toISOString(), event: 'audit_unavailable', message })
+
+      if (mode === 'sensitive') {
+        const inv = await invalidateCliSession({
+          taskId: task.id,
+          sessionId,
+          agentId: task.assignedAgentId,
+          expectedFrom: expectedStatus,
+          taskData: { status: 'failed', trace },
+        })
+        if (!inv.applied) {
+          await syncTaskStatusFromDb(task)
+          continue
+        }
+        if (task.assignedAgentId) memberSessionMap.set(task.assignedAgentId, null)
+      } else {
+        const failed = await prisma.task.updateMany({
+          where: { id: task.id, status: expectedStatus },
+          data: { status: 'failed', trace },
+        })
+        if (failed.count === 0) {
+          await syncTaskStatusFromDb(task)
+          continue
+        }
+      }
+
+      task.status = 'failed'
+      task.trace = trace
+      sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'failed' }) })
+    }
+
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: message, sessionId } })
+    } catch (err) {
+      console.warn(`[execution] 审计失败消息落库失败: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: message })
+  }
+
   while (hasProgress && iteration < MAX_ITERATIONS) {
     if (isSessionCancelled(sessionId)) {
       cancelled = true
@@ -224,8 +354,20 @@ export async function handleExecution(
 
     if (readyTasks.length === 0) break
 
-    // Create shadow-git snapshot at batch level for boundary detection
-    const gitBefore = getGitSnapshot(projectRoot, sessionId)
+    // 批次开始快照：三态读取。失败时本批不执行、任务 failed、下游 blocked；
+    // 绝不把 git 失败当成“没有改动”继续跑（否则审计形同虚设）。
+    const snapshot = getGitSnapshotDetailed(projectRoot, sessionId)
+    if (!snapshot.ok) {
+      await failBatchForAudit(
+        readyTasks,
+        `[审计不可用] 批次开始影子 git 快照失败：${snapshot.reason}。本批任务未执行，已置 failed，可 redo。`,
+        'unavailable',
+        'pending',
+      )
+      await cascadeBlockedTasks()
+      break
+    }
+    const gitBefore = snapshot.files
 
     // §3.2 B1: 互斥闸门——pending→in_progress 条件写。双流并发（abort 释放锁后的僵尸流 + 新流）
     // 时后到者 count=0 被剔除出批：同一任务同时只有一个执行流，重复执行结构性不可能。
@@ -371,6 +513,44 @@ export async function handleExecution(
       }
     }
 
+    // 批次级审计：在任何 task 写 completed/result 之前完成。
+    // unavailable / 敏感越界 → 整批 failed，绝不发布成功；普通越界只告警，绝不删共享目录文件。
+    let batchChangedFiles: string[] = []
+    let batchDeclared: string[] = []
+    let batchUndeclared: string[] = []
+    if (batchTasks.length > 0) {
+      const audit = auditBatchChanges(projectRoot, sessionId, gitBefore, batchTasks)
+      if (audit.status === 'unavailable') {
+        await failBatchForAudit(
+          batchTasks,
+          `[审计不可用] 批次结束 diff 读取失败：${audit.reason}。本批结果未发布，任务已置 failed，可 redo。`,
+          'unavailable',
+          'in_progress',
+        )
+        await cascadeBlockedTasks()
+        break
+      }
+      if (audit.status === 'violation') {
+        await failBatchForAudit(
+          batchTasks,
+          `[敏感路径越界] 本批未声明修改了敏感文件：${audit.sensitiveViolations.join(', ')}。整批任务失败，未发布 result。`,
+          'sensitive',
+          'in_progress',
+        )
+        await cascadeBlockedTasks()
+        break
+      }
+
+      batchChangedFiles = audit.changedFiles
+      batchDeclared = audit.batchDeclared
+      batchUndeclared = audit.batchUndeclared
+      if (batchUndeclared.length > 0) {
+        const warningMsg = `[越界警告] 本批修改了未声明文件：${batchUndeclared.join(', ')}。共享项目目录不自动删除，请人工确认。`
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: warningMsg, sessionId } })
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: warningMsg })
+      }
+    }
+
     for (const [taskId, { result, sessionId: cliSessionId }] of results) {
       if (isSessionCancelled(sessionId)) {
         await resetBatchToPending(batchTasks)
@@ -383,67 +563,10 @@ export async function handleExecution(
       allResults.set(taskId, result)
       const taskForTrace = tasks.find(t => t.id === taskId)
 
-      // contract v1 §1.2 b (动作 6): declaredFiles 分级校验
-      // 先算 declaredFiles / changedFiles / undeclared / sensitiveViolations,
-      // 根据是否命中敏感路径决定 task 最终 status
+      // 批次级归责：敏感路径已在批次审计统一处理；这里只保留本任务声明范围，
+      // 用于完成消息/监控 prompt 的“真实交集”，不再逐任务拿 batch diff 判敏感。
       const declaredFiles: string[] = JSON.parse(taskForTrace?.declaredFiles || '[]')
-      const changedFiles = getChangedFiles(projectRoot, sessionId, gitBefore)
       const normalizedDeclared = declaredFiles.map(normalizePath)
-      const undeclared = declaredFiles.length === 0
-        ? []  // declaredFiles 为空 = 跳过文件校验(纯讨论/分析任务合法)
-        : changedFiles.filter(f => !normalizedDeclared.includes(normalizePath(f)))
-      const sensitiveViolations = pickSensitive(undeclared)
-      const isSensitiveFail = sensitiveViolations.length > 0
-
-      if (isSensitiveFail) {
-        // 硬失败: 敏感路径越界,任务 failed,下游 blocked
-        const msg = `[敏感路径越界] 任务 ${taskId} 未声明修改了敏感文件: ${sensitiveViolations.join(', ')}`
-        const failTrace = appendTrace(taskForTrace?.trace || '[]', {
-          ts: new Date().toISOString(), event: 'error', message: msg,
-        })
-        // ⚠️-C2 修复:task + SessionMember 两表更新包事务(语义由统一入口承载)
-        // contract v1 §1.3 P0 (动作 7): 敏感失败清 cliSessionId,避免该 agent
-        // 进程内存里"我交付成功"的错误信念污染后续任务(roadmap §2.4)
-        // §3.2 B6: expectedFrom 前置条件——仅当任务仍在本流 in_progress 时失效写才成立
-        const agentId = taskForTrace?.assignedAgentId
-        const inv = await invalidateCliSession({
-          taskId,
-          sessionId,
-          agentId,
-          expectedFrom: 'in_progress',
-          taskData: { status: 'failed', trace: failTrace },
-        })
-        if (!inv.applied) {
-          // 任务已被其他写者转移（新流已重置/推进），本流的失效写弃权，只保留可见警告
-          console.warn(`[execution] 任务 ${taskId} 敏感越界失效写被条件写拦下（状态已被其他写者转移），弃权`)
-        }
-        if (agentId) memberSessionMap.set(agentId, null)
-        if (taskForTrace && inv.applied) taskForTrace.status = 'failed'
-        await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
-        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId, status: 'failed' }) })
-        continue  // 跳过本任务后续的 success 处理 / monitoring
-      }
-
-      // 普通越界清理：删除本批次创建的越界文件，保留其他批次声明的文件
-      // 设计决策：不触发全任务重试，只外科手术式清理，避免误伤其他批次产出
-      if (undeclared.length > 0) {
-        const otherDeclaredFiles = tasks
-          .filter(t => t.id !== taskId)
-          .flatMap(t => JSON.parse(t.declaredFiles || '[]'))
-        const { cleanedCount, protectedCount } = cleanupUndeclared(undeclared, otherDeclaredFiles, projectRoot)
-
-        if (cleanedCount > 0) {
-          const warningMsg = `[越界警告] 任务 ${taskId} 创建了 ${cleanedCount} 个越界文件，已自动清理`
-          await prisma.message.create({ data: { role: 'orchestrator', rawContent: warningMsg, sessionId } })
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: warningMsg })
-        }
-        if (protectedCount > 0) {
-          const protectedMsg = `[越界保护] ${protectedCount} 个文件属于其他任务声明范围，未清理`
-          await prisma.message.create({ data: { role: 'orchestrator', rawContent: protectedMsg, sessionId } })
-          sendEvent({ agentId: 'orchestrator', type: 'text', content: protectedMsg })
-        }
-      }
 
       const successTrace = appendTrace(taskForTrace?.trace || '[]', {
         ts: new Date().toISOString(), event: 'success',
@@ -504,22 +627,11 @@ export async function handleExecution(
       // 声明交集（declared∩changed，normalized 口径）：完成消息与监控 prompt 审计共用。
       // 监控 prompt 的"实际修改的声明文件"必须填真实交集而非声明清单——
       // 谎报会让审查 LLM 对 ghost 类缺陷（声称完成但声明文件未动）系统性漏检（monitor A/B 安全审查发现）
-      const attributed = changedFiles.filter(f => normalizedDeclared.includes(normalizePath(f)))
-      // contract v1 §1.2 b: 普通越界软警告(敏感越界已在上方硬失败 + continue 处理)
-      if (undeclared.length > 0) {
-        const msg = `[越界修改] 任务 ${taskId} 未声明修改了 ${undeclared.join(', ')}`
-        await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: msg })
-      } else if (changedFiles.length > 0) {
-        // ISSUE-011 F3: 完成消息只列"本任务声明且实际变更"的文件。
-        // changedFiles 是 batch 级快照差异,含同批其他任务的文件——此前
-        // 无声明文件的任务(PRD/文档)会把同批存储层文件串报成自己的。
-        // declaredFiles 为空的任务无声明范围,只发"完成"不列文件。
-        const fileNote = attributed.length > 0 ? `,修改了 ${attributed.join(', ')}` : ''
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成${fileNote}` })
-      } else {
-        sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成` })
-      }
+      // ISSUE-011 F3: 完成消息只列“本任务声明且实际变更”的文件；batch diff
+      // 含同批其他任务的文件，不能串报给无声明任务。
+      const attributed = batchChangedFiles.filter(f => normalizedDeclared.includes(normalizePath(f)))
+      const fileNote = attributed.length > 0 ? `,修改了 ${attributed.join(', ')}` : ''
+      sendEvent({ agentId: 'orchestrator', type: 'text', content: `任务 ${taskId} 完成${fileNote}` })
 
       // contract v1 §1.2 a (动作 5,降级版): outputSchema 软校验
       // 不影响任务状态,只在缺字段/缺 JSON 块时发警告
@@ -534,7 +646,14 @@ export async function handleExecution(
       // on 臂给纠偏触发样本、未设臂给反事实样本，对比数据由此聚合，三梯队第 1 项）。
       // 基底用 successTrace（B2 落库现值）——内存 taskForTrace.trace 在 completed 写后
       // 未同步过 success 事件，用内存值做基串会把 DB trace 覆盖成缺 success 的版本（审查抓出）。
-      const structured = structuredMonitorVerdict({ declaredFiles, changedFiles, schemaCheck })
+      // S1 用批次声明并集：逐任务拿 batch diff 比较会把“同批别的任务改了该文件”
+      // 误判成本任务 ghost（A 声明 package.json、B 只声明 foo.ts 的已知误报）。
+      // 本任务 declaredFiles 为空时 S1 不参与（纯讨论/文档任务没有文件产出声明）。
+      const structured = structuredMonitorVerdict({
+        declaredFiles: declaredFiles.length > 0 ? batchDeclared : [],
+        changedFiles: batchChangedFiles,
+        schemaCheck,
+      })
       if (structured.signals.length > 0) {
         const monitorTrace = appendTrace(successTrace, {
           ts: new Date().toISOString(), event: 'monitor',
@@ -609,7 +728,7 @@ export async function handleExecution(
         }
       } else {
         try {
-          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: attributed, undeclared }, 'batch', projectRoot)
+          const monitoringPrompt = buildMonitoringPrompt(task?.description || '', result, declaredFiles, { declared: attributed, undeclared: batchUndeclared }, 'batch', projectRoot)
           const orch = await getOrchestratorAgent()
           const MONITORING_TIMEOUT_MS = 2 * 60 * 1000
           const { result: reviewResult } = await Promise.race([
@@ -679,24 +798,7 @@ export async function handleExecution(
       }
     }
 
-    for (const task of tasks) {
-      if (task.status !== 'pending') continue
-      const deps: string[] = JSON.parse(task.dependencies || '[]')
-      const hasFailedDep = deps.some(depId => {
-        const dep = tasks.find(t2 => t2.id === depId)
-        return dep?.status === 'failed'
-      })
-      if (hasFailedDep) {
-        const blockedTrace = appendTrace(task.trace || '[]', {
-          ts: new Date().toISOString(), event: 'blocked', message: '依赖任务失败',
-        })
-        // §3.2 B4: 条件写——blocked 只从 pending 级联；已被他人转移（如另一流已标 in_progress）则弃权
-        const blocked = await prisma.task.updateMany({ where: { id: task.id, status: 'pending' }, data: { status: 'blocked', trace: blockedTrace } })
-        if (blocked.count === 0) { await syncTaskStatusFromDb(task); continue }
-        task.status = 'blocked'
-        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'blocked' }) })
-      }
-    }
+    await cascadeBlockedTasks()
   }
 
   // 取消是终止语义：不 auto-done、不发布成功总结；已完成任务保留，未完成退回 pending。

@@ -79,6 +79,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
 vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: mocks.mockGetChangedFiles,
   getGitSnapshot: mocks.mockGetGitSnapshot,
+  getChangedFilesDetailed: () => ({ ok: true, files: mocks.mockGetChangedFiles() }),
+  getGitSnapshotDetailed: () => ({ ok: true, files: mocks.mockGetGitSnapshot() }),
 }))
 
 vi.mock('@/lib/services/context-builder', () => ({
@@ -492,7 +494,7 @@ describe('Execution — git diff boundary detection', () => {
     mocks.mockMessageCreate.mockResolvedValue({})
   })
 
-  it('detects undeclared file modifications and cleans up', async () => {
+  it('detects undeclared file modifications and keeps them (no auto-delete)', async () => {
     // 创建临时目录和越界文件
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-test-'))
     const orphanFile = path.join(tmpDir, 'src', 'lib', 'utils.ts')
@@ -520,12 +522,13 @@ describe('Execution — git diff boundary detection', () => {
       const sendEvent = vi.fn()
       await handleExecution('test', 'sess-1', AGENTS, sendEvent)
 
-      // 越界文件应被清理
-      expect(fs.existsSync(orphanFile)).toBe(false)
+      // 共享 projectDir 不自动删除越界文件——用户/其他会话的产出不能被误删
+      expect(fs.existsSync(orphanFile)).toBe(true)
 
-      // 应发送越界警告（包含清理信息）
+      // 应发送批次级越界警告（明确不自动删除）
       const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
       expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界警告'))).toBe(true)
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('不自动删除'))).toBe(true)
       // 不应发送敏感路径越界（因为 utils.ts 不是敏感文件）
       expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
     } finally {
@@ -641,7 +644,7 @@ describe('Execution — git diff boundary detection', () => {
     expect(failedUpdate).toBeDefined()
   })
 
-  it('[动作 6] 普通越界(非敏感)→ 任务仍 completed + 越界清理', async () => {
+  it('[动作 6] 普通越界(非敏感)→ 任务仍 completed + 文件保留 + 批次告警', async () => {
     // 创建临时目录和越界文件
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boundary-test-'))
     const orphanFile = path.join(tmpDir, 'src', 'lib', 'utils.ts')
@@ -676,12 +679,13 @@ describe('Execution — git diff boundary detection', () => {
       expect(completedUpdate).toBeDefined()
       expect(completedUpdate![0].data.result).toBe('done')
 
-      // 越界文件应被清理
-      expect(fs.existsSync(orphanFile)).toBe(false)
+      // 共享 projectDir 不自动删除越界文件
+      expect(fs.existsSync(orphanFile)).toBe(true)
 
-      // 应发送越界警告（包含清理信息）
+      // 应发送批次级越界警告（明确不自动删除）
       const allTextEvents = sendEvent.mock.calls.map(c => c[0].content).filter(Boolean)
       expect(allTextEvents.some(c => typeof c === 'string' && c.includes('越界警告'))).toBe(true)
+      expect(allTextEvents.some(c => typeof c === 'string' && c.includes('不自动删除'))).toBe(true)
       // 不应发送敏感路径越界
       expect(allTextEvents.some(c => typeof c === 'string' && c.includes('敏感路径越界'))).toBe(false)
     } finally {

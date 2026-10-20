@@ -76,6 +76,8 @@ vi.mock('@/lib/orchestrator/scheduler', () => ({
 vi.mock('@/lib/services/shadow-git', () => ({
   getChangedFiles: mocks.mockGetChangedFiles,
   getGitSnapshot: mocks.mockGetGitSnapshot,
+  getChangedFilesDetailed: () => ({ ok: true, files: mocks.mockGetChangedFiles() }),
+  getGitSnapshotDetailed: () => ({ ok: true, files: mocks.mockGetGitSnapshot() }),
 }))
 
 // preflight-verify 全 mock：门控函数按 env 镜像真实语义，检测/执行为可控桩

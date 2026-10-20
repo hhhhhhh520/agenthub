@@ -25,7 +25,9 @@ vi.mock('fs', async () => {
 
 import {
   getChangedFiles,
+  getChangedFilesDetailed,
   getGitSnapshot,
+  getGitSnapshotDetailed,
   cleanupShadowGit,
 } from '@/lib/services/shadow-git'
 
@@ -58,10 +60,24 @@ describe('getGitSnapshot', () => {
     expect(result).toEqual(new Set())
   })
 
-  it('git 命令失败时返回空 Set(降级)', () => {
+  it('git 命令失败时抛错，不再伪装成空快照', () => {
     mockExecFileSync.mockImplementation(() => { throw new Error('git command failed') })
-    const result = getGitSnapshot('/project', 'sess-1')
-    expect(result).toEqual(new Set())
+    expect(() => getGitSnapshot('/project', 'sess-1')).toThrow(/影子 git 不可用.*git command failed/)
+  })
+
+  it('detailed: 成功返回 ok + 文件集合', () => {
+    mockExecFileSync.mockReturnValueOnce('src/a.ts\n')
+    mockExecFileSync.mockReturnValueOnce('src/b.ts\n')
+    expect(getGitSnapshotDetailed('/project', 'sess-1')).toEqual({
+      ok: true,
+      files: new Set(['src/a.ts', 'src/b.ts']),
+    })
+  })
+
+  it('detailed: 失败返回 ok:false + reason（审计三态可区分空集合）', () => {
+    mockExecFileSync.mockImplementation(() => { throw new Error('git timed out') })
+    const result = getGitSnapshotDetailed('/project', 'sess-1')
+    expect(result).toEqual({ ok: false, reason: 'git timed out' })
   })
 
   it('未初始化时自动调用 git init --bare + add -A + commit', () => {
@@ -102,10 +118,22 @@ describe('getChangedFiles', () => {
     expect(result).not.toContain('src/a.ts')
   })
 
-  it('git 失败时返回空数组(降级)', () => {
+  it('git 失败时抛错，不再伪装成空 diff', () => {
     mockExecFileSync.mockImplementation(() => { throw new Error('git failed') })
-    const result = getChangedFiles('/project', 'sess-1', new Set())
-    expect(result).toEqual([])
+    expect(() => getChangedFiles('/project', 'sess-1', new Set())).toThrow(/影子 git 不可用.*git failed/)
+  })
+
+  it('detailed: 成功返回 ok + 新增文件', () => {
+    mockExecFileSync.mockReturnValueOnce('src/a.ts\nsrc/b.ts\n')
+    mockExecFileSync.mockReturnValueOnce('src/new.ts\n')
+    const result = getChangedFilesDetailed('/project', 'sess-1', new Set(['src/a.ts']))
+    expect(result).toEqual({ ok: true, files: expect.arrayContaining(['src/b.ts', 'src/new.ts']) })
+  })
+
+  it('detailed: 失败返回 ok:false + reason', () => {
+    mockExecFileSync.mockImplementation(() => { throw new Error('git failed') })
+    const result = getChangedFilesDetailed('/project', 'sess-1', new Set())
+    expect(result).toEqual({ ok: false, reason: 'git failed' })
   })
 
   it('过滤空行', () => {
