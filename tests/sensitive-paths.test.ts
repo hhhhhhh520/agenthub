@@ -38,6 +38,13 @@ describe('isSensitivePath', () => {
       expect(isSensitivePath('.env.production')).toBe(true)
     })
 
+    it('任意目录层级的 .env / .env.* 都敏感', () => {
+      expect(isSensitivePath('secrets/.env')).toBe(true)
+      expect(isSensitivePath('secrets/.env.local')).toBe(true)
+      expect(isSensitivePath('config/nested/.env.production')).toBe(true)
+      expect(isSensitivePath('secrets\\.env.local')).toBe(true)
+    })
+
     it('node_modules 下任何文件都敏感', () => {
       expect(isSensitivePath('node_modules/some-pkg/index.js')).toBe(true)
       expect(isSensitivePath('node_modules/.bin/foo')).toBe(true)
@@ -117,10 +124,11 @@ describe('pickSensitive', () => {
       'package.json',         // 敏感
       'src/bar.ts',           // 普通
       '.env',                 // 敏感
+      'secrets/.env.local',   // 敏感：嵌套 .env.*
       'node_modules/x/i.js',  // 敏感
     ]
     expect(pickSensitive(undeclared)).toEqual([
-      'package.json', '.env', 'node_modules/x/i.js',
+      'package.json', '.env', 'secrets/.env.local', 'node_modules/x/i.js',
     ])
   })
 

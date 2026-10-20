@@ -38,6 +38,8 @@ const SENSITIVE_PATTERNS = [
   /^vite\.config\.[a-z]+$/,
   /^vitest\.config\.[a-z]+$/,
   /^webpack\.config\.[a-z]+$/,
+  // 任意目录层级的 .env / .env.* 都是部署边界；根目录前缀规则漏掉了 secrets/.env。
+  /(^|\/)\.env(\..*)?$/,
 ]
 
 /**

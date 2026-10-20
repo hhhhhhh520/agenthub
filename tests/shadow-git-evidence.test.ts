@@ -86,6 +86,20 @@ describe('shadow-git 内容证据', () => {
     }
   })
 
+  it('审计消费内容证据：未声明的嵌套 ignored .env 变化 → violation', () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), 'secrets/\n')
+    fs.mkdirSync(path.join(root, 'secrets'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'secrets', '.env'), 'TOKEN=one\n')
+    const before = getGitSnapshotDetailed(root, SESSION)
+    expect(before).toHaveProperty('evidence')
+    if (!before.ok) throw new Error(before.reason)
+
+    fs.writeFileSync(path.join(root, 'secrets', '.env'), 'TOKEN=two\n')
+    const audit = auditBatchChanges(root, SESSION, before.evidence, [{ declaredFiles: '["src/app.ts"]' }])
+
+    expect(audit).toMatchObject({ status: 'violation', sensitiveViolations: ['secrets/.env'] })
+  })
+
   it('审计消费内容证据：未声明的 .env 变化 → violation', () => {
     fs.writeFileSync(path.join(root, '.gitignore'), '.env\n')
     fs.writeFileSync(path.join(root, '.env'), 'TOKEN=one\n')
