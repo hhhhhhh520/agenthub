@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v23（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1 全部闭环 + P2-05 MDS；下一批 timeout/regenerate/stop-delete） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v24（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1 全部闭环 + P2-01/P2-05；下一批 regenerate/stop-delete/恢复审批） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -30,6 +30,7 @@
 | v21 | 2026-10-20 | **P1-02 主批次工具白名单透传（commit a5e6991）**。`execution.ts` 批次 agent 映射保留 `tools`；`executeTaskBatch` 与 `executeSingleAgent` 共用 `parseAgentTools`，非空 tools 透传为 `allowedTools`，空/缺失保持不限制。新增批次 connect、单 Agent connect、空 tools、auto 不放大及 execution 接线测试；变异验证移除映射/透传均精确红。全量 121 files / 1400 passed / 3 skipped。**下一批 P1**：OpenCode 权限文件按会话隔离；随后 Claude MDS、timeout/regenerate/stop-delete/恢复审批。 |
 | v22 | 2026-10-20 | **P1-03 OpenCode 权限文件按会话隔离（commit ae39e00）**。agent md/XDG 目录加入 chatSessionId + permissionMode + tools/model/baseUrl/workDir/mcpConfig 指纹与 adapter 实例 nonce；`--agent` 与文件同名，default/auto 并发不再覆盖。ProcessRegistry 记录 managedAgentFile/managedConfigDir，进程退出/取消清理，共享路径按存活 entry 保护，retry 重建前 preserveManaged；sweep 保留 registry 活跃 per-session 目录。新增隔离、清理、retry、sweep 回归并做变异验证。全量 121 files / 1405 passed / 3 skipped。**下一批**：P2-05 Claude MDS 隔离、timeout/regenerate/stop-delete/恢复审批。 |
 | v23 | 2026-10-20 | **P2-05 Claude MDS 隔离（commit a24ca60）**。根因：`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 只在有 provider 凭据时注入，已有登录认证的空配置 agent 跳过，workDir 的 CLAUDE.md 自动发现未隔离。修复：MDS 开关与 provider 分支解耦，所有 Claude spawn 注入；`CLAUDE_CONFIG_DIR`/`--settings`/envScrub 仍只在凭据存在时使用。新增空配置 registry 边界断言与 provider 分支 MDS 断言，变异验证删除 env 注入精确红。全量 121 files / 1405 passed / 3 skipped。**下一批**：P2-01 timeout、P2-02 regenerate、P2-03 stop-delete、P2-04 恢复审批。 |
+| v24 | 2026-10-20 | **P2-01 timeout iterator 收尾（commit ff53430）**。根因：`withTimeout` 超时后 `finally` 直接 `await iterator.return()`，非合作 generator 的 return 永不 settle 时 TimeoutError 永远不返回、继续占会话锁。修复：`iterator.return` 与 `onTimeout` 共用 `runCleanupBounded`（同一 cleanupTimeoutMs/硬上限）；return 抛错只 warn，不覆盖 TimeoutError；wrapper 明确只保证自身有界返回，底层迟到写入不再 yield。新增 return 永不 settle / return reject 回归；先红验证 2s 超时与 Error 覆盖。全量 121 files / 1407 passed / 3 skipped。**下一批**：P2-02 regenerate、P2-03 stop-delete、P2-04 恢复审批。 |
 
 
 ---
@@ -233,7 +234,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1405 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1407 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

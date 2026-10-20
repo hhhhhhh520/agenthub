@@ -1,8 +1,8 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`a24ca60`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`121 files / 1405 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`ff53430`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`121 files / 1407 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 当前代码复核
 
@@ -38,6 +38,7 @@
 | `a5e6991` | 主批次工具白名单 | 批次映射保留 `tools`；两条入口共用 `parseAgentTools`，非空透传 `allowedTools` |
 | `ae39e00` | OpenCode 会话隔离 | 文件名/XDG 加 chatSessionId+权限/配置指纹+实例 nonce；退出/取消清理，retry 保留，sweep 保护活跃目录 |
 | `a24ca60` | Claude MDS 隔离 | `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 与 provider 分支解耦，所有 spawn 注入 |
+| `ff53430` | timeout return 有界 | `iterator.return` 走 `runCleanupBounded`；return 挂起/抛错不覆盖 `TimeoutError` |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -180,8 +181,9 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 3. P2 待修
 
-### P2-01 `iterator.return()` 无上限，超时可能仍不兑现
+### ✅ P2-01 `iterator.return()` 无上限，超时可能仍不兑现
 
+**状态：** ✅ 已修（commit `ff53430`，2026-10-20）。`iterator.return` 与 onTimeout 共用有界 cleanup；下一项 P2-02。
 **位置：** `src/lib/orchestrator/timeout.ts:86-90`
 **现状：** `onTimeout` 已用 `runCleanupBounded` 包住，但 `finally` 中 `await iterator.return?.()` 仍无上限。真实 async generator 卡在永不完成的 `await/next` 时，`return()` 排队，调用方可能永远收不到 `TimeoutError`，继续占会话锁。
 **最小修法：**
@@ -219,7 +221,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ### ✅ P2-05 Claude 无 provider 配置时未注入项目指令隔离开关
 
-**状态：** ✅ 已修（commit `a24ca60`，2026-10-20）。MDS 开关与 provider 分支解耦，所有 Claude spawn 注入；下一项 P2-01。
+**状态：** ✅ 已修（commit `a24ca60`，2026-10-20）。MDS 开关与 provider 分支解耦，所有 Claude spawn 注入；P2-01 已随后修复（`ff53430`）。
 **位置：** `src/lib/adapter/claude-code-adapter.ts:115`
 **现状：** `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 只在 `ensureClaudeConfigDir` 返回非空时注入；使用已有登录认证、缺 baseUrl/apiKey 的路径跳过该分支，`--bare` 移除后 workDir 的 CLAUDE.md 自动发现可能未被隔离。
 **最小修法：** 把 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 与 provider 凭据分支分离，所有 Claude spawn 都注入；保留 `CLAUDE_CONFIG_DIR`/`--settings` 仅在凭据存在时使用。
@@ -319,7 +321,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1405 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1407 已更新；API 路由数仍写 31（实际 33），E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -351,14 +353,13 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 
 ## 6. 建议执行顺序
 
-1. **P2-01 timeout iterator 收尾**
-2. **P2-02 regenerate chatSessionId**
-3. **P2-03 stop/delete 生命周期**
-4. **P2-04 恢复计划审批关联**
-5. **P2-06/07 HTTP cancel/旧快照**
-6. **P2-08/09 进程树/Agent 创建取消**
-7. **P2-10/11/12 提示/清扫/事件**
-8. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+1. **P2-02 regenerate chatSessionId**
+2. **P2-03 stop/delete 生命周期**
+3. **P2-04 恢复计划审批关联**
+4. **P2-06/07 HTTP cancel/旧快照**
+5. **P2-08/09 进程树/Agent 创建取消**
+6. **P2-10/11/12 提示/清扫/事件**
+7. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -380,7 +381,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `121 files / 1405 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `121 files / 1407 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -407,5 +408,5 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - 取消/退出/清理、执行恢复、批次审计、双维度权限：P1 安全边界已全部闭环；剩余 P2 仍需逐项处理。
-- 最危险的剩余项转为：**P2-01 timeout iterator、P2-02 regenerate 归属、P2-03 stop/delete 生命周期、P2-04 恢复审批关联**（P2-05 Claude MDS 已由 `a24ca60` 闭环）。
+- 最危险的剩余项转为：**P2-02 regenerate 归属、P2-03 stop/delete 生命周期、P2-04 恢复审批关联、P2-06/07 HTTP cancel/旧快照**（P2-05 Claude MDS 已由 `a24ca60` 闭环，P2-01 timeout 已由 `ff53430` 闭环）。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）已由 `ae39e00` 修复。
