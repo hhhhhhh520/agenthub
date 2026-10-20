@@ -1,8 +1,8 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `ca020b8`（OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次 hotfix 文档提交（commit `ca020b8` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `be969e0`（结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `be969e0` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v18
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v19
 
 ## 1. 当前状态
 
@@ -16,10 +16,11 @@
 | `e75339d` | Batch 1 审计三态 + 批次级归责 + 共享目录停止自动删除 |
 | `4774de6` | 双维度权限模型 + CLI 探针（Claude 2.1.270 / OpenCode 2.0.27） |
 | `ca020b8` | OpenCode 配置清扫前缀 bug hotfix（active 目录不再被误删） |
+| `be969e0` | 任务结果发布门禁：completed CAS 成功后才进入 allResults/成功摘要；纠偏退回删除旧结果 |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：120 files / **1388 passed / 3 skipped**
+- `npx vitest run`：120 files / **1389 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净

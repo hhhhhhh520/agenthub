@@ -25,6 +25,7 @@
 | v16 | 2026-10-19 | **Batch 1 审计三态 + 批次级归责 + 共享目录停止自动删除（commit 55d5012/e75339d）**。`shadow-git` 新增 `getGitSnapshotDetailed`/`getChangedFilesDetailed`（`{ok,reason}`），旧兼容入口失败改为抛错，不再把 git 失败伪装成空 diff。`execution.ts` 新增 `auditBatchChanges`（`pass/violation/unavailable`）+ `failBatchForAudit`：批次开始快照失败 → 本批不执行、任务 failed + trace `audit_unavailable`；批次结束 diff 失败 → 不写 result/completed、不跑监控/不 done；敏感路径按本批 `declaredFiles` 并集整批 failed；普通越界只发批次级告警，**共享 projectDir 不再自动删除文件**；审计通过前禁止任何成功发布。全量 1384 passed / 3 skipped。**下一批**：权限模型双维度 + CLI 探针、事件 seq 不可变/单 logger、OpenCode 配置清扫前缀 bug、Pin 独立短锁、UI 权限恢复。 |
 | v17 | 2026-10-20 | **权限模型双维度 + CLI 探针（commit 4774de6）**。Claude Code 2.1.270 实测：`--bare` 只暴露 Bash/Edit/Read 且忽略 `--tools`，已移除；改用 `CLAUDE_CONFIG_DIR` + `--settings` + `--setting-sources user` + `CLAUDE_CODE_DISABLE_CLAUDE_MDS`，`--tools` 控制可用性，CLI 始终 `--permission-mode default`，auto 由 ProcessRegistry 自动 allow。OpenCode 2.0.27 实测：`OPENCODE_CONFIG`/`OPENCODE_PERMISSION` 不生效，权限改写 agent frontmatter `tools`/`permission`；`--auto` 替代 `--dangerously-skip-permissions`；headless `ask` 自动拒绝，因此 default = 只读（保留 `.env` ask），写操作需切 auto。新增 `opencode-permissions.ts` 纯函数与测试；全量 1387 passed / 3 skipped。**下一批**：事件 seq 不可变/单 logger、OpenCode 配置清扫前缀 bug、Pin 独立短锁、UI 权限恢复、MCP/E2E/P5 收尾。 |
 | v18 | 2026-10-20 | **OpenCode 配置清扫前缀 bug hotfix（commit ca020b8）**。根因：`sweepOrphanOpencodeXdgDirs` 的 active 集合存完整目录名 `agenthub-oc-<hash>`，旧比较先 `slice('agenthub-oc-'.length)` 成 `<hash>`，永远匹配不上 → 启动/agents 列表 sweep 会把所有活跃 OpenCode 配置目录当孤儿删除。改为 `active.has(e.name)` 直接比较完整目录名；新增隔离 tmpdir 回归测试（active 含/不含哨兵目录保留、孤儿删除、非 agenthub 目录不动），变异验证恢复 slice 精确红后还原。全量 120 files / 1388 passed / 3 skipped。**下一批**：事件 seq 不可变/单 logger。 |
+| v19 | 2026-10-20 | **任务结果发布门禁修复（commit be969e0）**。根因：`allResults` 在 completed 条件写/CAS 之前写入，count=0 后仍进入最终成功摘要与后续批次入参。改为 CAS 成功后才写入；纠偏退回 pending 时删除旧结果，避免重试失败/取消后发布旧结果。新增 B2 拒绝摘要、纠偏旧结果、正常成功摘要三条断言，变异验证精确红。全量 120 files / 1389 passed / 3 skipped。**下一批 P1/P2**：审计内容证据（已脏路径再次修改/被忽略 .env）、主批次 tools 透传、OpenCode 权限文件按会话隔离、regenerate chatSessionId、iterator.return 有界、stop/delete 生命周期串行、恢复审批关联。 |
 
 ---
 
@@ -227,7 +228,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1388 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1389 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
