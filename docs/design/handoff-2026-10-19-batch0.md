@@ -1,8 +1,8 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4774de6`（双维度权限 + CLI 探针）；权限文档同步：`96e8ad8`；neat-freak 文档同步：`7f53bef`
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `ca020b8`（OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次 hotfix 文档提交（commit `ca020b8` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v17
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v18
 
 ## 1. 当前状态
 
@@ -15,10 +15,11 @@
 | `55d5012` | Batch 1 第一小项：执行恢复态 + 任务/verify 单事务 |
 | `e75339d` | Batch 1 审计三态 + 批次级归责 + 共享目录停止自动删除 |
 | `4774de6` | 双维度权限模型 + CLI 探针（Claude 2.1.270 / OpenCode 2.0.27） |
+| `ca020b8` | OpenCode 配置清扫前缀 bug hotfix（active 目录不再被误删） |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：119 files / **1387 passed / 3 skipped**
+- `npx vitest run`：120 files / **1388 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -110,7 +111,7 @@
   `docs/design/permission-cli-probe-2026-10-20.md`）；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - 事件 seq 不可变 + 单 logger；
-- OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复；
+- ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；
 - Pin 独立短锁；
 - UI 会话切换 remount + 权限恢复；
 - MCP DB URL / since 分页；E2E migrate deploy → db push；Tailwind 动态色；parser CRLF；
