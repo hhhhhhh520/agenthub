@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -14,7 +14,7 @@ vi.mock('@/lib/adapter/process-registry', () => ({
   },
 }))
 
-import { OpenCodeAdapter, sanitizeOpencodeAgentId } from '@/lib/adapter/opencode-adapter'
+import { OpenCodeAdapter } from '@/lib/adapter/opencode-adapter'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -148,7 +148,9 @@ describe('OpenCodeAdapter', () => {
         allowedTools: ['Read', 'Edit', 'Bash'],
       })
       for await (const _ of adapter.send({ prompt: 'test', systemPrompt: 'sys' })) { /* consume */ }
-      const md = readFileSync(join(workDir, '.opencode', 'agents', `agenthub-${sanitizeOpencodeAgentId('agent-perm')}.md`), 'utf8')
+      const cfg = mockSend.mock.calls[mockSend.mock.calls.length - 1][2]
+      const agentName = cfg.args[cfg.args.indexOf('--agent') + 1] as string
+      const md = readFileSync(join(workDir, '.opencode', 'agents', `${agentName}.md`), 'utf8')
       expect(md).toContain('tools:')
       expect(md).toContain('  read: true')
       expect(md).toContain('  bash: true')
@@ -247,6 +249,67 @@ describe('OpenCodeAdapter', () => {
     expect(config.env.XDG_CONFIG_HOME).toBeDefined()
     expect(config.env.XDG_CONFIG_HOME).toContain('agenthub-oc-')
     expect(config.env.XDG_CONFIG_HOME).not.toContain('test-agent')
+  })
+
+  it('P1-03: 同 workDir/agent 的不同会话/模式使用独立 agent 文件与 XDG 目录', async () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'oc-adapter-isolation-'))
+    const xdgDirs = new Set<string>()
+    try {
+      const runAdapter = async (permissionMode: 'default' | 'auto', allowedTools: string[]) => {
+        const adapter = new OpenCodeAdapter()
+        await adapter.connect({
+          platform: 'opencode',
+          workDir,
+          agentId: 'agent-isolation',
+          chatSessionId: 'chat-shared',
+          permissionMode,
+          allowedTools,
+          apiKey: 'sk-isolation',
+          baseUrl: 'https://api.example.com/v1',
+          model: 'deepseek-chat',
+        })
+        for await (const _ of adapter.send({ prompt: 'test', systemPrompt: 'sys' })) { /* consume */ }
+        const cfg = mockSend.mock.calls[mockSend.mock.calls.length - 1][2]
+        if (cfg.env.XDG_CONFIG_HOME) xdgDirs.add(cfg.env.XDG_CONFIG_HOME)
+        return cfg
+      }
+
+      const defaultCfg = await runAdapter('default', ['Read'])
+      const autoCfg = await runAdapter('auto', ['Read', 'Bash'])
+      const agentNameOf = (cfg: any) => cfg.args[cfg.args.indexOf('--agent') + 1] as string
+      const defaultAgent = agentNameOf(defaultCfg)
+      const autoAgent = agentNameOf(autoCfg)
+
+      expect(defaultAgent).not.toBe(autoAgent)
+      expect(defaultCfg.env.XDG_CONFIG_HOME).not.toBe(autoCfg.env.XDG_CONFIG_HOME)
+
+      const defaultPath = join(workDir, '.opencode', 'agents', `${defaultAgent}.md`)
+      const autoPath = join(workDir, '.opencode', 'agents', `${autoAgent}.md`)
+      expect(existsSync(defaultPath)).toBe(true)
+      expect(existsSync(autoPath)).toBe(true)
+      expect(existsSync(join(workDir, '.opencode', 'agents', `agenthub-agent-isolation.md`))).toBe(false)
+
+      const defaultMd = readFileSync(defaultPath, 'utf8')
+      const autoMd = readFileSync(autoPath, 'utf8')
+      expect(defaultMd).toContain('  bash: false')
+      expect(defaultMd).toContain('  execute: false')
+      expect(defaultMd).toContain('  bash: deny')
+      expect(defaultMd).toContain('  execute: deny')
+      expect(autoMd).toContain('  bash: true')
+      expect(autoMd).toContain('  execute: true')
+      expect(autoMd).toContain('  bash: allow')
+      expect(autoMd).toContain('  execute: allow')
+      // auto 写入后，default 会话的权限文件不能被覆盖
+      expect(readFileSync(defaultPath, 'utf8')).toContain('  bash: false')
+
+      expect(defaultCfg.managedAgentFile).toBe(defaultPath)
+      expect(defaultCfg.managedConfigDir).toBe(defaultCfg.env.XDG_CONFIG_HOME)
+    } finally {
+      for (const dir of xdgDirs) {
+        try { rmSync(dir, { recursive: true, force: true }) } catch {}
+      }
+      rmSync(workDir, { recursive: true, force: true })
+    }
   })
 
   it('send does not set XDG_CONFIG_HOME when mcpConfig is empty', async () => {

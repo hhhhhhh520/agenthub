@@ -12,10 +12,11 @@
  */
 import { tmpdir } from 'node:os'
 import { readdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { prisma } from '@/lib/db'
 import { sweepAgentClaudeConfigDirs, claudeConfigDir } from '@/lib/adapter/claude-code-env'
 import { opencodeCfgDirName } from '@/lib/adapter/opencode-adapter'
+import { processRegistry } from '@/lib/adapter/process-registry'
 import { getOrchestratorAgent } from '@/lib/orchestrator'
 
 export async function sweepWithCurrentConfigs(): Promise<string[]> {
@@ -25,12 +26,19 @@ export async function sweepWithCurrentConfigs(): Promise<string[]> {
     .map(r => claudeConfigDir(r))
     .filter((d): d is string => d !== null)
   const removed = sweepAgentClaudeConfigDirs(dirs)
-  removed.push(...sweepOrphanOpencodeXdgDirs(cfgRows.map(r => r.id)))
+  removed.push(...sweepOrphanOpencodeXdgDirs(
+    cfgRows.map(r => r.id),
+    processRegistry.getActiveManagedConfigDirs(),
+  ))
   return removed
 }
 
-function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[]): string[] {
-  const active = new Set(activeAgentIds.map(id => opencodeCfgDirName(id)))
+function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[], activeManagedDirs: string[] = []): string[] {
+  // 兼容历史 agent-only 目录；会话级目录由 ProcessRegistry 的存活 entry 精确保护。
+  const active = new Set([
+    ...activeAgentIds.map(id => opencodeCfgDirName(id)),
+    ...activeManagedDirs.map(d => basename(d)),
+  ])
   const out: string[] = []
   try {
     for (const e of readdirSync(tmpdir(), { withFileTypes: true })) {

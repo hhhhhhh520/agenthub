@@ -6,6 +6,7 @@ import { join } from 'node:path'
 // 否则会误删真实运行中的 agenthub-oc-* 配置目录。
 const h = vi.hoisted(() => ({
   root: '',
+  activeManagedDirs: [] as string[],
   findMany: vi.fn(),
   getOrchestratorAgent: vi.fn(),
   claudeConfigDir: vi.fn(),
@@ -34,6 +35,12 @@ vi.mock('@/lib/adapter/opencode-adapter', () => ({
   opencodeCfgDirName: (id: string) => 'agenthub-oc-' + id,
 }))
 
+vi.mock('@/lib/adapter/process-registry', () => ({
+  processRegistry: {
+    getActiveManagedConfigDirs: () => h.activeManagedDirs,
+  },
+}))
+
 import { sweepWithCurrentConfigs } from '@/lib/services/claude-cfg-maintenance'
 import { opencodeCfgDirName } from '@/lib/adapter/opencode-adapter'
 
@@ -41,6 +48,7 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
   beforeEach(() => {
     const base = process.env.TEMP || process.env.TMPDIR || '.'
     h.root = mkdtempSync(join(base, 'ah-oc-sweep-'))
+    h.activeManagedDirs = []
     h.findMany.mockReset().mockResolvedValue([])
     h.getOrchestratorAgent.mockReset().mockResolvedValue(null)
     h.claudeConfigDir.mockReset().mockReturnValue(null)
@@ -78,5 +86,20 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     expect(existsSync(orphanDir)).toBe(false)
     expect(existsSync(unrelatedDir)).toBe(true)
     expect(removed).toEqual(['agenthub-oc-orphan-123'])
+  })
+
+  it('P1-03: 保留 ProcessRegistry 正在使用的 per-session 目录', async () => {
+    const activeSessionDir = join(h.root, 'agenthub-oc-session-active')
+    const orphanSessionDir = join(h.root, 'agenthub-oc-session-orphan')
+    mkdirSync(activeSessionDir, { recursive: true })
+    mkdirSync(orphanSessionDir, { recursive: true })
+    h.activeManagedDirs = [activeSessionDir]
+
+    const removed = await sweepWithCurrentConfigs()
+
+    expect(existsSync(activeSessionDir)).toBe(true)
+    expect(existsSync(orphanSessionDir)).toBe(false)
+    expect(removed).toContain('agenthub-oc-session-orphan')
+    expect(removed).not.toContain('agenthub-oc-session-active')
   })
 })

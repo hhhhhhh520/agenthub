@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process'
-import { mkdirSync, existsSync, writeFileSync, unlinkSync } from 'fs'
+import { mkdirSync, existsSync, writeFileSync, unlinkSync, rmSync } from 'fs'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -16,6 +16,9 @@ interface ProcessEntry {
   state: 'idle' | 'working'
   mcpConfigFile: string | null
   mcpConfig: string | null  // Original mcpConfig JSON string for process rebuild
+  // OpenCode 生成的会话级资源：进程退出/会话取消时清理，避免权限文件跨会话残留。
+  managedAgentFile: string | null
+  managedConfigDir: string | null
 
   workDir: string
   permissionMode: string
@@ -78,6 +81,9 @@ interface SpawnConfig {
   promptAsArg?: boolean
   // 禁用 shell 模式（用于 OpenCode 等需要传递多行 prompt 的场景）
   shell?: boolean
+  // OpenCode 会话级生成资源（进程退出/取消时由 cleanupEntry 清理）
+  managedAgentFile?: string
+  managedConfigDir?: string
 }
 
 export type { SpawnConfig }
@@ -303,7 +309,8 @@ class ProcessRegistry {
     }
 
     if (existing) {
-      this.killEntryIfCurrent(effectiveKey, existing)
+      // 马上要用同一 config 重建进程：保留 managed 配置，避免新进程无配置启动。
+      this.killEntryIfCurrent(effectiveKey, existing, { preserveManaged: true })
     }
     return this.spawnProcess(effectiveKey, config)
   }
@@ -406,6 +413,8 @@ class ProcessRegistry {
       state: 'idle',
       mcpConfigFile,
       mcpConfig: config.mcpConfig || null,
+      managedAgentFile: config.managedAgentFile || null,
+      managedConfigDir: config.managedConfigDir || null,
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
@@ -422,8 +431,12 @@ class ProcessRegistry {
 
     proc.on('exit', () => {
       // 进程自然 exit 也要清理(否则 waiter 卡到 LOCK_WAIT_TIMEOUT_MS,permission Map 残留)
-      // cleanupEntry 幂等,即便 killEntryIfCurrent 先调过也安全
-      this.cleanupEntry(entry)
+      // cleanupEntry 幂等,即便 killEntryIfCurrent 先调过也安全。
+      // send 正在工作时退出可能是内部 retry 的前奏：保留 managed 配置，
+      // 等新进程复用；最终 kill/永久失败时再清理，避免 retry 无配置启动。
+      // idle 自然退出（例如空闲进程自行结束）则可以直接清理。
+      const preserveManaged = !entry.cancelled && (entry.state === 'working' || entry.busy)
+      this.cleanupEntry(entry, preserveManaged)
       if (this.registry.get(key) === entry) {
         this.registry.delete(key)
       }
@@ -535,7 +548,7 @@ class ProcessRegistry {
    * 在 gracefulShutdown 进程退出场景下,这些 rejection 可能不会被 catch(acquirer 自身也快被进程退出干掉),
    * 这是预期行为不是 bug。
    */
-  private cleanupEntry(entry: ProcessEntry): void {
+  private cleanupEntry(entry: ProcessEntry, preserveManaged = false): void {
     if (entry.cleanedUp) return
     entry.cleanedUp = true
 
@@ -557,6 +570,34 @@ class ProcessRegistry {
     if (entry.mcpConfigFile) {
       try { unlinkSync(entry.mcpConfigFile) } catch {}
     }
+
+    // 清理 OpenCode 会话级 agent md / XDG 目录。共享路径仍有存活 entry 时保留，
+    // 由最后一个持有者退出时再删；防止 cleanup 竞态误删另一会话正在用的配置。
+    // 内部 retry 会立即用同一 config 重建进程，必须 preserveManaged 跳过清理。
+    if (!preserveManaged) {
+      this.cleanupManagedPath(entry, entry.managedAgentFile, false)
+      this.cleanupManagedPath(entry, entry.managedConfigDir, true)
+    }
+  }
+
+  private cleanupManagedPath(entry: ProcessEntry, path: string | null, recursive: boolean): void {
+    if (!path) return
+    const inUse = [...this.registry.values()].some(e =>
+      e !== entry && e.alive && !e.cleanedUp &&
+      (recursive ? e.managedConfigDir === path : e.managedAgentFile === path)
+    )
+    if (inUse) return
+    try {
+      if (recursive) rmSync(path, { recursive: true, force: true })
+      else unlinkSync(path)
+    } catch {}
+  }
+
+  /** sweep 用：当前存活进程仍持有的 OpenCode XDG 目录（会话级目录不能被当孤儿删）。 */
+  getActiveManagedConfigDirs(): string[] {
+    return [...this.registry.values()]
+      .filter(e => e.alive && !e.cleanedUp && e.managedConfigDir)
+      .map(e => e.managedConfigDir!)
   }
 
   async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
@@ -589,7 +630,7 @@ class ProcessRegistry {
           config = { ...config, sessionId: null }
           dropResume = false // 即将以 fresh 启动（spawn 在下一行）；后续 retry 恢复正常 resume 语义
         }
-        if (entry) this.killEntryIfCurrent(effectiveKey, entry)
+        if (entry) this.killEntryIfCurrent(effectiveKey, entry, { preserveManaged: true })
         if (!config) throw new Error(`Process entry not found for key: ${effectiveKey}`)
         if (config.chatSessionId && isSessionCancelled(config.chatSessionId)) {
           throw new SessionCancelledError(config.chatSessionId)
@@ -677,7 +718,7 @@ class ProcessRegistry {
         if (attempt <= MAX_SEND_RETRIES) {
           // Kill old process and prepare for retry with exponential backoff
           const currentEntry = this.registry.get(effectiveKey)
-          if (currentEntry) this.killEntryIfCurrent(effectiveKey, currentEntry)
+          if (currentEntry) this.killEntryIfCurrent(effectiveKey, currentEntry, { preserveManaged: true })
           const delay = getRetryDelay(attempt - 1)
           console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
@@ -1341,11 +1382,15 @@ class ProcessRegistry {
     }
   }
 
-  private killEntryIfCurrent(key: string, expectedEntry: ProcessEntry): void {
+  private killEntryIfCurrent(
+    key: string,
+    expectedEntry: ProcessEntry,
+    opts?: { preserveManaged?: boolean },
+  ): void {
     if (this.registry.get(key) !== expectedEntry) return
 
     // 统一清理非进程资源(映射、permission Map、waiter 唤醒、临时文件)
-    this.cleanupEntry(expectedEntry)
+    this.cleanupEntry(expectedEntry, opts?.preserveManaged)
 
     // 杀进程(本方法负责的部分)
     const pid = expectedEntry.process.pid

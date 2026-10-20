@@ -27,12 +27,57 @@ function cleanModel(model?: string): string {
 }
 
 /**
+ * 同一 workDir/agent 的隔离维度：
+ * - chatSessionId：不同会话不能互相覆盖权限文件；
+ * - permissionMode + allowedTools：同一会话的 default/auto 也不能互相覆盖；
+ * - model/baseUrl/workDir/mcpConfig：provider/MCP 配置不一致时不能共享 XDG 目录。
+ *
+ * 只输出 hash，不把 sessionId/agentId 原样写进文件名/目录名；apiKey 不参与
+ * 指纹（避免任何形式的密钥派生落点），同 key 轮换时覆盖同一目录即可。
+ */
+export interface OpenCodeIsolationInput {
+  chatSessionId?: string
+  permissionMode?: string
+  allowedTools?: string[]
+  model?: string
+  baseUrl?: string
+  workDir?: string
+  mcpConfig?: string
+  /** 同参数的并发 adapter 实例也不能共享可变文件（批次可并行跑同一 Agent）。 */
+  instanceId?: string
+}
+
+export function opencodeIsolationScope(input: OpenCodeIsolationInput): string {
+  const normalized = {
+    session: input.chatSessionId || 'default',
+    permission: input.permissionMode || 'default',
+    tools: [...(input.allowedTools || [])].sort(),
+    model: input.model || '',
+    baseUrl: input.baseUrl || '',
+    workDir: input.workDir || '',
+    mcpConfig: input.mcpConfig || '',
+    instance: input.instanceId || '',
+  }
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex').slice(0, 10)
+}
+
+/**
+ * agentId → CLI 安全标识（--agent 参数与 agent md 文件名共用），并追加会话/配置指纹。
+ * 保持 sanitizeOpencodeAgentId 的旧行为用于可读前缀；hash 后缀保证隔离。
+ */
+export function opencodeAgentName(agentId: string, isolationScope: string): string {
+  return `agenthub-${sanitizeOpencodeAgentId(agentId)}-${isolationScope}`
+}
+
+/**
  * agentId → 稳定 XDG 目录名（hash 化）。审查 🟡：讨论路径 agentId=用户自起名（中文名/
  * 含 ../.. 等）直接拼目录会路径逃逸且明文 key 落点不可控——对齐 claude 路径「目录名只含
- * hash」拍板。sweep 同款映射见 claude-cfg-maintenance.ts。
+ * hash」拍板。传入 isolationScope 时追加会话/配置隔离；不传时保留旧 agent-only 语义
+ * （供 sweep 识别历史目录）。
  */
-export function opencodeCfgDirName(agentId: string): string {
-  return 'agenthub-oc-' + createHash('sha256').update(agentId).digest('hex').slice(0, 12)
+export function opencodeCfgDirName(agentId: string, isolationScope?: string): string {
+  const key = isolationScope ? `${agentId}\0${isolationScope}` : agentId
+  return 'agenthub-oc-' + createHash('sha256').update(key).digest('hex').slice(0, 12)
 }
 
 /**
@@ -107,6 +152,12 @@ export class OpenCodeAdapter implements AgentAdapter {
   private chatSessionId: string | undefined
   private allowedTools: string[] | undefined
   private permissionMode: string = 'default'
+  // 同一 session/agent 的批次任务可能并行跑；每个 adapter 实例独占生成文件，
+  // 防止一个任务的进程退出清理误删另一个任务正在启动的 agent.md/XDG 配置。
+  private readonly instanceScope = createHash('sha256')
+    .update(`${process.pid}:${Date.now()}:${Math.random()}`)
+    .digest('hex')
+    .slice(0, 8)
   // ❌-1 修复:send() 时缓存真正用于 spawn 的 SpawnConfig 对象引用
   // (注:adapter.close() 时会清零此字段)
   private lastSpawnConfig: SpawnConfig | null = null
@@ -142,15 +193,40 @@ export class OpenCodeAdapter implements AgentAdapter {
     return this.lastSpawnConfig
   }
 
+  private isolationScope(): string {
+    return opencodeIsolationScope({
+      chatSessionId: this.chatSessionId,
+      permissionMode: this.permissionMode,
+      allowedTools: this.allowedTools,
+      model: this.config.model,
+      baseUrl: this.config.baseUrl,
+      workDir: this.workDir,
+      mcpConfig: this.config.mcpConfig,
+      instanceId: this.instanceScope,
+    })
+  }
+
+  private agentName(): string | null {
+    if (!this.agentId) return null
+    return opencodeAgentName(this.agentId, this.isolationScope())
+  }
+
+  private agentFilePath(): string | null {
+    if (!this.workDir) return null
+    const name = this.agentName()
+    if (!name) return null
+    return join(this.workDir, '.opencode', 'agents', `${name}.md`)
+  }
+
   /**
-   * 将 systemPrompt 写入 .opencode/agents/agenthub-{agentId}.md
-   * OpenCode 启动时自动加载该文件作为 agent 行为指令
+   * 将 systemPrompt 写入 .opencode/agents/agenthub-{agentId}-{scope}.md
+   * OpenCode 启动时自动加载该文件作为 agent 行为指令。
+   * 文件名含会话/权限/tools 指纹，避免同 workDir 下不同会话互相覆盖。
    */
   private ensureAgentConfig(systemPrompt: string): void {
-    if (!this.agentId || !this.workDir) return
-
+    const agentFile = this.agentFilePath()
+    if (!agentFile) return
     const agentDir = join(this.workDir, '.opencode', 'agents')
-    const agentFile = join(agentDir, `agenthub-${sanitizeOpencodeAgentId(this.agentId)}.md`)
 
     // v2.0.27 实测：agent frontmatter 的 tools/permission 才会被加载；
     // OPENCODE_CONFIG / OPENCODE_PERMISSION 环境变量通道不生效（见 opencode-permissions.ts）。
@@ -212,7 +288,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (!providerCfg && Object.keys(mcpServers).length === 0) {
       return undefined // 无 provider 且无有效 MCP：不注入 XDG（恢复旧短路语义，防空壳遮蔽全局配置）
     }
-    const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
+    const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default', this.isolationScope()))
     const opencodeDir = join(configDir, 'opencode')
     mkdirSync(opencodeDir, { recursive: true, mode: 0o700 })
 
@@ -265,9 +341,10 @@ export class OpenCodeAdapter implements AgentAdapter {
     // 只传用户消息（systemPrompt 已通过 agent 配置文件注入）
     const fullPrompt = task.prompt
 
-    // 构建 CLI 参数
+    // 构建 CLI 参数；--agent 必须与 ensureAgentConfig 写入的隔离文件名一致
     const args = ['run', '--format', 'json']
-    if (this.agentId) args.push('--agent', `agenthub-${sanitizeOpencodeAgentId(this.agentId)}`)
+    const agentName = this.agentName()
+    if (agentName) args.push('--agent', agentName)
     if (this.sessionId) args.push('--session', this.sessionId)
     // ISSUE-027 commit 3：有 apiKey+baseUrl 时 provider 配置走生成的配置文件（env 路径触发
     // tokenrhythm 拒收的 anthropic-beta 头），模型引用带 provider 前缀；否则维持 env 旧路径
@@ -329,6 +406,9 @@ export class OpenCodeAdapter implements AgentAdapter {
       // 凭据与端点只经生成的 XDG 配置文件传递（claude 路径同原则）
       envScrub: providerCfg ? claudeEnvScrub() : undefined,
       allowedTools: this.allowedTools,
+      // 进程退出/会话取消时由 ProcessRegistry 清理；agent md 在 workDir，XDG 目录在 tmpdir。
+      managedAgentFile: this.agentFilePath() || undefined,
+      managedConfigDir: configDir,
       shell: true,
     }
 

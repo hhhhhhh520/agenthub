@@ -264,11 +264,19 @@ describe('OpenCodeAdapter — provider config file (ISSUE-027 commit 3)', () => 
       kill: vi.fn(),
     }
 
-    // 通过 vi.mocked 获取 spawn mock，用 mockImplementation 保留 env 捕获逻辑
+    // 通过 vi.mocked 获取 spawn mock，用 mockImplementation 保留 env 捕获逻辑。
+    // P1-03 后进程退出会清理 XDG 目录，因此在 spawn 当帧同步读取配置内容。
+    let capturedConfig: any = null
     const { spawn } = await import('child_process')
     const spawnMock = vi.mocked(spawn)
     spawnMock.mockImplementation((cmd: string, args: string[], options: any) => {
-      capturedEnvList.push(options?.env || {})
+      const env = options?.env || {}
+      capturedEnvList.push(env)
+      if (env.XDG_CONFIG_HOME) {
+        try {
+          capturedConfig = JSON.parse(readFileSync(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf-8'))
+        } catch {}
+      }
       return localProcess as any
     })
 
@@ -302,13 +310,12 @@ describe('OpenCodeAdapter — provider config file (ISSUE-027 commit 3)', () => 
     expect(spawnEnv.XDG_CONFIG_HOME).toBeTruthy()
 
     // 配置文件内容：provider.anthropic.options 承载凭据与端点，模型带 provider 前缀
-    const cfgPath = join(spawnEnv.XDG_CONFIG_HOME, 'opencode', 'opencode.json')
-    const parsed = JSON.parse(readFileSync(cfgPath, 'utf-8'))
-    expect(parsed.provider.anthropic.options.baseURL).toBe('https://proxy.example.com/v1')
-    expect(parsed.provider.anthropic.options.apiKey).toBe('sk-test-opencode-key')
-    expect(parsed.provider.anthropic.models).toEqual({ 'deepseek-chat': {} })
-    expect(parsed.model).toBe('anthropic/deepseek-chat')
-    expect(parsed.small_model).toBe('anthropic/deepseek-chat')
+    expect(capturedConfig).not.toBeNull()
+    expect(capturedConfig.provider.anthropic.options.baseURL).toBe('https://proxy.example.com/v1')
+    expect(capturedConfig.provider.anthropic.options.apiKey).toBe('sk-test-opencode-key')
+    expect(capturedConfig.provider.anthropic.models).toEqual({ 'deepseek-chat': {} })
+    expect(capturedConfig.model).toBe('anthropic/deepseek-chat')
+    expect(capturedConfig.small_model).toBe('anthropic/deepseek-chat')
 
     await adapter.close()
   }

@@ -29,6 +29,7 @@ vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
+  rmSync: vi.fn(),
 }))
 
 let processRegistry: any
@@ -446,7 +447,87 @@ describe('ProcessRegistry — extended coverage', () => {
     })
   })
 
+  describe('killEntry — managed OpenCode paths cleanup', () => {
+    it('P1-03: 清理独立会话文件；共享路径在另一 active entry 存活时保留', async () => {
+      const { unlinkSync, rmSync } = await import('fs')
+      const sharedAgent = '/agents/shared.md'
+      const sharedConfig = '/tmp/agenthub-oc-shared'
+
+      processRegistry.getOrCreate('iso-a', {
+        workDir: '/dir',
+        managedAgentFile: sharedAgent,
+        managedConfigDir: sharedConfig,
+      })
+      processRegistry.getOrCreate('iso-b', {
+        workDir: '/dir',
+        managedAgentFile: sharedAgent,
+        managedConfigDir: sharedConfig,
+      })
+
+      processRegistry.killEntry('iso-a')
+      // 另一个会话仍持有同一路径时不能删
+      expect(unlinkSync).not.toHaveBeenCalledWith(sharedAgent)
+      expect(rmSync).not.toHaveBeenCalledWith(sharedConfig, { recursive: true, force: true })
+
+      processRegistry.killEntry('iso-b')
+      expect(unlinkSync).toHaveBeenCalledWith(sharedAgent)
+      expect(rmSync).toHaveBeenCalledWith(sharedConfig, { recursive: true, force: true })
+    })
+
+    it('P1-03: 进程自然退出也清理会话级 agent 文件与 XDG 目录', async () => {
+      const { unlinkSync, rmSync } = await import('fs')
+      processRegistry.getOrCreate('natural-exit', {
+        workDir: '/dir',
+        managedAgentFile: '/agents/natural.md',
+        managedConfigDir: '/cfg/natural',
+      })
+
+      fakeProc.exitCode = 0
+      fakeProc.emit('exit', 0)
+
+      expect(unlinkSync).toHaveBeenCalledWith('/agents/natural.md')
+      expect(rmSync).toHaveBeenCalledWith('/cfg/natural', { recursive: true, force: true })
+    })
+  })
+
   describe('readRound — process exit edge cases', () => {
+    it('P1-03: retry 重建进程前保留 managed 配置，最终 kill 才清理', async () => {
+      vi.useRealTimers()
+      const { rmSync } = await import('fs')
+      let callCount = 0
+      let rmCallsAtSecondSpawn = -1
+      mockSpawn.mockImplementation(() => {
+        callCount++
+        if (callCount === 2) rmCallsAtSecondSpawn = rmSync.mock.calls.length
+        const proc = createFakeProcess()
+        if (callCount === 1) {
+          setTimeout(() => {
+            proc.exitCode = 1
+            proc.stdout.end()
+            proc.emit('exit')
+          }, 5)
+        } else {
+          setTimeout(() => {
+            proc.stdout.write(Buffer.from(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n'))
+          }, 10)
+        }
+        fakeProc = proc
+        return proc
+      })
+
+      await collect(processRegistry.send('retry-managed', 'test', {
+        workDir: '/dir',
+        managedAgentFile: '/agents/retry.md',
+        managedConfigDir: '/cfg/retry',
+      }))
+
+      expect(callCount).toBe(2)
+      expect(rmCallsAtSecondSpawn).toBe(0)
+
+      processRegistry.killEntry('retry-managed')
+      expect(rmSync).toHaveBeenCalledWith('/cfg/retry', { recursive: true, force: true })
+    })
+
     it('yields partial text before process exits with code 0', async () => {
       vi.useRealTimers()
       const key = 'partial-exit'
