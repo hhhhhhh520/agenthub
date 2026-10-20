@@ -17,6 +17,7 @@ describe('ISSUE-027 接线守卫：claude-code adapter → 受管 CLAUDE_CONFIG_
     expect(ADAPTER_SRC).toContain('ensureClaudeConfigDir(')
     expect(ADAPTER_SRC).toContain('CLAUDE_CONFIG_DIR')
     expect(ADAPTER_SRC).toContain('claudeEnvScrub()')
+    expect(ADAPTER_SRC).toContain("CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1'")
     // 缺配置 agent 的降级分支必须保留（null → 旧行为）
     expect(ADAPTER_SRC).toMatch(/if \(cfgDir\)/)
   })

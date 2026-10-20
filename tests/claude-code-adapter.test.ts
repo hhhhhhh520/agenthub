@@ -144,6 +144,7 @@ describe('ClaudeCodeAdapter', () => {
     const config = mockGetOrCreate.mock.calls[0][1]
     expect(config.env!.CLAUDE_CONFIG_DIR).toBeTruthy()
     expect(config.env!.CLAUDE_CONFIG_DIR).toContain(cfgRoot)
+    expect(config.env!.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe('1')
     expect(config.envScrub).toEqual({
       prefixes: ['ANTHROPIC_', 'CLAUDE_'],
       exact: expect.arrayContaining(['CLAUDECODE', 'CLAUDE_CODE_MESSAGING_SOCKET']),
@@ -156,12 +157,14 @@ describe('ClaudeCodeAdapter', () => {
     expect(parsed.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-test')
   })
 
-  it('无 baseUrl（空配置 agent）→ 不注入 configDir，维持旧行为', async () => {
+  it('P2-05: 无 baseUrl/apiKey → 仍注入 MDS 开关，但不注入 configDir/settings/envScrub', async () => {
     const adapter = new ClaudeCodeAdapter()
-    await adapter.connect({ platform: 'claude-code', workDir: '/dir', apiKey: 'sk-only' })
+    await adapter.connect({ platform: 'claude-code', workDir: '/dir' })
     await (adapter as any).send({ prompt: 'test' }).next()
     const config = mockGetOrCreate.mock.calls[0][1]
-    expect(config.env).toBeUndefined()
+    expect(config.env).toEqual({ CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' })
+    expect(config.env.CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(config.settingsPath).toBeUndefined()
     expect(config.envScrub).toBeUndefined()
   })
 })
