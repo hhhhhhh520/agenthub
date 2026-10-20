@@ -121,30 +121,44 @@ export async function POST(
     const encoder = new TextEncoder()
     const SSE_TIMEOUT_MS = 60 * 60_000
     const globalDeadline = Date.now() + 50 * 60 * 1000
+    // P2-06: 客户端取消/超时/推流异常后只停止推流，后台执行继续；锁仍由 start 的 finally 释放。
+    let streamClosed = false
+    let sseTimeout: ReturnType<typeof setTimeout> | undefined
     const stream = new ReadableStream({
       async start(controller) {
-        let streamClosed = false
+        const safeEnqueue = (event: unknown): boolean => {
+          if (streamClosed) return false
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+            return true
+          } catch {
+            // 客户端已取消/流已关闭：不能再让 enqueue 异常穿透到业务 handler。
+            streamClosed = true
+            return false
+          }
+        }
         let eventLogger: EventLogger | undefined
-        let sseTimeout: ReturnType<typeof setTimeout> | undefined
 
         try {
           // roadmap §3.1: 四类过程事件持久化 + 帧 seq 化（eventLogger.stream 即推流）。
           // 持久化与推流解耦：streamClosed 后仍落库、只是不推流——刷新后按 seq 补发的前提。
           eventLogger = await createEventLogger(sessionId, {
             stream: (event) => {
-              if (streamClosed) return
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+              safeEnqueue(event)
             },
           })
           const sendEvent = eventLogger.sendEvent
 
           sseTimeout = setTimeout(() => {
+            if (streamClosed) return
+            safeEnqueue({ agentId: 'orchestrator', type: 'error', content: '请求超时（60分钟），请重试' })
             streamClosed = true
-            try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（60分钟），请重试' })}\n\n`))
-            } catch {}
             try { controller.close() } catch {}
           }, SSE_TIMEOUT_MS)
+          if (streamClosed) {
+            clearTimeout(sseTimeout)
+            sseTimeout = undefined
+          }
 
           const existingMembers = await prisma.sessionMember.findMany({
             where: { sessionId },
@@ -212,10 +226,8 @@ export async function POST(
               eventLogger.sendEvent({ agentId: 'orchestrator', type: 'text', content: stopped })
               eventLogger.sendEvent({ agentId: 'orchestrator', type: 'done', content: stopped })
             } else {
-              try {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content: stopped })}\n\n`))
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content: stopped })}\n\n`))
-              } catch {}
+              safeEnqueue({ agentId: 'orchestrator', type: 'text', content: stopped })
+              safeEnqueue({ agentId: 'orchestrator', type: 'done', content: stopped })
             }
             return
           }
@@ -235,9 +247,7 @@ export async function POST(
             eventLogger.sendEvent({ agentId: 'orchestrator', type: 'error', content: friendlyMsg })
           } else {
             // eventLogger 创建失败时仍要尽量给客户端一个帧；失败则只关闭流。
-            try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: friendlyMsg })}\n\n`))
-            } catch {}
+            safeEnqueue({ agentId: 'orchestrator', type: 'error', content: friendlyMsg })
           }
         } finally {
           if (sseTimeout) clearTimeout(sseTimeout)
@@ -248,9 +258,18 @@ export async function POST(
           } catch (err) {
             console.warn('[Chat API] eventLogger.flush failed:', err instanceof Error ? err.message : err)
           }
-          // 60min 超时路径已 close 过——二次 close 抛 TypeError 会跳过锁释放（审查发现）
+          // 超时/取消/推流异常路径可能已关闭/失效；二次 close 抛 TypeError 必须吞掉，
+          // 不能跳过锁释放（锁泄漏会让该会话后续请求永久 429）。
           try { controller.close() } catch { /* 已关闭 */ }
           releaseLock()
+        }
+      },
+      cancel() {
+        // 客户端主动取消 body：只停止推流，不释放锁、不取消后台执行。
+        streamClosed = true
+        if (sseTimeout) {
+          clearTimeout(sseTimeout)
+          sseTimeout = undefined
         }
       },
     })

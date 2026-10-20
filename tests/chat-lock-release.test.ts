@@ -95,6 +95,12 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   clearSessionCancel('s1')
@@ -280,5 +286,66 @@ describe('chat route — 统一锁释放', () => {
 
     expect(res.status).toBe(404)
     expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
+  })
+
+  it('P2-06: 客户端取消 body 后继续发事件不抛错、不中断后台，锁仍由 finally 释放', async () => {
+    const gate = deferred<void>()
+    const handlerDone = deferred<void>()
+    let sentAfterCancel = false
+
+    mocks.handleOrchestratorDecision.mockImplementationOnce(async (_message, _sessionId, _agents, sendEvent: (e: unknown) => void) => {
+      try {
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: 'before-cancel' })
+        await gate.promise
+        sendEvent({ agentId: 'orchestrator', type: 'text', content: 'after-cancel' })
+        sentAfterCancel = true
+      } finally {
+        handlerDone.resolve()
+      }
+    })
+
+    const res = await POST(makeReq({ message: 'hi' }), params)
+    const reader = res.body?.getReader()
+    expect(reader).toBeDefined()
+    const first = await reader!.read()
+    expect(first.done).toBe(false)
+    await reader!.cancel()
+
+    gate.resolve()
+    await handlerDone.promise
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(sentAfterCancel).toBe(true)
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('P2-06: 客户端 cancel 会清理 SSE 超时定时器', async () => {
+    vi.useFakeTimers()
+    try {
+      const gate = deferred<void>()
+      const handlerDone = deferred<void>()
+      mocks.handleOrchestratorDecision.mockImplementationOnce(async (_message, _sessionId, _agents, sendEvent: (e: unknown) => void) => {
+        try {
+          sendEvent({ agentId: 'orchestrator', type: 'text', content: 'before-cancel' })
+          await gate.promise
+        } finally {
+          handlerDone.resolve()
+        }
+      })
+
+      const res = await POST(makeReq({ message: 'hi' }), params)
+      const reader = res.body?.getReader()
+      expect(reader).toBeDefined()
+      await reader!.read()
+      expect(vi.getTimerCount()).toBe(1)
+
+      await reader!.cancel()
+      expect(vi.getTimerCount()).toBe(0)
+
+      gate.resolve()
+      await handlerDone.promise
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
