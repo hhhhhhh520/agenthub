@@ -3,16 +3,16 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v25：CI 门禁、架构守卫、SSE 重放、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全；阶段一/阶段二已收口）
-- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前唯一未闭环 P2/P3 清单**（P1 已全部闭环；含 stop/delete 生命周期、恢复审批、旧 36 项映射与验收顺序）
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v26：CI 门禁、架构守卫、SSE 重放、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障；阶段一/阶段二已收口）
+- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前唯一未闭环 P2/P3 清单**（P1 已全部闭环，P2-03 已闭环；含恢复审批、HTTP cancel、旧 36 项映射与验收顺序）
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
 - [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
 - [对齐流程](design/alignment-flow-plan.md) — Orchestrator 智能编排对齐流程
 - [cc-connect Agent 参考](design/cc-connect-agent-reference.md) — cc-connect 架构借鉴
 - [权限模型 CLI 探针](design/permission-cli-probe-2026-10-20.md) — Claude 2.1.270 / OpenCode 2.0.27 双维度权限实测
-- [P2-03 接续提示](design/handoff-2026-10-20-p2-03.md) — **当前下一项**：stop/DELETE 生命周期竞态、推荐修法、必须测试与验收边界
-- [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以 P2-03 接续提示和修复待办总表为准
+- [P2-03 完成记录](design/handoff-2026-10-20-p2-03.md) — stop/DELETE 生命周期竞态：已修复（commit `31c5946`）、测试与验收证据；下一项 P2-04 见待办总表
+- [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 
 ## 参考资料
 

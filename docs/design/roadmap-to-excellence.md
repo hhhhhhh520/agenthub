@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v25（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1 全部闭环 + P2-01/02/05；下一批 stop-delete/恢复审批/HTTP cancel） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v26（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1 全部闭环 + P2-01/02/03/05；下一批 P2-04 恢复审批/HTTP cancel） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -32,6 +32,7 @@
 | v23 | 2026-10-20 | **P2-05 Claude MDS 隔离（commit a24ca60）**。根因：`CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 只在有 provider 凭据时注入，已有登录认证的空配置 agent 跳过，workDir 的 CLAUDE.md 自动发现未隔离。修复：MDS 开关与 provider 分支解耦，所有 Claude spawn 注入；`CLAUDE_CONFIG_DIR`/`--settings`/envScrub 仍只在凭据存在时使用。新增空配置 registry 边界断言与 provider 分支 MDS 断言，变异验证删除 env 注入精确红。全量 121 files / 1405 passed / 3 skipped。**下一批**：P2-01 timeout、P2-02 regenerate、P2-03 stop-delete、P2-04 恢复审批。 |
 | v24 | 2026-10-20 | **P2-01 timeout iterator 收尾（commit ff53430）**。根因：`withTimeout` 超时后 `finally` 直接 `await iterator.return()`，非合作 generator 的 return 永不 settle 时 TimeoutError 永远不返回、继续占会话锁。修复：`iterator.return` 与 `onTimeout` 共用 `runCleanupBounded`（同一 cleanupTimeoutMs/硬上限）；return 抛错只 warn，不覆盖 TimeoutError；wrapper 明确只保证自身有界返回，底层迟到写入不再 yield。新增 return 永不 settle / return reject 回归；先红验证 2s 超时与 Error 覆盖。全量 121 files / 1407 passed / 3 skipped。**下一批**：P2-02 regenerate、P2-03 stop-delete、P2-04 恢复审批。 |
 | v25 | 2026-10-20 | **P2-02 regenerate 取消安全（commit 74bda96）**。根因：regenerate 调 `executeSingleAgent` 时 `chatSessionId` 为 undefined，`ProcessEntry.ownerSessionId` 为空，stop/delete 的 `cancelByOwnerSession` 找不到进程；返回后也未复查取消就更新原消息/发 done。修复：传 `sessionId` + `workDir`；执行返回后先查 `isSessionCancelled`，取消则只发停止文本，不写回原消息、不发成功 done。新增两条路由回归；先红验证 undefined 与 messageUpdate 已调用。全量 121 files / 1409 passed / 3 skipped。**下一批**：P2-03 stop-delete、P2-04 恢复审批、P2-06/07。 |
+| v26 | 2026-10-20 | **P2-03 stop/delete 生命周期屏障（commit 31c5946）**。根因：DELETE 等锁释放后、删库前仍要清理附件/影子 git；并发 stop 可在该窗口判为停止完成并 `clearSessionCancel`，新 chat 拿到锁后在删除前启动。修复：新增 `session-lifecycle` 进程内 deleting 标记；DELETE 在取消前 mark，DB 删除完成后才随成功路径清理，失败/409 由 `finally` 清理以允许重试；stop 对 deleting 会话不清取消标记并返回 `deleting:true`/202；chat 拿锁前后都拒绝 deleting 会话（409，不建消息、不启动执行）。新增并发 stop/delete、deleting 保持到删库、失败重试、chat 拿锁前/后拒绝与删除后 404 回归；变异验证恢复 stop 清理与移除拿锁后检查均精确红。全量 121 files / 1415 passed / 3 skipped。**下一批**：P2-04 恢复审批、P2-06/07 HTTP cancel/旧快照。 |
 
 
 ---
@@ -235,7 +236,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1409 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1415 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
