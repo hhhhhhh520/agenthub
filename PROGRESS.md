@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-09-13
+> 创建时间: 2026-05-22 | 最后更新: 2026-10-19
 
 ## 项目概述
 **项目地址**: <repo> | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -254,9 +254,9 @@
 
 | 阶段一收口·§2.4+孤儿清扫+§2.1 CI（roadmap v5/v6，5 commit：610b339/bfdd5b5/d6d9e12/ef8edda/35571f3 + PR#1 merge） | **§2.4 invalidateCliSession 统一入口**：6 处 `cliSessionId: null` 散点（redo ×2 + execution ×4）→ `cli-session.ts` 单事务统一入口（taskData 合并后强制 null，spread 顺序兜底；不含 kill 进程——三路径均在进程退出后）；静态守卫锁定字面量仅存统一入口 + 接线（变异验证精确红→还原）。**shadow-git 孤儿清扫**：`cleanupOrphanShadowGits`（纯 FS）+ `instrumentation.ts` 启动扫描（distinct projectDir，三层 best-effort 容错）；junction rootDir 收口（lstat 跳过，审查发现删除原语不跟进链接）；覆盖面诚实口径（只清 id 失联且 projectDir 仍被引用的孤儿）+ 2 项后续待办（启动快照竞态 / PUT 改走 projectDir 的旧目录主动清）。**§2.1 CI**：`.github/workflows/ci.yml`（push=master/PR）—— vitest 全量 + build + 改动文件 lint 门禁 0 error（PR base.sha / push event.before 全零回退 HEAD~1）+ phase 架构守卫双断言（写点扫描 + STATE_PHASE 外部引用禁用，各故意违规精确红→还原；盲区清单 7 项固化注释）；tests/ no-explicit-any 放宽（实测 error 级存量 ~310）→ 全仓基线 362→**48 errors**/83 warnings；execution.ts / process-registry.ts 存量 any 清零（后者由 lint-gate 首跑按口径拦下——门禁收敛机制首次实际生效）；**审查抓出 2 个 workflow 硬伤已修**：`prisma db push --skip-generate`（Prisma 7 已移除该 flag，隔离实测必挂）、push 触发分支 main→master（origin 实际默认分支）。**CI 首次实测（PR#1）两轮整改后全绿**：ubuntu 上 4 测试文件红（Windows 平台假设：opencode 虚拟路径/process-registry 信号语义/shadow-git 元字符目录名）→ test job 换 windows-latest（测试跑目标运行平台）+ runner 补 git identity（shadow-git 集成测试真实 commit 需要）。**每项 TDD 先红后绿 + 守卫变异验证 + 2 独立审查 Agent**。测试 1137→1154。CI 首次实测全绿（PR#1，详见上方 §2.1 条目） | 2026-09-21 |
 
-| 会话锁队列重写 + 统一释放（Batch 0） | 旧 Map 链式队列在 A 持锁/B/C 等待、B 超时后 A 释放时 C 永久卡死（已复现）→ 显式 waiter 队列：超时/abort 等待者移除自己，release handoff 队首，release 幂等；持有者 abort 不再释放锁（HTTP 断开≠后台结束），chat route 用 lockHandedOff + stream.finally 统一释放，eventLogger 创建失败/flush 异常也不漏锁。新增 15 条针对性测试；全量 1348 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
+| 会话锁队列重写 + 统一释放（Batch 0，commit b6b2deb） | 旧 Map 链式队列在 A 持锁/B/C 等待、B 超时后 A 释放时 C 永久卡死（已复现）→ 显式 waiter 队列：超时/abort 等待者移除自己，release handoff 队首，release 幂等；持有者 abort 不再释放锁（HTTP 断开≠后台结束），chat route 用 lockHandedOff + stream.finally 统一释放，eventLogger 创建失败/flush 异常也不漏锁。新增/改写 17 条针对性测试；全量 1349 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
-| Batch 0 续·会话取消全链路 + 进程真实退出 + 有界清理 | `cancellation.ts` 统一取消源；chat/redo/stop/delete + orchestrator 决策/对齐/执行/讨论/adapter 全链路检查；`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认，unconfirmed 不删 DB）；`handleExecution` 取消时本批未落地任务条件写回 pending、不 completed/不 auto-done；`stop` 端点只停不删；`withTimeout` onTimeout 有界 10s、eventLogger.flush 有界 5s。新增取消/退出/stop/delete/timeout/flush 测试；全量 1368 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
+| Batch 0 续·会话取消全链路 + 进程真实退出 + 有界清理（commit c5930d3） | `cancellation.ts` 统一取消源；chat/redo/stop/delete + orchestrator 决策/对齐/执行/讨论/adapter 全链路检查；`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认，unconfirmed 不删 DB）；`handleExecution` 取消时本批未落地任务条件写回 pending、不 completed/不 auto-done；`stop` 端点只停不删；`withTimeout` onTimeout 有界 10s、eventLogger.flush 有界 5s。新增取消/退出/stop/delete/timeout/flush 测试；全量 1368 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
 ### ⏳ 进行中
 | 任务 | 状态 |

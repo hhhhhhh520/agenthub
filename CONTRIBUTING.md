@@ -4,7 +4,7 @@
 
 ## 环境准备
 
-- Node.js 18+
+- Node.js 20.19+（Prisma 7 要求）
 - 至少安装一个 AI CLI 平台：
   - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
   - [OpenCode CLI](https://open-code.ai)（`npm install -g opencode`）

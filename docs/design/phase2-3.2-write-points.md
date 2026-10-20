@@ -5,7 +5,7 @@
 
 ## 0. 结论（TL;DR）
 
-- **纳入 CAS**：① `transitionPhase` 的 phase 写入（读时快照条件写 + 冲突重读重算 + 3 次重试 + 仍冲突 fail-closed）；② execution.ts / cli-session.ts / redo 路由的 **Task 状态写入全部改状态前置条件写**（updateMany where 带前置 status，count=0 → 重读同步内存 + 弃权 + 可见 warn）。
+- **纳入 CAS**：① `transitionPhase` 的 phase 写入（读时快照条件写 + 冲突重读重算 + 3 次重试 + 仍冲突 fail-closed）；② execution.ts / cli-session.ts / redo 路由的 **Task 状态写入全部改状态前置条件写**（updateMany where 带前置 status，count=0 → 重读同步内存 + 弃权 + 可见 warn）；③ 取消重置 B12（in_progress/failed→pending，只对本批任务）。
 - **结构性收益**：pending→in_progress 的条件标记是**互斥闸门**——同一任务同时只能有一个执行流通过该闸门，双流重复执行结构性不可能（§7 完成判据）；僵尸流（SSE 60min 超时 / abort 提前释放锁后后台续跑）的晚到写全部被前置条件拦下。
 - **不引入 generation 字段**（Session.runGeneration / Task.execGeneration）：状态前置条件写已覆盖全部已证实的竞态窗口（见 §2 窗口分析）；generation 的增量价值只在"区分哪个流"，而互斥闸门 + 心跳已提供等价保护。若 §3.3 中断恢复需要"批次纪元"语义再引入（避免现在为此付 schema 变更 + 全量测试适配的成本）。
 - **不纳入**：SessionMember（last-writer-wins 是既定语义 + invalidate 方向 fail-safe）、decisionTrace（已是模式本体）、heartbeat updatedAt（无状态语义）、非状态字段写（dependencies/description/permissionMode）。
@@ -41,6 +41,7 @@
 | B9 | `execution.ts:198` heartbeat | updatedAt 心跳 | 无条件 | 无状态语义，不纳入 |
 | B10 | `alignment.ts:297` | verify 依赖/描述扩展（status='pending' 分支内） | 无条件 | 锁内对齐路径 + 非状态字段，不纳入 |
 | B11 | `execution.ts` S3 preflight 块（监控纠偏决策之后） | preflight trace（event:'preflight'） | `updateMany where {id, status:'completed'}` | 1A/2A/3A 拍板（2026-09-22）：仅 EXPERIMENT_PREFLIGHT_VERIFY=on 且任务仍 completed 时采数；count=0 弃权（纠偏/转移后不落旧 completion 的灯，重做后有新 completion 再采） |
+| B12 | `execution.ts` resetBatchToPending（会话取消，2026-10-19） | in_progress/failed → pending | 取消时对本批任务批量 update | where `{id, status:{in:['in_progress','failed']}}`；count=0 → 重读同步（`syncTaskStatusFromDb`）；只处理本批 `batchTasks`，completed 不重置；与 `stop/delete` 的取消链配套，取消后不 auto-done |
 
 ### C. SessionMember
 

@@ -8,7 +8,7 @@
 [![CI](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml/badge.svg)](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1175%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1368%20passing-brightgreen)](tests/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
 [![Prisma](https://img.shields.io/badge/Prisma-7-2D3748)](https://www.prisma.io)
@@ -26,10 +26,10 @@
 - **Orchestrator 9-action 状态机** — self/delegate/discuss/align\_\*/execute/verify/done 编排闭环；对齐流程学习人类团队“先对齐再干活”（PM 确认需求 → 架构师拆解任务 → Agent 提问澄清）
 - **执行层强制验证** — 代码任务拆解后自动追加 verify 任务（纯 prompt 引导被证明无效，改执行层强制），多轮对齐自动扩展验证覆盖，代码完成自动触发验证
 - **Contract v1 契约化协作** — `<authoritative_input>` 权威注入 + declaredFiles 分级越界校验 + outputSchema 结构校验，三契约管住 LLM 的不可靠性
-- **会话锁 fail-closed** — 同一会话串行执行，等锁超时回 429 绝不并发写状态，杜绝 phase 写入竞态
+- **会话锁 + 取消 fail-closed** — 同一会话串行执行，等锁超时回 429；主动停止/删除会取消执行、终止并确认进程真实退出，未确认不删数据
 - **进程池 + 配置指纹** — 每（会话，Agent，配置）独立 CLI 进程，配置 hash 隔离，10 分钟空闲回收，优雅关闭
 - **双 CLI 适配层** — Claude Code + OpenCode 统一抽象，spawn 子进程 + NDJSON 流式解析，工具白名单硬限制
-- **测试质量方法论** — 1236 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）+ CI 门禁（vitest 全量 + build + 改动文件 lint 0-error + phase 写入架构守卫）
+- **测试质量方法论** — 1368 单元测试 + 每次修复配“真回归守卫”（回退修复测试必红）+ 变异验证（删掉修复测试必红）+ CI 门禁（vitest 全量 + build + 改动文件 lint 0-error + phase 写入架构守卫）
 
 ## 💬 功能
 
@@ -48,6 +48,7 @@
 - **工作区与权限** — 用户指定项目目录，Agent 直接在项目中工作，权限模式（default/auto）
 - **变更检测** — 每批任务执行后 Git diff 检测越界修改
 - **任务重做** — 失败/阻塞任务可编辑描述后重新执行，自动级联下游任务
+- **主动停止 / 安全删除** — 停止先取消执行并等待进程真实退出；删除在确认退出且会话锁释放后才落库，未确认返回 409
 - **暗色模式** — 支持亮色/暗色/跟随系统
 
 ## 📸 截图
@@ -59,7 +60,7 @@
 
 ## 🚀 快速开始
 
-**前置条件：** Node.js 18+，至少安装一个 AI CLI 平台：
+**前置条件：** Node.js 20.19+（Prisma 7 要求；Next 16 最低 20.9），至少安装一个 AI CLI 平台：
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（`npm install -g @anthropic-ai/claude-code`）
 - [OpenCode CLI](https://open-code.ai)（`npm install -g opencode`）
 
@@ -103,6 +104,8 @@ Next.js App (SSE 流式推送)
   │     └── cliSessionId 连续性护栏
   ├── 会话锁（session-lock）
   │     └── 同一会话串行执行，超时 fail-closed 回 429，杜绝 phase 并发写
+  ├── 会话取消（cancellation）
+  │     └── stop/delete → 取消执行 → 杀进程并等待真实退出 → 等锁 → 删除
   ├── Adapter 层
   │     ├── Claude Code Adapter（spawn CLI，读 NDJSON）
   │     └── OpenCode Adapter（spawn CLI，读 NDJSON）
@@ -124,11 +127,14 @@ Next.js App (SSE 流式推送)
 # 运行全部单元测试（含覆盖率报告）
 npm test
 
-# 运行 E2E 测试(默认 skip,需 MIMO_TEST_API_KEY 环境变量)
-E2E=1 npm run test:e2e
+# Playwright UI E2E（启动 dev server，不依赖 MIMO key）
+npm run test:e2e
+
+# API contract E2E（默认 skip；需 MIMO_TEST_API_KEY）
+E2E=1 npx vitest run tests/e2e-contract.test.ts
 ```
 
-测试现状（2026-09-25）：1236 passed / 3 skipped；覆盖率（2026-08-07 重测）：Statements 83% / Branches 76% / Functions 81% / Lines 84%
+测试现状（2026-10-19）：1368 passed / 3 skipped；覆盖率阈值定义在 `vitest.config.ts`，由 `npm test` 的 coverage 模式检查（CI 当前只跑 `vitest run`，不跑 coverage）。
 
 **断线不丢流**：四类过程事件（thinking/tool_use/tool_result/permission）持久化（thinking 截断 4K、每 session 封顶 500 条），SSE 帧带 seq，断线/刷新后 EventSource 自动重连按游标补发断线窗口。
 

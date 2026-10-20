@@ -45,6 +45,8 @@ src/
 │   │   ├── shadow-git.ts       # 影子 git 追踪 workDir 变更(不污染 workDir)
 │   │   ├── sensitive-paths.ts  # 敏感路径黑名单(declaredFiles 硬失败判定)
 │   │   └── schema-validator.ts # outputSchema 软校验(提取 JSON 块 + 字段名比对)
+│   ├── cancellation.ts        # 会话取消源（stop/delete；HTTP 断开不触发）
+│   ├── session-lock.ts        # 会话锁（显式 waiter 队列 + 统一释放）
 │   ├── hooks/                 # use-sessions, use-chat, use-chat-fab, use-mounted
 │   ├── attachment-cleanup.ts  # 附件文件清理（unlinkSync + 孤儿清理）
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
@@ -312,7 +314,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **统一释放**：拿锁后的所有提前返回/异常走 `lockHandedOff` + try/finally；一旦把锁交给 SSE stream，只由 `stream.start` 的 finally 释放（无 eventLogger 创建失败路径也要释放）
 - **SSE 全局超时**：60 分钟无响应则强制关闭流；`streamClosed` 标志位防止超时后往已关闭的 controller 写入（避免锁泄漏）
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
-- **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态
+- **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态。**例外**：`POST /api/sessions/[id]/stop` 是取消入口，不能等持锁的执行流结束；它用 `requestSessionCancel` + `cancelByOwnerSession`，DELETE 则先取消再 `waitForSessionUnlock`
 
 ### 会话取消与停止
 
