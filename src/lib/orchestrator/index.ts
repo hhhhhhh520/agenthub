@@ -356,13 +356,28 @@ export interface PriorTaskMeta {
 }
 
 /**
+ * 解析 Agent.tools（DB 中的 JSON 数组字符串）。
+ * 两个执行入口必须共用同一解析口径；空/缺失/非法 JSON 都返回 []（不限制），
+ * 避免批次入口与单 Agent 入口对同一 Agent 产生不同的工具边界。
+ */
+function parseAgentTools(tools?: string): string[] {
+  if (!tools) return []
+  try {
+    const parsed = JSON.parse(tools)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * 把 Promise rejection reason 序列化为安全字符串,绝不抛异常。
  * ISSUE-011 F1: 直接 String(reason) 对 null-prototype 对象/toString 抛异常的对象会抛 TypeError,
  * 一次怪异 rejection 会击穿整批处理。对象走 JSON.stringify 避免退化成 "[object Object]"。
  */
 export async function executeTaskBatch(
   tasks: ScheduledTask[],
-  agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string }>,
+  agents: Array<{ id?: string; name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; permissionMode?: string; tools?: string }>,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
   chatSessionId?: string,
   projectDir?: string,
@@ -440,6 +455,7 @@ export async function executeTaskBatch(
         const mcpConfig = chatSessionId
           ? buildMCPConfig(chatSessionId, agent.name, projectDir || '')
           : undefined
+        const toolsList = parseAgentTools(agent.tools)
         await adapter.connect({
           platform,
           workDir: projectDir,
@@ -450,6 +466,8 @@ export async function executeTaskBatch(
           mcpConfig,
           agentId: agentId,
           chatSessionId: chatSessionId,
+          // 与 executeSingleAgent 同口径：空/缺失 = 不限制；非空即 CLI 硬白名单
+          allowedTools: toolsList.length > 0 ? toolsList : undefined,
         })
 
         // ⚠️-C1 修复:外部内容拼进权威标签前必须 escapeContractTags
@@ -589,14 +607,8 @@ export async function executeSingleAgent(
   }
   const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
 
-  // 解析工具配置
-  let toolsList: string[] = []
-  if (agent.tools) {
-    try {
-      const parsed = JSON.parse(agent.tools)
-      if (Array.isArray(parsed)) toolsList = parsed
-    } catch {}
-  }
+  // 解析工具配置（与 executeTaskBatch 共用同一口径）
+  const toolsList = parseAgentTools(agent.tools)
 
   // 软引导：prompt 注入告知 LLM 可用工具（兜底）
   let effectivePrompt = prompt

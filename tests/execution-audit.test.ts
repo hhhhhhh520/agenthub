@@ -121,6 +121,24 @@ describe('execution batch audit — tri-state / attribution', () => {
     mocks.mockGetChangedFilesDetailed.mockReturnValue({ ok: true, files: [] })
   })
 
+  it('P1-02: 主批次映射保留 Agent tools 白名单', async () => {
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'ok', sessionId: 'cli-1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockGetGitSnapshotDetailed.mockReturnValue({ ok: true, files: new Set(), evidence: new Map() })
+    mocks.mockGetChangedFilesDetailed.mockReturnValue({ ok: true, files: [] })
+
+    const agents = [{ ...AGENTS[0], tools: '["Read","Grep"]' }]
+    const { handleExecution } = await import('@/lib/services/execution')
+    await handleExecution('test', 'sess-1', agents, vi.fn())
+
+    const batchAgents = mocks.mockExecuteTaskBatch.mock.calls[0][1] as Array<{ tools?: string }>
+    expect(batchAgents[0].tools).toBe('["Read","Grep"]')
+  })
+
   it('批次审计把内容证据 Map 传给 diff（不是旧路径 Set）', async () => {
     const task = makeTask()
     mocks.mockTaskFindMany.mockResolvedValue([task])

@@ -246,6 +246,9 @@ describe('executeSingleAgent', () => {
     const sendCall = mockAdapterSend.mock.calls[0][0]
     expect(sendCall.prompt).toContain('[可用工具: bash, read]')
     expect(sendCall.prompt).toContain('do it')
+    // 单 Agent 入口：tools 既进软提示，也进 adapter 硬白名单
+    const connectCall = mockAdapterConnect.mock.calls[0][0]
+    expect(connectCall.allowedTools).toEqual(['bash', 'read'])
   })
 })
 
@@ -261,6 +264,32 @@ describe('executeTaskBatch', () => {
     const { results, failedTaskIds } = await executeTaskBatch(tasks, agents, vi.fn())
     expect(results.get('t1')?.result).toBe('task result')
     expect(failedTaskIds).toEqual([])
+  })
+
+  it('P1-02: 批次入口把 agent.tools 透传为 allowedTools（auto 不放大）', async () => {
+    const tasks = [
+      { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
+    ]
+    const agents = [{
+      name: 'PM', systemPrompt: 'sp', platform: 'claude-code',
+      tools: '["Read","Grep"]', permissionMode: 'auto',
+    }]
+    await executeTaskBatch(tasks, agents, vi.fn())
+
+    const connectCall = mockAdapterConnect.mock.calls[0][0]
+    expect(connectCall.allowedTools).toEqual(['Read', 'Grep'])
+    expect(connectCall.permissionMode).toBe('auto')
+  })
+
+  it('P1-02: 批次空 tools 保持不限制（allowedTools undefined）', async () => {
+    const tasks = [
+      { id: 't1', description: 'task 1', assignedAgent: 'PM', dependencies: [], declaredFiles: [], batch: 0 },
+    ]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code', tools: '[]' }]
+    await executeTaskBatch(tasks, agents, vi.fn())
+
+    const connectCall = mockAdapterConnect.mock.calls[0][0]
+    expect(connectCall.allowedTools).toBeUndefined()
   })
 
   it('records failed task ids when adapter throws', async () => {

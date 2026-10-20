@@ -445,6 +445,8 @@ export async function handleExecution(
             // 优先用任务级 sessionId，fallback 到对齐阶段的 SessionMember sessionId
             sessionId: task?.cliSessionId || memberSessionMap.get(a.id) || undefined,
             permissionMode: session?.permissionMode || 'default',
+            // 主批次入口不能丢 Agent 工具白名单（与单 Agent 入口同一边界）
+            tools: a.tools,
           }
         }),
         (taskId, chunk) => sendEvent({ agentId: taskId, type: chunk.type, content: chunk.content, data: chunk.data }),
