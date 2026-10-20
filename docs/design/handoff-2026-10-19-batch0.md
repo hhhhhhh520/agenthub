@@ -1,8 +1,8 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `ce2703b`（审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `ce2703b` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `a5e6991`（主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `a5e6991` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v20
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v21
 
 ## 1. 当前状态
 
@@ -19,10 +19,11 @@
 | `be969e0` | 任务结果发布门禁：completed CAS 成功后才进入 allResults/成功摘要；纠偏退回删除旧结果 |
 | `0dd751a` | 批次审计内容证据：已脏同一路径再改、忽略 `.env`、删除按内容 hash 判定 |
 | `ce2703b` | 补漏：被忽略目录内的 `.env` 也用 pathspec glob 纳入证据 |
+| `a5e6991` | 主批次透传 Agent tools 白名单；两条执行入口共用 parseAgentTools |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：121 files / **1397 passed / 3 skipped**
+- `npx vitest run`：121 files / **1400 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -113,6 +114,8 @@
 - ✅ 权限模型双维度（可用工具 vs 审批）与 CLI 探针（commit `4774de6`，证据
   `docs/design/permission-cli-probe-2026-10-20.md`）；
 - ✅ 审计内容证据（commit `0dd751a`/`ce2703b`）：已脏同一路径再次修改、忽略 `.env`（含忽略目录内）、删除均按内容 hash 判定；
+- ✅ P1-02 主批次工具白名单（commit `a5e6991`）：批次与单 Agent 共用解析口径；
+- ⏳ P1-03 OpenCode 权限文件按会话隔离（下一项）；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - 事件 seq 不可变 + 单 logger；
 - ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；

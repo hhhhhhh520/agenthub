@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v17（Batch 0/1 收口 + 双维度权限/CLI 探针；下一批事件/配置/UI） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v21（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/P1-02 安全修复；下一批 OpenCode 会话隔离） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -27,6 +27,8 @@
 | v18 | 2026-10-20 | **OpenCode 配置清扫前缀 bug hotfix（commit ca020b8）**。根因：`sweepOrphanOpencodeXdgDirs` 的 active 集合存完整目录名 `agenthub-oc-<hash>`，旧比较先 `slice('agenthub-oc-'.length)` 成 `<hash>`，永远匹配不上 → 启动/agents 列表 sweep 会把所有活跃 OpenCode 配置目录当孤儿删除。改为 `active.has(e.name)` 直接比较完整目录名；新增隔离 tmpdir 回归测试（active 含/不含哨兵目录保留、孤儿删除、非 agenthub 目录不动），变异验证恢复 slice 精确红后还原。全量 120 files / 1388 passed / 3 skipped。**下一批**：事件 seq 不可变/单 logger。 |
 | v19 | 2026-10-20 | **任务结果发布门禁修复（commit be969e0）**。根因：`allResults` 在 completed 条件写/CAS 之前写入，count=0 后仍进入最终成功摘要与后续批次入参。改为 CAS 成功后才写入；纠偏退回 pending 时删除旧结果，避免重试失败/取消后发布旧结果。新增 B2 拒绝摘要、纠偏旧结果、正常成功摘要三条断言，变异验证精确红。全量 120 files / 1389 passed / 3 skipped。**下一批 P1/P2**：审计内容证据（已脏路径再次修改/被忽略 .env）、主批次 tools 透传、OpenCode 权限文件按会话隔离、regenerate chatSessionId、iterator.return 有界、stop/delete 生命周期串行、恢复审批关联。 |
 | v20 | 2026-10-20 | **P1-01 审计内容证据（commit 0dd751a/ce2703b）**。`shadow-git` 新增 `GitEvidence`（路径 → sha256/null），快照覆盖 tracked dirty、untracked 与 ignored 敏感文件（`.env*`，目录型敏感前缀折叠）；`auditBatchChanges` 改用 Map，按内容 hash + key 存在性比较，覆盖已脏同一路径再次修改、删除和忽略 `.env`；被忽略目录内的 `.env` 用 pathspec glob 补抓。证据读取失败仍走 `unavailable`。新增真实临时 Git 回归与 execution 接线守卫，变异验证 Map 分支回退精确红。全量 121 files / 1397 passed / 3 skipped。**下一批 P1**：主批次 tools 透传、OpenCode 权限文件按会话隔离；随后 timeout/regenerate/stop-delete/恢复审批。 |
+| v21 | 2026-10-20 | **P1-02 主批次工具白名单透传（commit a5e6991）**。`execution.ts` 批次 agent 映射保留 `tools`；`executeTaskBatch` 与 `executeSingleAgent` 共用 `parseAgentTools`，非空 tools 透传为 `allowedTools`，空/缺失保持不限制。新增批次 connect、单 Agent connect、空 tools、auto 不放大及 execution 接线测试；变异验证移除映射/透传均精确红。全量 121 files / 1400 passed / 3 skipped。**下一批 P1**：OpenCode 权限文件按会话隔离；随后 Claude MDS、timeout/regenerate/stop-delete/恢复审批。 |
+
 
 ---
 
@@ -229,7 +231,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1397 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1400 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

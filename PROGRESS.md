@@ -265,8 +265,10 @@
 | 修复待办总表落档（`docs/design/repair-backlog-2026-10-20.md`） | 汇总原始 36 项 + 2026-10-20 质量复核的全部未闭环项：P1 审计内容证据/主批次 tools 透传/OpenCode 权限文件会话隔离；P2 timeout iterator、regenerate 归属、stop/delete 生命周期、恢复计划审批、Claude MDS、HTTP body cancel、拿锁旧快照、进程树、Agent 创建取消、私聊提示、清扫护栏、事件 seq/SSE；附旧 36 项状态映射、接受风险、执行顺序、复现材料与验证模板。 | 2026-10-20 |
 | 批次审计内容证据修复（commit 0dd751a） | 根因：`shadow-git` 只用脏路径 Set，批次前已脏的同一路径再次修改、被 `.gitignore` 忽略的 `.env`、删除都不会进入 `after - before` 差集。新增 `GitEvidence`（路径 → sha256/null）：快照覆盖 tracked dirty、untracked、ignored 敏感文件；审计传 Map 按“内容 hash + key 是否存在”比较，读取失败仍返回 `unavailable`。新增真实临时 Git 回归：已脏 `package.json` 再改、忽略 `.env`、删除、无变化、审计 violation，以及 execution 接线守卫。全量 121 files / 1396 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
 | 审计忽略目录 `.env` 补漏（commit ce2703b） | `git ls-files --ignored --directory` 会把 `secrets/` 等忽略目录折叠，目录内 `.env` 不进证据。新增 pathspec glob 单独枚举 `**/.env` / `**/.env.*`，避免全量枚举数万 ignored 文件；新增嵌套 `.env` 真实 Git 回归。全量 121 files / 1397 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| 主批次工具白名单透传（commit a5e6991） | 根因：`execution.ts` 的批次 agent 映射没有 `tools`，`executeTaskBatch` 的 `adapter.connect` 收到 `allowedTools=undefined`；Claude 回落到 `--tools default`，OpenCode 失去 tools 边界，auto 下会预批准更多工具。修复：映射保留 `a.tools`；`executeTaskBatch` 与 `executeSingleAgent` 共用 `parseAgentTools`；非空 tools 传 `allowedTools`，空/缺失保持不限制。新增批次 connect、单 Agent connect、空 tools、auto 不放大及 execution 接线测试；变异验证移除映射/透传均精确红。全量 121 files / 1400 passed / 3 skipped，build ✓，改动文件 eslint 0 error（4 条存量 warning） | 2026-10-20 |
 
 ### ⏳ 进行中
+
 | 任务 | 状态 |
 |------|------|
 | （无——P11 探针已收官落档（red，A 无第二 gateable 主导群）；P11b 未立项（绿未触发）；A 方向后继唯一正向出口=seqgate 转正（等启动条件可分析≥20 且命中≥5）） | — |
