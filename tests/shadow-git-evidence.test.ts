@@ -53,6 +53,20 @@ describe('shadow-git 内容证据', () => {
     expect(changed).toEqual({ ok: true, files: expect.arrayContaining(['.env']) })
   })
 
+  it('被忽略目录下的 .env 变化，仍能被识别', () => {
+    fs.writeFileSync(path.join(root, '.gitignore'), 'secrets/\n')
+    fs.mkdirSync(path.join(root, 'secrets'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'secrets', '.env'), 'TOKEN=one\n')
+    const before = getGitSnapshotDetailed(root, SESSION)
+    expect(before).toHaveProperty('evidence')
+    if (!before.ok) throw new Error(before.reason)
+
+    fs.writeFileSync(path.join(root, 'secrets', '.env'), 'TOKEN=two\n')
+    const changed = getChangedFilesDetailed(root, SESSION, before.evidence)
+
+    expect(changed).toEqual({ ok: true, files: expect.arrayContaining(['secrets/.env']) })
+  })
+
   it('审计消费内容证据：已脏 package.json 再次修改 → violation', () => {
     fs.writeFileSync(path.join(root, 'package.json'), '{"v":1}\n')
     const init = getGitSnapshotDetailed(root, SESSION)

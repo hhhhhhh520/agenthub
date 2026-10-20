@@ -163,7 +163,7 @@ export function getGitSnapshotDetailed(projectRoot: string, sessionId: string): 
 
     // .env 等被忽略文件不会出现在 diff/untracked；单独枚举 ignored 中的敏感文件。
     // 目录型敏感前缀不展开，避免 hash 整个 node_modules/.next/.git。
-    const ignoredSensitive = gitSync(
+    const ignoredSensitiveDirs = gitSync(
       // --directory 把整个被忽略目录折叠成一项（如 node_modules/），避免枚举数万文件；
       // .env 仍是文件项，可被下面的敏感过滤保留。
       gitArgs(shadowDir, projectRoot, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory'),
@@ -173,9 +173,21 @@ export function getGitSnapshotDetailed(projectRoot: string, sessionId: string): 
       .map(normalizeGitPath)
       .filter(p => isSensitivePath(p) && !IGNORED_EVIDENCE_SKIP_PREFIXES.some(prefix => p.startsWith(prefix)))
 
+    // 被忽略目录（如 secrets/）会被 --directory 折叠，目录内的 .env 不会出现在上一行；
+    // 用 pathspec glob 单独抓 .env*，避免全量枚举数万 ignored 文件。
+    const ignoredEnvFiles = gitSync(
+      gitArgs(
+        shadowDir, projectRoot, 'ls-files', '--others', '--ignored', '--exclude-standard', '--',
+        ':(glob)**/.env', ':(glob)**/.env.*',
+      ),
+      10_000,
+    )
+      .trim().split('\n').filter(Boolean)
+      .map(normalizeGitPath)
+
     const files = new Set([...modified, ...untracked])
     const evidence: GitEvidence = new Map()
-    for (const relPath of new Set([...files, ...ignoredSensitive])) {
+    for (const relPath of new Set([...files, ...ignoredSensitiveDirs, ...ignoredEnvFiles])) {
       evidence.set(relPath, hashFileEvidence(projectRoot, relPath))
     }
 
