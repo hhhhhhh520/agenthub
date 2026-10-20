@@ -142,6 +142,47 @@ describe('chat route — 统一锁释放', () => {
     expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
   })
 
+  it('P2-02: regenerate 把 sessionId 作为 chatSessionId 传给 executeSingleAgent', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'm1', sessionId: 's1', rawContent: '原问题', agentId: 'PM', attachments: [],
+    })
+    mocks.sessionMemberFindMany.mockResolvedValue([{
+      agent: {
+        id: 'a1', name: 'PM', systemPrompt: 'sp', platform: 'claude-code',
+        model: '', baseUrl: '', apiKey: '', tools: '[]', isOrchestrator: false,
+      },
+    }])
+
+    const res = await POST(makeReq({ regenerate: 'm1' }), params)
+    await res.text()
+
+    expect(mocks.executeSingleAgent).toHaveBeenCalledTimes(1)
+    expect(mocks.executeSingleAgent.mock.calls[0][4]).toBe('s1')
+  })
+
+  it('P2-02: regenerate 返回时已取消 → 不更新原消息、不发成功 done', async () => {
+    mocks.messageFindUnique.mockResolvedValue({
+      id: 'm1', sessionId: 's1', rawContent: '原问题', agentId: 'PM', attachments: [],
+    })
+    mocks.sessionMemberFindMany.mockResolvedValue([{
+      agent: {
+        id: 'a1', name: 'PM', systemPrompt: 'sp', platform: 'claude-code',
+        model: '', baseUrl: '', apiKey: '', tools: '[]', isOrchestrator: false,
+      },
+    }])
+    mocks.executeSingleAgent.mockImplementationOnce(async () => {
+      requestSessionCancel('s1')
+      return { result: '不应发布的新结果' }
+    })
+
+    const res = await POST(makeReq({ regenerate: 'm1' }), params)
+    const text = await res.text()
+
+    expect(mocks.messageUpdate).not.toHaveBeenCalled()
+    expect(text).not.toContain('不应发布的新结果')
+    expect(text).not.toContain('"type":"done"')
+  })
+
   it('执行中被 cancel → 推停止帧，不推系统错误，仍释放锁', async () => {
     mocks.handleOrchestratorDecision.mockImplementationOnce(async () => {
       requestSessionCancel('s1')

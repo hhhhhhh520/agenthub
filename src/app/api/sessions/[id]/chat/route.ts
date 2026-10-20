@@ -165,10 +165,16 @@ export async function POST(
                 original.rawContent,
                 '',
                 (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
-                undefined,
-                undefined,
+                sessionId,
+                workDir,
                 original.attachments as TaskAttachment[]
               )
+
+              // P2-02: 执行期间可能已被 stop/delete 取消；取消后不得把结果写回原消息或发成功 done。
+              if (isSessionCancelled(sessionId)) {
+                sendEvent({ agentId: agentName, type: 'text', content: '执行已停止' })
+                return
+              }
 
               await prisma.message.update({ where: { id: regenerate }, data: { rawContent: result } })
               sendEvent({ agentId: agentName, type: 'done', content: result, messageId: regenerate })
