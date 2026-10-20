@@ -1,8 +1,8 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `ff53430`（timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `ff53430` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `74bda96`（regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `74bda96` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v24
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v25
 
 ## 1. 当前状态
 
@@ -23,10 +23,11 @@
 | `ae39e00` | OpenCode agent md/XDG 按会话+权限指纹隔离；退出清理、retry 保留、sweep 保护活跃目录 |
 | `a24ca60` | Claude 所有 spawn 注入 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`，与 provider 凭据解耦 |
 | `ff53430` | timeout 的 `iterator.return` 有界化；挂起/抛错不覆盖 TimeoutError |
+| `74bda96` | regenerate 传 chatSessionId/workDir；取消后不写回、不发成功 done |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：121 files / **1407 passed / 3 skipped**
+- `npx vitest run`：121 files / **1409 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -120,7 +121,8 @@
 - ✅ P1-02 主批次工具白名单（commit `a5e6991`）：批次与单 Agent 共用解析口径；
 - ✅ P1-03 OpenCode 权限文件按会话隔离（commit `ae39e00`）：agent md/XDG 指纹化，退出清理、retry 保留、sweep 保护活跃目录；
 - ✅ P2-05 Claude MDS 隔离（commit `a24ca60`）：所有 spawn 关闭项目 CLAUDE.md 自动发现；
-- ✅ P2-01 timeout iterator 收尾（commit `ff53430`）：return 有界，挂起/抛错不覆盖超时；下一项 P2-02 regenerate；
+- ✅ P2-01 timeout iterator 收尾（commit `ff53430`）：return 有界，挂起/抛错不覆盖超时；
+- ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；下一项 P2-03；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - 事件 seq 不可变 + 单 logger；
 - ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；
