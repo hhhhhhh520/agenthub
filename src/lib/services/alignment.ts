@@ -7,6 +7,12 @@ import { handleExecution } from './execution'
 import type { SendEvent } from './review'
 import type { AgentConfig } from '@/lib/adapter/types'
 import { transitionPhase } from '@/lib/orchestrator/state-machine'
+import { isSessionCancelled } from '@/lib/cancellation'
+
+function sendStopped(sendEvent: SendEvent) {
+  sendEvent({ agentId: 'orchestrator', type: 'text', content: '执行已停止' })
+  sendEvent({ agentId: 'orchestrator', type: 'done', content: '执行已停止' })
+}
 
 /** ISSUE-008: 代码文件后缀,用于识别代码任务(自动触发验证) */
 const CODE_EXT_RE = /\.(ts|tsx|js|jsx|mjs|cjs|py|java|go|rs|rb|c|cc|cpp|h|hpp|cs|php|sh|html|css|scss|less|vue|svelte|sql|kt|swift|lua|pl|dart|scala)$/i
@@ -37,13 +43,17 @@ export async function handlePMConfirm(
   sendEvent: SendEvent,
   opts?: { recordTrace?: boolean }
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   let currentAgents = agents
 
   if (currentAgents.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'status', content: '正在分析任务并组建团队...' })
     try {
-      const scene = await analyzeScene(message)
-      const agentConfigs = await generateRoles(scene.type, scene.description)
+      const scene = await analyzeScene(message, sessionId)
+      const agentConfigs = await generateRoles(scene.type, scene.description, sessionId)
 
       for (const config of agentConfigs) {
         const existing = await prisma.agent.findUnique({ where: { name: config.name } })
@@ -59,6 +69,10 @@ export async function handlePMConfirm(
       const names = currentAgents.map(a => a.name).join('、')
       sendEvent({ agentId: 'orchestrator', type: 'text', content: `已组建团队：${names}` })
     } catch {
+      if (isSessionCancelled(sessionId)) {
+        sendStopped(sendEvent)
+        return
+      }
       sendEvent({ agentId: 'orchestrator', type: 'error', content: '组建团队失败，请重试或手动添加 Agent' })
       return
     }
@@ -96,6 +110,10 @@ export async function handlePMConfirm(
       sendEvent({ agentId: '产品经理', type: 'done', content: result })
       sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'pm_confirm' })
     } catch {
+      if (isSessionCancelled(sessionId)) {
+        sendStopped(sendEvent)
+        return
+      }
       sendEvent({ agentId: 'orchestrator', type: 'error', content: '需求确认失败，请重试' })
     }
   } else {
@@ -104,11 +122,15 @@ export async function handlePMConfirm(
       // Build prompt with system context since callLLMForAnalysis doesn't support systemPrompt
       const systemContext = '你是一位经验丰富的产品经理，擅长需求分析和产品设计。请根据用户描述，整理出清晰的需求文档。'
       const enhancedPrompt = `${systemContext}\n\n---\n\n${pmPrompt}`
-      const result = await callLLMForAnalysis(enhancedPrompt)
+      const result = await callLLMForAnalysis(enhancedPrompt, sessionId)
       await prisma.message.create({ data: { role: 'agent', rawContent: result, sessionId, agentId: '产品经理' } })
       sendEvent({ agentId: '产品经理', type: 'done', content: result })
       sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'pm_confirm' })
     } catch {
+      if (isSessionCancelled(sessionId)) {
+        sendStopped(sendEvent)
+        return
+      }
       sendEvent({ agentId: 'orchestrator', type: 'error', content: '需求确认失败，请重试' })
     }
   }
@@ -149,6 +171,10 @@ export async function handleArchitectPlan(
   sendEvent: SendEvent,
   opts?: { recordTrace?: boolean }
 ): Promise<boolean> {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return false
+  }
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
   // P2 待办④: 上一轮拆解 0 任务([REPLAN] 标记)时用最新 user 重述,否则用首条需求——
   // 否则重述只进 orchestrator 上下文,架构师拆的仍是冻结旧需求,无限重述零进展(审查抓出)
@@ -212,9 +238,13 @@ export async function handleArchitectPlan(
         })))
       } catch {
         sendEvent({ agentId: archAgent.name, type: 'status', content: '任务拆解格式异常，正在重新生成...' })
-        scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
+        scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })), sessionId)
       }
     } catch (err) {
+      if (isSessionCancelled(sessionId)) {
+        sendStopped(sendEvent)
+        return false
+      }
       if (err instanceof TimeoutError) {
         console.error('[TIMEOUT] handleArchitectPlan')
         // 超时轮同样持久化 [REPLAN]：否则计数器看不见超时轮（无限超时零进展），且下一轮 isReplan 失效会拆冻结旧需求
@@ -223,11 +253,11 @@ export async function handleArchitectPlan(
         sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'replan' })
         return false
       }
-      scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
+      scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })), sessionId)
     }
   } else {
     sendEvent({ agentId: '架构师', type: 'status', content: '正在拆解任务...' })
-    scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })))
+    scheduledTasks = await decomposeTasks(originalRequest, agents.map(a => ({ name: a.name, expertise: a.expertise })), sessionId)
   }
 
   if (scheduledTasks.length === 0) {
@@ -236,6 +266,12 @@ export async function handleArchitectPlan(
     await prisma.message.create({ data: { role: 'orchestrator', rawContent: '[REPLAN]未能生成有效任务方案，请重新描述需求或手动指定任务', sessionId } })
     sendEvent({ agentId: 'orchestrator', type: 'error', content: '未能生成有效任务方案，请重新描述需求或手动指定任务' })
     sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'replan' })
+    return false
+  }
+
+  // 拆解可能持续数分钟；落库前再检查一次，取消后不创建半套任务。
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
     return false
   }
 
@@ -309,6 +345,13 @@ export async function handleArchitectPlan(
     }
   }
 
+  // 任务已落库但取消发生在创建过程中：不推进 phase，返回 false；任务保留，
+  // 下次 execute 走 ensure/recovery 路径，不会重复拆解。
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return false
+  }
+
   // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
   // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
   // P4 T1: recordTrace 默认 true(代码驱动补拆补记),LLM 决策路径由 chat-router 传 false
@@ -335,6 +378,10 @@ export async function handleAgentQA(
   globalDeadline?: number,
   opts?: { recordTrace?: boolean }
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   // P4 T1: recordTrace 默认 false(handleAgentQA 入口仅 LLM 决策路径,决策点已记 align_qa);
   // 决策点 append 失败时 chat-router 传 true 兜底补记
   await transitionPhase(sessionId, 'align_qa', { recordTrace: opts?.recordTrace ?? false })
@@ -368,12 +415,15 @@ export async function handleAgentQA(
         )
         return { agent, response: result }
       } catch (err) {
+        if (isSessionCancelled(sessionId)) {
+          return { agent, response: '[已停止]' }
+        }
         if (err instanceof TimeoutError) {
           console.error('[TIMEOUT] handleAgentQA', agent.name)
           return { agent, response: '[问答超时]' }
         }
         try {
-          const response = await callLLMForAnalysis(prompt)
+          const response = await callLLMForAnalysis(prompt, sessionId)
           return { agent, response }
         } catch {
           return { agent, response: '[问答失败]' }
@@ -390,6 +440,11 @@ export async function handleAgentQA(
         questions.push({ agentName: agent.name, content: response })
       }
     }
+  }
+
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
   }
 
   if (questions.length > 0) {
@@ -414,6 +469,10 @@ export async function transitionToExecution(
   globalDeadline?: number,
   opts?: { recordExecuteTrace?: boolean }
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   // 兜底：Task 为空时先自动补拆，再进入 execution。
   // 顺序关键：不能先写 exec 再补拆（会写回 align_arch，执行期间 phase 停在对齐态、
   // allDone 时 align_arch+done 在转移表非法、fail-closed 拒绝写 done）。先补拆到 align_arch，再 execute -> exec 是合法转移。
@@ -427,6 +486,11 @@ export async function transitionToExecution(
     // "决策点已记 execute + 补拆补记 align_decompose"的转移分歧 + 缺 align_arch→exec 边,禁止打破此前提。
     const ok = await handleArchitectPlan(userMessage || '', sessionId, agents, sendEvent)
     if (!ok) return
+  }
+
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
   }
 
   // P4 T1: recordTrace 默认 true(代码驱动补记);LLM 决策路径(chat-router 'execute')显式传 false 防双记

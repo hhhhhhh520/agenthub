@@ -12,6 +12,7 @@ import { topologicalSort, type ScheduledTask } from './scheduler'
 import { reasonToString } from './reason'
 export { reasonToString } from './reason'
 import { readDecisionModelEnv, resolveDecisionLLMConfig, callDecisionLLM } from './decision-llm'
+import { isSessionCancelled, SessionCancelledError } from '@/lib/cancellation'
 
 // ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
 // 新模式:adapter.getRegistryKey() + adapter.getSpawnConfig() 拿权威值。
@@ -152,7 +153,7 @@ async function callDecisionLLMIfConfigured(systemPrompt: string, userPrompt: str
   return callDecisionLLM(cfg, systemPrompt, userPrompt)
 }
 
-export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
+export async function callLLMForAnalysis(userPrompt: string, chatSessionId?: string): Promise<string> {
   const orch = await getOrchestratorAgent()
   const platform = orch.platform as AdapterConfig['platform']
   const adapter = createAdapter({ platform })
@@ -161,6 +162,8 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
     apiKey: orch.apiKey || undefined,
     model: orch.model || undefined,
     baseUrl: orch.baseUrl || undefined,
+    chatSessionId,
+    agentId: 'orchestrator',
   })
 
   let result = ''
@@ -176,7 +179,7 @@ export async function callLLMForAnalysis(userPrompt: string): Promise<string> {
   return result
 }
 
-async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
+async function callLLM(systemPrompt: string, userPrompt: string, chatSessionId?: string): Promise<string> {
   // ISSUE-028: 决策/分析类结构化调用优先走快模型直连（未设 env → null 走原路径）
   const fast = await callDecisionLLMIfConfigured(systemPrompt, userPrompt)
   if (fast !== null) return fast
@@ -191,6 +194,8 @@ async function callLLM(systemPrompt: string, userPrompt: string): Promise<string
     apiKey: orch.apiKey || undefined,
     model: orch.model || undefined,
     baseUrl: orch.baseUrl || undefined,
+    chatSessionId,
+    agentId: 'orchestrator',
   })
 
   let result = ''
@@ -265,8 +270,8 @@ export function parseJSON<T>(text: string, requiredKeys?: string[]): T {
   return parsed as T
 }
 
-export async function analyzeScene(userMessage: string): Promise<{ type: string; complexity: string; description: string }> {
-  const response = await callLLM(SCENE_ANALYSIS_PROMPT, userMessage)
+export async function analyzeScene(userMessage: string, chatSessionId?: string): Promise<{ type: string; complexity: string; description: string }> {
+  const response = await callLLM(SCENE_ANALYSIS_PROMPT, userMessage, chatSessionId)
   return parseJSON(response, ['type', 'complexity', 'description'])
 }
 
@@ -275,7 +280,8 @@ export async function getOrchestratorDecision(
   agents: Array<{ name: string; expertise: string; platform: string }>,
   context: string,
   workDir?: string,
-  permissionMode?: string
+  permissionMode?: string,
+  chatSessionId?: string
 ): Promise<{ decision: OrchestratorDecision; sessionId?: string }> {
   const agentList = agents.map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
   const systemPrompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
@@ -309,21 +315,22 @@ ${context}
     fullPrompt,
     '',
     () => {},
+    chatSessionId,
   )
 
   return { decision: parseJSON(response, ['action', 'message', 'reason']), sessionId }
 }
 
-export async function generateRoles(taskType: string, taskDescription: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {
-  const response = await callLLM(ROLE_GENERATION_PROMPT, `任务类型：${taskType}\n任务描述：${taskDescription}`)
+export async function generateRoles(taskType: string, taskDescription: string, chatSessionId?: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {
+  const response = await callLLM(ROLE_GENERATION_PROMPT, `任务类型：${taskType}\n任务描述：${taskDescription}`, chatSessionId)
   const parsed = parseJSON<{ agents: Array<{ name: string; expertise: string; systemPrompt: string; platform: string }> }>(response, ['agents'])
   if (!parsed.agents || parsed.agents.length === 0) throw new Error('generateRoles returned empty agents list')
   return parsed.agents
 }
 
-export async function decomposeTasks(taskDescription: string, agents: Array<{ name: string; expertise: string }>): Promise<ScheduledTask[]> {
+export async function decomposeTasks(taskDescription: string, agents: Array<{ name: string; expertise: string }>, chatSessionId?: string): Promise<ScheduledTask[]> {
   const agentList = agents.map(a => `${a.name}（${a.expertise}）`).join('、')
-  const response = await callLLM(TASK_DECOMPOSITION_PROMPT, `任务描述：${taskDescription}\n可用角色：${agentList}`)
+  const response = await callLLM(TASK_DECOMPOSITION_PROMPT, `任务描述：${taskDescription}\n可用角色：${agentList}`, chatSessionId)
   const parsed = parseJSON<{ tasks: Array<{ id: number; description: string; assignedAgent: string; dependencies: number[]; declared_files?: string[]; output_schema?: string[] }> }>(response, ['tasks'])
 
   // Generate unique IDs to avoid conflicts with existing tasks
@@ -364,6 +371,9 @@ export async function executeTaskBatch(
   // contract v1 §1.1: 前批 task 的描述 + outputSchema，用于结构化注入 <dependency> 标签
   priorTaskMeta?: Map<string, PriorTaskMeta>
 ): Promise<{ results: Map<string, { result: string; sessionId?: string }>, preloadedIds: string[], failedTaskIds: string[], failedTaskReasons: Record<string, string> }> {
+  if (chatSessionId && isSessionCancelled(chatSessionId)) {
+    throw new SessionCancelledError(chatSessionId)
+  }
   const results = new Map<string, { result: string; sessionId?: string }>()
   const agentMap = new Map(agents.map(a => [a.name, a]))
   const failedTaskIds: string[] = []
@@ -410,6 +420,9 @@ export async function executeTaskBatch(
 
   for (const [, batchTasks] of batches) {
     const settled = await Promise.allSettled(batchTasks.map(async (task, index) => {
+      if (chatSessionId && isSessionCancelled(chatSessionId)) {
+        throw new SessionCancelledError(chatSessionId)
+      }
       const agent = agentMap.get(task.assignedAgent) || findBestAgent(task.description, agents) || agents[index % agents.length]
       if (!agent) return { taskId: task.id, result: '', sessionId: undefined }
 
@@ -571,6 +584,9 @@ export async function executeSingleAgent(
   projectDir?: string,
   attachments?: TaskAttachment[]
 ): Promise<{ result: string; sessionId?: string }> {
+  if (chatSessionId && isSessionCancelled(chatSessionId)) {
+    throw new SessionCancelledError(chatSessionId)
+  }
   const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
 
   // 解析工具配置
@@ -674,9 +690,16 @@ export async function runDiscussion(
   chatSessionId?: string
 ): Promise<string[]> {
   const opinions: string[] = []
+  let cancelled = false
 
   for (let round = 1; round <= maxRounds; round++) {
+    if (cancelled) break
     for (const agent of agents) {
+      if (chatSessionId && isSessionCancelled(chatSessionId)) {
+        opinions.push('[讨论已停止]')
+        cancelled = true
+        break
+      }
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
       const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
 

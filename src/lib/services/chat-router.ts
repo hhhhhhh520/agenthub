@@ -9,6 +9,12 @@ import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { stateFromSession, applyTransitionWithOverride, canonicalCorrect, transitionPhase, idleExecuteGate, isExperimentOff, isSeqgateOn, idlePrematureDoneGate, applyTransition } from '@/lib/orchestrator/state-machine'
 import { appendDecisionTrace, type DecisionTraceEntry } from '@/lib/orchestrator/decision-trace'
+import { isSessionCancelled } from '@/lib/cancellation'
+
+function sendStopped(sendEvent: SendEvent) {
+  sendEvent({ agentId: 'orchestrator', type: 'text', content: '执行已停止' })
+  sendEvent({ agentId: 'orchestrator', type: 'done', content: '执行已停止' })
+}
 
 /**
  * safe-parse declaredFiles：架构师 LLM 拆解可能输出畸形 declared_files（字符串/数字等），
@@ -52,6 +58,10 @@ export async function handleOrchestratorDecision(
   permissionMode?: string,
   globalDeadline?: number
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' }, include: { attachments: true } })
@@ -65,11 +75,17 @@ export async function handleOrchestratorDecision(
       agents.map(a => ({ name: a.name, expertise: a.expertise, platform: a.platform })),
       context,
       workDir,
-      permissionMode
+      permissionMode,
+      sessionId,
     )
     decision = result.decision
     orchSessionId = result.sessionId
   } catch (err) {
+    // 取消导致的进程被杀会以错误形式返回；停止语义优先于错误提示/回退。
+    if (isSessionCancelled(sessionId)) {
+      sendStopped(sendEvent)
+      return
+    }
     if (err instanceof TimeoutError) {
       console.error('[TIMEOUT] getOrchestratorDecision')
       sendEvent({ agentId: 'orchestrator', type: 'error', content: 'Orchestrator 决策超时，请重试' })
@@ -95,6 +111,12 @@ export async function handleOrchestratorDecision(
     // appendDecisionTrace 契约：写库异常/重试超限返回 null 不抛——失败即回退无 trace，不阻断直连
     await appendDecisionTrace(sessionId, sessionPhase.decisionTrace, fallbackEntry)
     await handleOrchestratorChat(message, sessionId, sendEvent, agents)
+    return
+  }
+
+  // 决策是长调用；返回后先检查取消，取消后绝不派发 handler。
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
     return
   }
 
@@ -214,6 +236,11 @@ export async function handleOrchestratorDecision(
     return
   }
 
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
+
   sendEvent({ agentId: 'orchestrator', type: 'text', content: `[决策] ${decision.reason}` })
 
   switch (decision.action) {
@@ -278,6 +305,10 @@ export async function handleOrchestratorChat(
   agents?: Array<{ name: string; expertise: string; platform: string }>,
   orchSessionId?: string
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '思考中...' })
 
   const agentList = (agents || []).map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
@@ -353,6 +384,10 @@ export async function handleMentionAllDiscussion(
   sendEvent: SendEvent,
   workDir: string
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   sendEvent({ agentId: 'orchestrator', type: 'status', content: '开始多轮讨论...' })
   await runMultiAgentDiscussion(
     agents.map(a => a.name),
@@ -376,6 +411,10 @@ export async function handleDirectAgentChat(
   permissionMode: string,
   attachments?: TaskAttachment[]
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   // 从 SessionMember 读取 cliSessionId 用于会话恢复
   const member = await prisma.sessionMember.findUnique({
     where: { sessionId_agentId: { sessionId, agentId: agent.id } },
@@ -391,6 +430,11 @@ export async function handleDirectAgentChat(
     workDir,
     attachments
   )
+
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
 
   // 保存 cliSessionId 到 SessionMember
   if (cliSessionId) {

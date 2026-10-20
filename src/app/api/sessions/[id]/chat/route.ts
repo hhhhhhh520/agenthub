@@ -4,6 +4,7 @@ import { acquireSessionLock } from '@/lib/session-lock'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
 import { createEventLogger, type EventLogger } from '@/lib/services/event-log'
+import { isSessionCancelled } from '@/lib/cancellation'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -27,6 +28,9 @@ export async function POST(
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   if (!session) {
     return new Response('Session not found', { status: 404 })
+  }
+  if (isSessionCancelled(sessionId)) {
+    return Response.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
   }
 
   const permissionMode = session.permissionMode as 'default' | 'auto'
@@ -53,6 +57,11 @@ export async function POST(
   // 后续只由 stream.start 的 finally 释放（客户端 abort 不代表后台执行结束）。
   let lockHandedOff = false
   try {
+    // 等锁期间可能已被 stop/delete 标记；拿到锁后再检查一次，避免取消后启动新执行。
+    if (isSessionCancelled(sessionId)) {
+      return Response.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
+    }
+
     // /permission command
     if (message.trim().startsWith('/permission')) {
       const args = message.trim().split(/\s+/)
@@ -189,6 +198,21 @@ export async function POST(
             }
           }
         } catch (error) {
+          // 用户 stop / delete 时，进程被杀会以 send 错误形式冒出来；不要把停止说成系统故障。
+          if (isSessionCancelled(sessionId)) {
+            const stopped = '执行已停止'
+            if (eventLogger) {
+              eventLogger.sendEvent({ agentId: 'orchestrator', type: 'text', content: stopped })
+              eventLogger.sendEvent({ agentId: 'orchestrator', type: 'done', content: stopped })
+            } else {
+              try {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content: stopped })}\n\n`))
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content: stopped })}\n\n`))
+              } catch {}
+            }
+            return
+          }
+
           console.error('[Chat API] Error:', error)
           const errMsg = error instanceof Error ? error.message : String(error)
           // 对用户友好的提示，隐藏技术细节

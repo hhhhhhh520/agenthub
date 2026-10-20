@@ -314,6 +314,17 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
 - **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态
 
+### 会话取消与停止
+
+- **HTTP 断开 ≠ 取消**：客户端 abort 只影响连接，后台执行继续，锁由 stream/route 的 finally 释放；不要用 `request.signal` 当停止信号。
+- **停止/删除统一走 `src/lib/cancellation.ts`**：`requestSessionCancel(sessionId)` 置取消标记；`isSessionCancelled` 在 orchestrator 决策、对齐、执行循环、批次/任务、监控、讨论、adapter.send 重试与 spawn 前检查；取消后绝不 respawn/重试。
+- **进程归属**：`ProcessEntry.ownerSessionId` = `SpawnConfig.chatSessionId`；两个 adapter 的 spawnConfig 必须透传 `chatSessionId`，否则 delete/stop 找不到进程。
+- **真实退出**：`cancelByOwnerSession` → `terminateEntry`（5s 优雅 + 5s 强制）等待 `exit`/`exitCode`/`alive` 三重确认；未确认返回 `unconfirmed`，`DELETE` 回 409 且不删 DB，`stop` 回 202 且保留取消标记。
+- **执行收敛**：`handleExecution` 取消时把本批 `in_progress/failed` 条件写回 `pending`，不写 completed/result、不跑监控、不 auto-done；已完成任务保留，未完成可续跑/redo。
+- **删除顺序**：`requestSessionCancel` → 杀并等进程退出 → `waitForSessionUnlock`（30s）→ 清附件/影子 git → 删 DB → `clearSessionCancel`；任一步未确认不得删数据。
+- **停止端点**：`POST /api/sessions/[id]/stop` 只停止不删除；确认退出且锁释放后才清取消标记（15s 上限）。前端 stop 按钮必须先 POST 该端点再 abort 本地流（abort 本身不是停止）。
+- **有界清理**：`withTimeout` 的 `onTimeout` 清理上限 10s；`eventLogger.flush` 上限 5s；超时只警告，不得跳过锁释放/阻塞流关闭。
+
 ### 会话类型
 
 - `type: 'orchestrator'` — Orchestrator 主会话，走对齐流程

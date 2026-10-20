@@ -5,12 +5,17 @@ import { invalidateCliSession } from '@/lib/services/cli-session'
 import { createEventLogger } from '@/lib/services/event-log'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { stateFromSession, applyTransition, transitionPhase } from '@/lib/orchestrator/state-machine'
+import { isSessionCancelled } from '@/lib/cancellation'
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string; taskId: string }> }
 ) {
   const { id: sessionId, taskId } = await params
+
+  if (isSessionCancelled(sessionId)) {
+    return NextResponse.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
+  }
 
   // 等锁超时 fail-closed 回 429：绝不与上一持有者并发写 phase（phase 写入竞态根因）。
   let releaseLock: () => void
@@ -26,6 +31,9 @@ export async function POST(
     throw err
   }
   try {
+    if (isSessionCancelled(sessionId)) {
+      return NextResponse.json({ error: '会话正在停止，请稍后重试' }, { status: 409 })
+    }
     return await handleRedo(sessionId, taskId, request)
   } finally {
     releaseLock()

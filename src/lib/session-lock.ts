@@ -39,6 +39,24 @@ interface SessionMutex {
 
 const sessionMutexes = new Map<string, SessionMutex>()
 
+/** 是否有请求持有/排队该会话锁（delete/stop 用它判断业务是否收敛）。 */
+export function isSessionLocked(sessionId: string): boolean {
+  return sessionMutexes.get(sessionId)?.locked === true
+}
+
+/**
+ * 等待会话锁完全释放，带硬上限。
+ * 只用于 delete/stop 的收敛等待；轮询 50ms，超时返回 false（调用方不得删数据）。
+ */
+export async function waitForSessionUnlock(sessionId: string, timeoutMs = 30_000, pollMs = 50): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (isSessionLocked(sessionId)) {
+    if (Date.now() >= deadline) return false
+    await new Promise(r => setTimeout(r, pollMs))
+  }
+  return true
+}
+
 function getMutex(sessionId: string): SessionMutex {
   let mutex = sessionMutexes.get(sessionId)
   if (!mutex) {

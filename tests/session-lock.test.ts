@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest'
 
 // Reset the module between tests to get a fresh lock Map
 let acquireSessionLock: typeof import('@/lib/session-lock').acquireSessionLock
+let waitForSessionUnlock: typeof import('@/lib/session-lock').waitForSessionUnlock
 
 beforeEach(async () => {
   const { vi } = await import('vitest')
   vi.resetModules()
   const mod = await import('@/lib/session-lock')
   acquireSessionLock = mod.acquireSessionLock
+  waitForSessionUnlock = mod.waitForSessionUnlock
 })
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -172,5 +174,15 @@ describe('SessionLock — acquireSessionLock', () => {
 
     expect(elapsed).toBeLessThan(100) // Should be instant
     release2()
+  })
+
+  it('waitForSessionUnlock：持锁时超时 false，释放后 true', async () => {
+    const release = await acquireSessionLock('wait-unlock')
+    const start = Date.now()
+    expect(await waitForSessionUnlock('wait-unlock', 50)).toBe(false)
+    expect(Date.now() - start).toBeLessThan(500)
+
+    release()
+    expect(await waitForSessionUnlock('wait-unlock', 50)).toBe(true)
   })
 })

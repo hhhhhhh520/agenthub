@@ -19,6 +19,8 @@ import { prisma } from '@/lib/db'
 
 export const MAX_EVENTS_PER_SESSION = 500
 export const MAX_THINKING_CONTENT_LENGTH = 4 * 1024
+/** flush 硬上限：DB 写队列卡住时不能让 chat stream finally / 会话锁无限等待。 */
+export const FLUSH_TIMEOUT_MS = 5_000
 
 /** 四类过程事件 + permission_cancel（同族交互事件，重放后前端只渲染历史不重新弹窗） */
 export const PERSISTED_EVENT_TYPES: ReadonlySet<string> = new Set([
@@ -54,8 +56,8 @@ function truncateThinking(content: string): string {
 export interface EventLogger {
   /** 同步签名与全仓 SendEvent 兼容；持久化类型分配 seq 并入队落库 */
   sendEvent: (data: PersistableEvent) => void
-  /** 排空写队列（流关闭前调用，保证断线补发不缺尾部） */
-  flush: () => Promise<void>
+  /** 排空写队列（流关闭前调用，保证断线补发不缺尾部）。有硬上限，超时只警告不阻塞锁释放。 */
+  flush: (opts?: { timeoutMs?: number }) => Promise<void>
 }
 
 export async function createEventLogger(
@@ -122,8 +124,22 @@ export async function createEventLogger(
       enqueueWrite(event)
       opts?.stream?.(event)
     },
-    async flush() {
-      await writeChain
+    async flush(opts) {
+      const timeoutMs = opts?.timeoutMs ?? FLUSH_TIMEOUT_MS
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          writeChain,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              console.warn(`[event-log] flush 超过 ${timeoutMs}ms，放弃等待（流关闭/锁释放优先）sessionId=${sessionId}`)
+              resolve()
+            }, timeoutMs)
+          }),
+        ])
+      } finally {
+        if (timer) clearTimeout(timer)
+      }
       // writeError 仅为调试留痕（每条失败已在 catch 里 warn），flush 恒 resolve
       void writeError
     },

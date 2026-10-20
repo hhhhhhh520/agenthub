@@ -297,8 +297,14 @@ export function useChat(sessionId: string | null) {
   }, [sessionId, applyEvent])
 
   const stop = useCallback(() => {
+    if (!sessionId) return
+    // 客户端 abort 只是断开 HTTP，不等于停止后台执行；先请求服务端取消（杀进程 +
+    // 等真实退出），本地流立即断开。keepalive 保证页面离开时请求仍发出。
+    void fetch(`/api/sessions/${sessionId}/stop`, { method: 'POST', keepalive: true }).catch((err) => {
+      console.warn('[useChat] stop request failed:', err instanceof Error ? err.message : err)
+    })
     abortRef.current?.abort()
-  }, [])
+  }, [sessionId])
 
   const respondPermission = useCallback(async (requestId: string, behavior: 'allow' | 'deny') => {
     if (!sessionId) return

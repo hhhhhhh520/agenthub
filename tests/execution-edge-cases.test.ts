@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
 
 // ── Mock declarations ──────────────────────────────────────────────
 const mocks = vi.hoisted(() => {
@@ -1160,5 +1161,60 @@ describe('Execution — P0 重放 bug(已完成任务不重跑 success 处理)',
     expect(sendEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ content: '任务 task-a 完成' })
     )
+  })
+})
+
+describe('Execution — 取消边界', () => {
+  afterEach(() => clearSessionCancel('sess-1'))
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionUpdate.mockResolvedValue({})
+    mocks.mockMessageCreate.mockResolvedValue({})
+    mocks.mockSessionMemberFindMany.mockResolvedValue([])
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({ needsCorrection: false }) })
+  })
+
+  it('取消后不发起批次，直接结束且不写 done', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+    requestSessionCancel('sess-1')
+    mocks.mockTaskFindMany.mockResolvedValue([makeTask()])
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    expect(mocks.mockExecuteTaskBatch).not.toHaveBeenCalled()
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ content: '执行已停止' }))
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done', content: '执行已停止' }))
+    clearSessionCancel('sess-1')
+  })
+
+  it('批次中取消：未落地任务退回 pending，不标 completed、不 auto-done', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockImplementation(async () => {
+      requestSessionCancel('sess-1')
+      return { results: new Map(), failedTaskIds: [], failedTaskReasons: {} }
+    })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    // 批次前标记 in_progress → 取消后条件写回 pending
+    expect(mocks.mockTaskUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: task.id, status: { in: ['in_progress', 'failed'] } }),
+        data: { status: 'pending' },
+      })
+    )
+    // 不允许把 result 写成 completed
+    expect(mocks.mockTaskUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) })
+    )
+    // 不允许 done 转移（session.updateMany 由 transitionPhase 使用）
+    expect(mocks.mockSessionUpdateMany).not.toHaveBeenCalled()
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'done', content: '执行已停止' }))
+    clearSessionCancel('sess-1')
   })
 })

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
 
 const mocks = vi.hoisted(() => ({
   sessionFindUnique: vi.fn(),
@@ -96,10 +97,11 @@ beforeEach(() => {
   mocks.messageUpdate.mockResolvedValue({})
   mocks.sessionMemberFindMany.mockResolvedValue([])
   mocks.acquireSessionLock.mockResolvedValue(mocks.releaseLock)
-  mocks.createEventLogger.mockResolvedValue({
-    sendEvent: vi.fn(),
+  mocks.createEventLogger.mockImplementation(async (_sessionId: string, opts?: { stream?: (e: unknown) => void }) => ({
+    // 让 sendEvent 真正进 SSE stream，取消/错误帧才能在 res.text() 里断言
+    sendEvent: (event: unknown) => opts?.stream?.(event),
     flush: vi.fn().mockResolvedValue(undefined),
-  })
+  }))
   mocks.isCreateAgentIntent.mockReturnValue(false)
   mocks.handleOrchestratorDecision.mockResolvedValue(undefined)
   mocks.handleMentionAllDiscussion.mockResolvedValue(undefined)
@@ -107,6 +109,8 @@ beforeEach(() => {
   mocks.handleCreateAgent.mockResolvedValue(undefined)
   mocks.executeSingleAgent.mockResolvedValue({ result: 'ok' })
 })
+
+afterEach(() => clearSessionCancel('s1'))
 
 describe('chat route — 统一锁释放', () => {
   it('拿锁后、建流前的 DB 异常会释放锁（防永久 429）', async () => {
@@ -135,6 +139,20 @@ describe('chat route — 统一锁释放', () => {
 
     expect(mocks.handleOrchestratorDecision).toHaveBeenCalledTimes(1)
     expect(flush).toHaveBeenCalledTimes(1)
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('执行中被 cancel → 推停止帧，不推系统错误，仍释放锁', async () => {
+    mocks.handleOrchestratorDecision.mockImplementationOnce(async () => {
+      requestSessionCancel('s1')
+      throw new Error('process killed')
+    })
+
+    const res = await POST(makeReq({ message: 'hi' }), params)
+    const text = await res.text()
+
+    expect(text).toContain('执行已停止')
+    expect(text).not.toContain('处理消息时出错')
     expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
   })
 

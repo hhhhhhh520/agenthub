@@ -140,6 +140,19 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
     consoleSpy.mockRestore()
   })
 
+  it('flush 有界：DB 写卡住时超时 resolve，不永久阻塞流关闭/锁释放', async () => {
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockCreate.mockImplementation(() => new Promise(() => {}))
+    const logger = await createEventLogger('s1')
+    logger.sendEvent({ agentId: 'a1', type: 'thinking', content: 'stuck' })
+
+    const start = Date.now()
+    await expect(logger.flush({ timeoutMs: 20 })).resolves.toBeUndefined()
+    expect(Date.now() - start).toBeLessThan(500)
+    expect(consoleSpy.mock.calls.some(c => String(c[0]).includes('flush 超过'))).toBe(true)
+    consoleSpy.mockRestore()
+  })
+
   it('PERSISTED_EVENT_TYPES 恰为四类过程事件 + permission_cancel', () => {
     expect([...PERSISTED_EVENT_TYPES].sort()).toEqual([
       'permission_cancel', 'permission_request', 'thinking', 'tool_result', 'tool_use',

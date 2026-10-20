@@ -14,7 +14,7 @@ export async function handleCreateAgent(
 
 用户消息：${message}`
 
-  const configText = await callLLMForAnalysis(configPrompt)
+  const configText = await callLLMForAnalysis(configPrompt, sessionId)
   let config: { name: string; expertise: string; systemPrompt: string; platform?: string; capabilities?: string[]; accentColor?: string }
   try {
     config = parseJSON(configText, ['name', 'expertise', 'systemPrompt'])

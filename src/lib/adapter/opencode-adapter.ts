@@ -344,6 +344,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
     const spawnConfig: SpawnConfig = {
       workDir: this.workDir,
+      chatSessionId: this.chatSessionId,
       command: 'opencode',
       args,
       format: 'ndjson' as const,

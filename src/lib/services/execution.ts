@@ -13,6 +13,7 @@ import { structuredMonitorVerdict, describeSignal, isStructuredMonitorOn } from 
 import { isPreflightVerifyOn, detectVerifyCommands, runVerifyCommands } from './preflight-verify'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { transitionPhase, MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
+import { isSessionCancelled } from '@/lib/cancellation'
 import type { SendEvent } from './review'
 
 /** 路径归一化：统一斜杠为正斜杠,去除开头 ./,小写比较(Windows 不区分大小写) */
@@ -101,6 +102,12 @@ export async function handleExecution(
     return
   }
 
+  if (isSessionCancelled(sessionId)) {
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: '执行已停止' })
+    sendEvent({ agentId: 'orchestrator', type: 'done', content: '执行已停止' })
+    return
+  }
+
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   const projectRoot = session?.projectDir && session.projectDir.trim()
     ? session.projectDir.trim()
@@ -154,8 +161,33 @@ export async function handleExecution(
   let iteration = 0
 
   const deadline = globalDeadline ?? Date.now() + 50 * 60 * 1000
+  let cancelled = false
+
+  /**
+   * 取消时把本批未落地任务退回 pending：agent 结果可能只写了一半（进程被杀），
+   * 不能发布 completed；发 task_status 让前端任务板立即回退，用户可续跑/redo。
+   */
+  const resetBatchToPending = async (batchTasks: Array<{ id: string; status: string }>) => {
+    for (const task of batchTasks) {
+      if (task.status === 'completed') continue
+      const reset = await prisma.task.updateMany({
+        where: { id: task.id, status: { in: ['in_progress', 'failed'] } },
+        data: { status: 'pending' },
+      })
+      if (reset.count > 0) {
+        task.status = 'pending'
+        sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'pending' }) })
+      } else {
+        await syncTaskStatusFromDb(task)
+      }
+    }
+  }
 
   while (hasProgress && iteration < MAX_ITERATIONS) {
+    if (isSessionCancelled(sessionId)) {
+      cancelled = true
+      break
+    }
     if (Date.now() > deadline) {
       console.error('[TIMEOUT] handleExecution 全局耗时超限')
       sendEvent({ agentId: 'orchestrator', type: 'error', content: '执行阶段超时，部分任务未完成' })
@@ -305,6 +337,14 @@ export async function handleExecution(
       }
     }
 
+    // 取消可能发生在批次执行中（进程已被 kill，results 可能是半成品）。
+    // 先退回 pending，绝不把半成品当 completed 发布。
+    if (isSessionCancelled(sessionId)) {
+      await resetBatchToPending(batchTasks)
+      cancelled = true
+      break
+    }
+
     for (const taskId of batchFailedIds) {
       const task = tasks.find(t => t.id === taskId)
       if (task && task.status !== 'failed') {
@@ -332,6 +372,11 @@ export async function handleExecution(
     }
 
     for (const [taskId, { result, sessionId: cliSessionId }] of results) {
+      if (isSessionCancelled(sessionId)) {
+        await resetBatchToPending(batchTasks)
+        cancelled = true
+        break
+      }
       // P0 重放 bug 修复: 跳过 executeTaskBatch 预装的历史任务(非本批新执行)。
       // 旧代码无此守卫,对已完成任务也重走完整 success 处理(见上方 preloadedIds 注释)
       if (preloadedIds.has(taskId)) continue
@@ -544,6 +589,13 @@ export async function handleExecution(
         }
       }
 
+      // 取消后不再跑监控/纠偏/预检，避免已经停止的批次继续产生副作用。
+      if (isSessionCancelled(sessionId)) {
+        await resetBatchToPending(batchTasks)
+        cancelled = true
+        break
+      }
+
       // §3.4: 结构化监控已转正为生产默认（2026-09-27，未设=on）——结构化 correction 直接触发纠偏
       // （LLM 降级第二道）；结构化 pass 或显式 'off'（逃生门）→ LLM 审查照跑
       if (isStructuredMonitorOn() && structured.verdict === 'correction') {
@@ -645,6 +697,15 @@ export async function handleExecution(
         sendEvent({ agentId: 'orchestrator', type: 'task_status', content: JSON.stringify({ taskId: task.id, status: 'blocked' }) })
       }
     }
+  }
+
+  // 取消是终止语义：不 auto-done、不发布成功总结；已完成任务保留，未完成退回 pending。
+  if (cancelled || isSessionCancelled(sessionId)) {
+    const stoppedMsg = '执行已停止。已完成的任务保留，未完成任务已退回 pending，可再次执行或 redo。'
+    await prisma.message.create({ data: { role: 'orchestrator', rawContent: stoppedMsg, sessionId } })
+    sendEvent({ agentId: 'orchestrator', type: 'text', content: stoppedMsg })
+    sendEvent({ agentId: 'orchestrator', type: 'done', content: '执行已停止' })
+    return
   }
 
   if (iteration >= MAX_ITERATIONS) {

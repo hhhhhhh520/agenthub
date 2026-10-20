@@ -256,6 +256,8 @@
 
 | 会话锁队列重写 + 统一释放（Batch 0） | 旧 Map 链式队列在 A 持锁/B/C 等待、B 超时后 A 释放时 C 永久卡死（已复现）→ 显式 waiter 队列：超时/abort 等待者移除自己，release handoff 队首，release 幂等；持有者 abort 不再释放锁（HTTP 断开≠后台结束），chat route 用 lockHandedOff + stream.finally 统一释放，eventLogger 创建失败/flush 异常也不漏锁。新增 15 条针对性测试；全量 1348 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
 
+| Batch 0 续·会话取消全链路 + 进程真实退出 + 有界清理 | `cancellation.ts` 统一取消源；chat/redo/stop/delete + orchestrator 决策/对齐/执行/讨论/adapter 全链路检查；`ProcessEntry.ownerSessionId` + `cancelByOwnerSession`/`terminateEntry`（5s 优雅 + 5s 强制，exit/exitCode/alive 三重确认，unconfirmed 不删 DB）；`handleExecution` 取消时本批未落地任务条件写回 pending、不 completed/不 auto-done；`stop` 端点只停不删；`withTimeout` onTimeout 有界 10s、eventLogger.flush 有界 5s。新增取消/退出/stop/delete/timeout/flush 测试；全量 1368 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-19 |
+
 ### ⏳ 进行中
 | 任务 | 状态 |
 |------|------|

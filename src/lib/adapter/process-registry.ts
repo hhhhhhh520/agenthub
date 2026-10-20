@@ -5,6 +5,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import type { StreamChunk } from './types'
 import { assertSpawnSafe } from './arg-safety'
+import { isSessionCancelled, SessionCancelledError } from '@/lib/cancellation'
 
 interface ProcessEntry {
   process: ChildProcess
@@ -34,6 +35,8 @@ interface ProcessEntry {
   format: 'claude' | 'ndjson'  // stdout 协议格式
   stderrBuffer: string         // 累积 stderr 输出，用于错误诊断
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
+  ownerSessionId: string | null // chat session 归属（delete/stop 按此取消进程）
+  cancelled: boolean            // 已被会话取消：禁止重试/重建，只允许终止
   // 权限缓存：同会话内已批准/拒绝的操作自动放行/拒绝，避免重复审批
   // key: "toolName:JSON.stringify(toolInput)", value: true=allow, false=deny
   // 上限 100 条，超过时删除最早的条目
@@ -55,6 +58,8 @@ interface SpawnConfig {
   apiKey?: string
   baseUrl?: string
   model?: string
+  // chat session 归属（delete/stop 按此取消进程；与 CLI sessionId 区分）
+  chatSessionId?: string
   // 支持 OpenCode 等其他 CLI
   command?: string              // 默认 'claude'，OpenCode 用 'opencode'
   args?: string[]               // 完整 CLI 参数，覆盖默认的 claude 参数
@@ -308,6 +313,9 @@ class ProcessRegistry {
   }
 
   getOrCreate(key: string, config: SpawnConfig): ProcessEntry {
+    if (config.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+      throw new SessionCancelledError(config.chatSessionId)
+    }
     const effectiveKey = this.toEffectiveKey(key, config)
 
     const existing = this.registry.get(effectiveKey)
@@ -328,6 +336,9 @@ class ProcessRegistry {
   }
 
   private spawnProcess(key: string, config: SpawnConfig): ProcessEntry {
+    if (config.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+      throw new SessionCancelledError(config.chatSessionId)
+    }
     const command = config.command || 'claude'
     let args: string[]
     let mcpConfigFile: string | null = null
@@ -428,6 +439,8 @@ class ProcessRegistry {
       format: config.format || 'claude',
       stderrBuffer: '',
       promptAsArg: config.promptAsArg || false,
+      ownerSessionId: config.chatSessionId || null,
+      cancelled: false,
     }
 
     proc.on('exit', () => {
@@ -458,6 +471,14 @@ class ProcessRegistry {
     })
 
     this.registry.set(key, entry)
+
+    // 关闭 spawn 与 cancelByOwnerSession 的竞态窗口：如果 spawn 期间会话被取消，
+    // 立即自行终止，绝不把新进程留成“取消后仍存活”的孤儿。
+    if (config.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+      void this.terminateEntry(key, entry, { graceMs: 1_000, forceMs: 2_000 })
+      throw new SessionCancelledError(config.chatSessionId)
+    }
+
     return entry
   }
 
@@ -574,7 +595,13 @@ class ProcessRegistry {
     const effectiveKey = this.toEffectiveKey(key, config)
 
     while (attempt <= MAX_SEND_RETRIES) {
+      if (config?.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+        throw new SessionCancelledError(config.chatSessionId)
+      }
       let entry = this.registry.get(effectiveKey)
+      if (entry?.cancelled) {
+        throw new SessionCancelledError(entry.ownerSessionId || effectiveKey)
+      }
 
       // If process is dead, rebuild it
       if (!entry || !entry.alive || entry.process.exitCode !== null) {
@@ -590,6 +617,9 @@ class ProcessRegistry {
         }
         if (entry) this.killEntryIfCurrent(effectiveKey, entry)
         if (!config) throw new Error(`Process entry not found for key: ${effectiveKey}`)
+        if (config.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+          throw new SessionCancelledError(config.chatSessionId)
+        }
         entry = this.spawnProcess(effectiveKey, config)
         entry.stderrBuffer = ''
       }
@@ -622,6 +652,11 @@ class ProcessRegistry {
         return  // Success — exit retry loop
 
       } catch (err) {
+        // 取消不是瞬时错误：立即退出重试循环，绝不重建/重试
+        if (err instanceof SessionCancelledError) {
+          throw err
+        }
+
         // entry 在锁等待期间死了 —— 不消耗 retry budget,回顶部重查 registry
         if (err instanceof EntryDiedWhileWaitingError) {
           dieWhileWaitingCount++
@@ -673,6 +708,9 @@ class ProcessRegistry {
           console.warn(`[ProcessRegistry ${effectiveKey}] Attempt ${attempt}/${MAX_SEND_RETRIES} failed: ${lastError}. Retrying in ${delay}ms...`)
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
           await new Promise(resolve => setTimeout(resolve, delay))
+          if (config?.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+            throw new SessionCancelledError(config.chatSessionId)
+          }
         }
       } finally {
         // 关键:同步 throw 路径(readRound 抛错、stdin.write 抛错)也要释放锁。
@@ -1214,6 +1252,105 @@ class ProcessRegistry {
    * Internal callers that already hold an entry reference must use
    * killEntryIfCurrent(key, entry) to avoid killing a newer replacement entry.
    */
+  /** 等待目标进程真实退出（exit 事件 / exitCode / alive 三重判定），带硬上限。 */
+  private waitForProcessExit(entry: ProcessEntry, timeoutMs: number): Promise<boolean> {
+    if (!entry.alive || entry.process.exitCode !== null) return Promise.resolve(true)
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const timerRef: { current?: ReturnType<typeof setTimeout> } = {}
+      const done = (exited: boolean) => {
+        if (settled) return
+        settled = true
+        if (timerRef.current) clearTimeout(timerRef.current)
+        entry.process.removeListener('exit', onExit)
+        resolve(exited)
+      }
+      const onExit = () => done(true)
+
+      entry.process.once('exit', onExit)
+      // 注册监听后再检查一次，关闭 exit 已派发但 handler 尚未执行的窗口。
+      if (!entry.alive || entry.process.exitCode !== null) {
+        done(true)
+        return
+      }
+      timerRef.current = setTimeout(() => done(false), timeoutMs)
+    })
+  }
+
+  /** 向进程树发信号；Windows 用 taskkill /T，POSIX 优先杀进程组。 */
+  private signalProcessTree(entry: ProcessEntry, force: boolean): void {
+    const pid = entry.process.pid
+    if (pid) {
+      if (process.platform === 'win32') {
+        try {
+          const child = spawn('taskkill', ['/pid', pid.toString(), '/T', ...(force ? ['/F'] : [])], { shell: false })
+          child.unref?.()
+        } catch {
+          try { entry.process.kill(force ? 'SIGKILL' : 'SIGTERM') } catch {}
+        }
+      } else {
+        try {
+          process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM')
+        } catch {
+          try { entry.process.kill(force ? 'SIGKILL' : 'SIGTERM') } catch {}
+        }
+      }
+      return
+    }
+    try { entry.process.kill(force ? 'SIGKILL' : 'SIGTERM') } catch {}
+  }
+
+  /**
+   * 取消一个 entry：标记 cancelled → 优雅终止 → 等待真实退出 → 超时强制 → 再等待。
+   * 返回 true 只在确认退出后；未确认时保留 registry entry（delete 不得假报成功）。
+   */
+  async terminateEntry(
+    key: string,
+    entry: ProcessEntry,
+    opts?: { graceMs?: number; forceMs?: number },
+  ): Promise<boolean> {
+    const graceMs = opts?.graceMs ?? 5_000
+    const forceMs = opts?.forceMs ?? 5_000
+    entry.cancelled = true
+
+    if (!entry.alive || entry.process.exitCode !== null) {
+      this.cleanupEntry(entry)
+      if (this.registry.get(key) === entry) this.registry.delete(key)
+      return true
+    }
+
+    this.signalProcessTree(entry, false)
+    let exited = await this.waitForProcessExit(entry, graceMs)
+    if (!exited) {
+      this.signalProcessTree(entry, true)
+      exited = await this.waitForProcessExit(entry, forceMs)
+    }
+
+    if (exited) {
+      this.cleanupEntry(entry)
+      if (this.registry.get(key) === entry) this.registry.delete(key)
+      return true
+    }
+
+    console.warn(`[ProcessRegistry ${key}] terminateEntry: process still alive after ${graceMs + forceMs}ms`)
+    return false
+  }
+
+  /** 按 chat session 取消所有归属进程，返回逐 entry 结果（不删 DB，只终止进程）。 */
+  async cancelByOwnerSession(
+    sessionId: string,
+    opts?: { graceMs?: number; forceMs?: number },
+  ): Promise<{ total: number; exited: number; unconfirmed: string[] }> {
+    const targets = [...this.registry.entries()].filter(([, entry]) => entry.ownerSessionId === sessionId)
+    const results = await Promise.all(targets.map(async ([key, entry]) => {
+      const ok = await this.terminateEntry(key, entry, opts)
+      return { key, ok }
+    }))
+    const unconfirmed = results.filter(r => !r.ok).map(r => r.key)
+    return { total: targets.length, exited: results.length - unconfirmed.length, unconfirmed }
+  }
+
   killEntry(key: string, config?: SpawnConfig): void {
     if (config) {
       // 有 config 时用精确的 effectiveKey

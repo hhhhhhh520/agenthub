@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db'
 import { executeSingleAgent, runDiscussion, callLLMForAnalysis, getOrchestratorAgent } from '@/lib/orchestrator'
 import { buildMonitoringPrompt, ORCHESTRATOR_DECISION_PROMPT } from '@/lib/orchestrator/prompts'
 import { MAX_CORRECTION_RETRIES } from '@/lib/orchestrator/state-machine'
+import { isSessionCancelled } from '@/lib/cancellation'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 
 export type SendEvent = (data: { agentId: string; type: string; content: string; data?: { requestId?: string; toolName?: string; toolInput?: Record<string, unknown>; quality?: string } }) => void
@@ -155,6 +156,11 @@ export async function delegateToAgent(
     attachments
   )
 
+  if (isSessionCancelled(sessionId)) {
+    sendEvent({ agentId: agent.name, type: 'done', content: '执行已停止' })
+    return
+  }
+
   await prisma.message.create({
     data: { role: 'agent', rawContent: result, sessionId, agentId: agent.name },
   })
@@ -205,6 +211,11 @@ export async function runMultiAgentDiscussion(
     },
     sessionId
   )
+
+  if (isSessionCancelled(sessionId)) {
+    sendEvent({ agentId: 'orchestrator', type: 'done', content: '执行已停止' })
+    return
+  }
 
   const summary = opinions.join('\n\n')
   // 判断讨论是否成功：至少有一个 Agent 给出了有效内容（非超时/出错）

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { cleanupAttachmentFiles } from '@/lib/attachment-cleanup'
 import { cleanupShadowGit } from '@/lib/services/shadow-git'
+import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
+import { waitForSessionUnlock } from '@/lib/session-lock'
 
 export async function GET(
   request: Request,
@@ -89,6 +91,28 @@ export async function DELETE(
     where: { id },
     select: { projectDir: true },
   })
+  if (!sess) {
+    return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+  }
+
+  // 删除 = 取消 → 阻止重建 → 杀并等待真实退出 → 等业务 finally → 再删数据。
+  // 任一步未确认都返回 409/500，不删 DB，避免“进程还在写、记录已消失”。
+  requestSessionCancel(id)
+  const { processRegistry } = await import('@/lib/adapter/process-registry')
+  const kill = await processRegistry.cancelByOwnerSession(id, { graceMs: 5_000, forceMs: 5_000 })
+  const unlocked = await waitForSessionUnlock(id, 30_000)
+  if (kill.unconfirmed.length > 0 || !unlocked) {
+    return NextResponse.json(
+      {
+        error: '会话仍在停止中，未删除',
+        total: kill.total,
+        exited: kill.exited,
+        unconfirmed: kill.unconfirmed,
+        unlocked,
+      },
+      { status: 409 },
+    )
+  }
 
   // Clean up attachment files before deleting session (cascade deletes DB records)
   const attachments = await prisma.attachment.findMany({
@@ -98,7 +122,7 @@ export async function DELETE(
   await cleanupAttachmentFiles(attachments)
 
   // ❌-3: 清影子 git。失败不阻塞删除(用户已选择删 session)
-  if (sess?.projectDir) {
+  if (sess.projectDir) {
     try {
       cleanupShadowGit(sess.projectDir, id)
     } catch (e) {
@@ -107,5 +131,6 @@ export async function DELETE(
   }
 
   await prisma.session.delete({ where: { id } })
+  clearSessionCancel(id)
   return NextResponse.json({ success: true })
 }

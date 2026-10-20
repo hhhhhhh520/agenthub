@@ -97,6 +97,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // Build spawn config for process rebuild on retry
     const spawnConfig: SpawnConfig = {
       workDir: this.workDir,
+      chatSessionId: this.chatSessionId,
       sessionId: this.sessionId,
       permissionMode: this.permissionMode,
       mcpConfig: this.mcpConfig,
