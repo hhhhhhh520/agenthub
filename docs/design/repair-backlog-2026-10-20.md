@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`7520866`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`122 files / 1424 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`61c7218`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`122 files / 1426 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
-> 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 当前代码复核
+> 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P2-03/P2-04/P2-06 保留完成记录供追溯；旧 36 项中已修/部分修的映射见 §4。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06 保留完成记录；P2-03/P2-04/P1-03 的 Round 2 补项见 §2.1；旧 36 项中已修/部分修的映射见 §4。
 
 ---
 
@@ -43,6 +43,7 @@
 | `31c5946` | stop/delete 生命周期屏障 | `session-lifecycle` deleting 标记；DELETE 取消前 mark、删库后清，失败 finally 清；stop 对 deleting 不清取消；chat 拿锁前后拒绝 |
 | `6292cdd` | 恢复计划审批关联 | 计划消息写任务集 plan ID；恢复要求计划已呈现且之后有用户消息；缺失时重展示到 align_arch，不自动执行 |
 | `7520866` | SSE body cancel 安全 | safeEnqueue 捕获推流异常；ReadableStream cancel 置关闭标记并清超时；后台执行与锁释放不变 |
+| `61c7218` | 嵌套 `.env` 敏感分类 | 任意目录层级 `.env`/`.env.*` 命中敏感规则；真实影 Git 审计返回 violation |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -58,11 +59,11 @@
 
 ---
 
-## 2. P1（P1-01/02/03 已修；P1 全部闭环）
+## 2. P1（P1-01/02 已闭环；P1-03 核心隔离已完成，F4 资源清理尾项未闭环）
 
 ### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
-**状态：** ✅ 已修（commit `0dd751a` + `ce2703b`，2026-10-20）。保留本节作为验收记录。
+**状态：** ✅ 已修（commit `0dd751a` + `ce2703b` + `61c7218`，2026-10-20）。Round 2 F1：嵌套 `secrets/.env` 原先未被判敏感，导致审计 pass；`61c7218` 已补任意层级 `.env`/`.env.*` 模式并加真实影 Git 审计回归。
 **旧编号：** 原 36 项 #2（原“部分修”，现已闭环）
 **位置：**
 - `src/lib/services/shadow-git.ts:111` `getGitSnapshotDetailed`
@@ -146,9 +147,9 @@ return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 
 ---
 
-### ✅ P1-03 OpenCode 不同会话覆盖同一权限文件
+### ⚠️ P1-03 OpenCode 不同会话覆盖同一权限文件（核心隔离已修；F4 资源清理未闭环）
 
-**状态：** ✅ 已修（commit `ae39e00`，2026-10-20）。保留本节作为验收记录；P1 全部闭环，P2-05 随后修复（`a24ca60`）。
+**状态：** 核心隔离 ✅ 已修（commit `ae39e00`，2026-10-20）；但 Round 2 F4 发现正常 `exit → stdout.close` 顺序下，生成的 md/XDG 清理被跳过，P1-03 尚不能整体闭环。详见 §2.1 F4。P2-05 已由 `a24ca60` 修复。
 **旧编号：** 原 36 项 #13（原“未修”，现已闭环）；审查报告 P1 #4
 **位置：**
 - `src/lib/adapter/opencode-adapter.ts:149` `ensureAgentConfig`
@@ -181,6 +182,27 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 **验收：**
 两个并发会话的权限文件互不覆盖；真实 CLI 加载哪一版可预测。
 
+**Round 2 F4 遗留：** `ProcessRegistry` 在 exit 时先 `cleanupEntry(entry, true)`（保留 managed 资源以便 retry）并从 registry 删除 entry；随后 NDJSON 收到 stdout close 正常完成，`killEntryIfCurrent` 因 entry 已不在 registry 直接返回，最终无人删除 `managedAgentFile`/`managedConfigDir`。修复方向：拆分进程级清理与 managed 资源释放，明确 retry 持有者与最终成功/永久失败/取消的最终 owner，覆盖 exit/close 两种顺序。
+
+---
+
+## 2.1 Round 2 复核遗留（2026-10-20）
+
+Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549-7321-a5a8-9a46eeb05ea4\agenthub-repair-quality-review-round2.md`。
+
+| ID | 严重度 | 状态 | 位置 | 未闭环问题 |
+|---|---|---|---|---|
+| F1 | P1 | ✅ 已闭环 `61c7218` | `sensitive-paths.ts:27` | 嵌套 `secrets/.env` 未判敏感，审计 pass；已补任意层级 `.env`/`.env.*` |
+| F2 | P2 | 🔴 未闭环 | `alignment.ts:627`、`chat-router.ts:273` | 任意后续 user 消息都被当作计划确认；明确拒绝/澄清/撤回仍可能放行。需要结构化批准记录绑定 plan ID |
+| F3 | P2 | 🔴 未闭环 | `alignment.ts:458`、`:752`、`chat-router.ts:231` | 任务已提交、phase 停在 `align_pm` 时，真实 POST 先被 `align_pm + execute` 非法转移拒绝，重展示 helper 不可达 |
+| F4 | P2 | 🔴 未闭环 | `process-registry.ts:438`、`:552`、`:1390` | 正常 exit→stdout.close 顺序下，OpenCode 生成的 md/XDG 最终清理丢失 |
+| F5 | P2 | 🔴 未闭环 | `session-lifecycle.ts:12`、`sessions/[id]/route.ts:143`、`stop/route.ts:36` | 并发 DELETE 共用无 owner 的 Set；D2 失败会清掉 D1 的 deleting 标记，stop 随后清取消并返回 200 |
+| F6 | P2 | 🔴 未闭环 | `alignment.ts:444`、`:471`、`:737` | plan ID 覆盖整个 session 任务集，但展示摘要只包含本轮 scheduledTasks；旧 pending/blocked 任务未展示却被确认 |
+| R1 | P2 | 🔴 未闭环 | `timeout.ts:73`、`:99` | `onTimeout` 清理期间底层 `next` 先完成时，可能吞掉 `TimeoutError`；与已修的 `iterator.return` 有界性独立 |
+| R2 | P2 | 🔴 未闭环 | `alignment.ts` needsPlan 分支 | 进入 `presentPlanForConfirmation` 前缺少取消复查；展示 helper 在 phase/消息副作用前也缺少取消检查 |
+
+> F2/F3/F6/R2 都属于 P2-04 的审批与恢复边界；F5 属于 P2-03 的并发所有权；F4 属于 P1-03 的资源生命周期；R1 单列，不能据此否定 `iterator.return` 已修复。
+
 ---
 
 ## 3. P2 待修
@@ -208,13 +230,13 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 - 与 stop/delete 的进程归属测试联动。
 **测试：** regenerate 期间 stop → `ownerSessionId` 能命中；取消后不得更新消息/发 done。
 
-### P2-03 stop 与 DELETE 的取消屏障竞态 ✅
+### ⚠️ P2-03 stop 与 DELETE 的取消屏障竞态（单 DELETE 已闭环；F5 并发未闭环）
 
-**状态：** ✅ 已闭环（commit `31c5946`，2026-10-20）。`session-lifecycle` 的 deleting 标记覆盖取消 → 杀进程 → 等锁 → 清附件/影子 git → 删库全程；DELETE 失败路径 finally 清标记，stop 不为 deleting 会话清取消，chat 拿锁前后均拒绝。详情见 `docs/design/handoff-2026-10-20-p2-03.md`。
+**状态：** 单 DELETE 场景 ✅ 已修（commit `31c5946`，2026-10-20）：`session-lifecycle` 的 deleting 标记覆盖取消 → 杀进程 → 等锁 → 清附件/影子 git → 删库全程；DELETE 失败路径 finally 清标记，stop 不为 deleting 会话清取消，chat 拿锁前后均拒绝。**Round 2 F5 发现并发 DELETE 仍可互相清除无 owner 的 deleting 标记**，见 §2.1；P2-03 不能整体标 ✅。详情见 `docs/design/handoff-2026-10-20-p2-03.md`。
 
-### P2-04 执行恢复没有“同一获批计划”关联 ✅
+### ⚠️ P2-04 执行恢复没有“同一获批计划”关联（F2/F3/F6/R2 未闭环）
 
-**状态：** ✅ 已闭环（commit `6292cdd`，2026-10-20）。计划消息写入任务集 plan ID；`ensureExecutableState` 在 align_pm/align_arch/align_qa 恢复前要求计划消息对应当前任务集且之后有用户消息；缺失/不匹配时由 `transitionToExecution` 用现有任务重新展示计划并停在 align_arch，不重拆、不自动执行。服务级与 chat 路由级回归均覆盖。详见 §1 与 `PROGRESS.md`。
+**状态：** 基础机制已落地（commit `6292cdd`，2026-10-20）：计划消息写入任务集 plan ID；`ensureExecutableState` 在 align_pm/align_arch/align_qa 恢复前要求计划消息对应当前任务集且之后有用户消息；缺失/不匹配时由 `transitionToExecution` 用现有任务重新展示计划并停在 align_arch。**Round 2 复核发现 F2（拒绝/澄清也被当确认）、F3（align_pm 真实 POST 被非法转移挡住）、F6（展示集/批准集/执行集不一致）、R2（needsPlan 分支取消复查不足）**，P2-04 不能整体标 ✅。详见 §2.1。
 
 ### ✅ P2-05 Claude 无 provider 配置时未注入项目指令隔离开关
 
@@ -278,6 +300,13 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 - SSE 轮询加 `inFlight` 守卫，上一轮未完成不启动下一轮。
 **测试：** 并发 sendEvent/flush；唯一约束冲突；慢查询下轮询不重叠。
 
+### P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError（R1）
+
+**位置：** `src/lib/orchestrator/timeout.ts:73`、`:99`
+**现状：** 定时器回调先 await `onTimeout` 再 reject；该清理等待中底层 `next()` 若先返回 `done:true`，`Promise.race` 会先选 next，包装器正常完成；若返回 value，会迟到 yield。此问题早于 `ff53430`，与“`iterator.return` 有界”独立。
+**最小修法：** 超时标志在进入 `onTimeout` 前先胜出（优先 reject），清理只作为后台收尾；不得让 `next()` 的完成覆盖已触发的超时语义。
+**测试：** 延迟 next、等待 `onTimeout` 开始，再 resolve `next(done:true)`；drain 必须仍抛 `TimeoutError`。
+
 ---
 
 ## 4. 旧 36 项未闭环映射
@@ -315,7 +344,7 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1424 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1426 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -348,9 +377,13 @@ const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default'))
 ## 6. 建议执行顺序
 
 1. **P2-07 拿锁前旧快照**
-2. **P2-08/09 进程树/Agent 创建取消**
-3. **P2-10/11/12 提示/清扫/事件**
-4. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+2. **P2-04 F2/F3/F6/R2：明确批准记录 + align_pm 路由恢复 + 展示/执行集合一致 + 取消复查**
+3. **P2-03 F5：并发 DELETE 的 deleting 所有权**
+4. **P1-03 F4：OpenCode managed 资源最终清理**
+5. **P2-13 R1：onTimeout 与 next 的超时优先级**
+6. **P2-08/09 进程树/Agent 创建取消**
+7. **P2-10/11/12 提示/清扫/事件**
+8. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -372,7 +405,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `122 files / 1424 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `122 files / 1426 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -387,9 +420,9 @@ npx eslint <changed-files>
 
 2026-10-20 质量复核报告与复现文件（仓库外，可能随临时目录清理）：
 
-- 报告：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549-7321-a5a8-9a46eeb05ea4\agenthub-repair-quality-review.md`
-- 6 条独立复现：同目录 `review-quality-repros.test.ts`
-- B2 CAS 摘要复现：同目录 `review-cas-repro.test.ts`（该具体缺陷已由 `be969e0` 修复）
+- Round 2 报告：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549-7321-a5a8-9a46eeb05ea4\agenthub-repair-quality-review-round2.md`
+- Round 2 复现：同目录 `review-round2-nested-env.test.ts`（F1，已由 `61c7218` 修复）、`review-round2-plan.test.ts`（F2/F3）、`review-round2-managed-exit.test.ts`（F4）、`review-round2-delete.test.ts`（F5）、`review-round2-timeout-race.test.ts`（R1）
+- 初轮报告：同目录 `agenthub-repair-quality-review.md`；6 条独立复现 `review-quality-repros.test.ts`；B2 CAS 摘要 `review-cas-repro.test.ts`（已由 `be969e0` 修复）
 
 使用方式：复制到仓库 `tests/` 的**唯一新文件**，用现有 Vitest alias 运行；不要覆盖原有测试。复现预期失败，直到对应缺口被修复。
 
@@ -398,6 +431,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- 取消/退出/清理、执行恢复、批次审计、双维度权限：P1 安全边界已全部闭环；剩余 P2 仍需逐项处理。
-- 最危险的剩余项转为：**P2-07 拿锁前旧快照、P2-08/09 进程树/Agent 创建取消**（P2-05 Claude MDS 由 `a24ca60` 闭环，P2-01 timeout 由 `ff53430` 闭环，P2-02 regenerate 由 `74bda96` 闭环，P2-03 stop/delete 由 `31c5946` 闭环，P2-04 恢复审批由 `6292cdd` 闭环，P2-06 SSE cancel 由 `7520866` 闭环）。
-- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）已由 `ae39e00` 修复。
+- Round 2 后不能再说“P1 全部闭环、所列 P2 均已完成”：P1-01/F1 已由 `61c7218` 闭环；P1-03 仍有 F4 资源清理尾项；P2-03 仍有 F5 并发所有权；P2-04 仍有 F2/F3/F6/R2；P2-06 已闭环。
+- 最危险的剩余项：**P2-07 拿锁前旧快照、P2-04 F2/F3（审批/真实恢复入口）、P2-03 F5（并发 DELETE）**；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。
+- 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
+- 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
