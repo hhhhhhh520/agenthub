@@ -336,7 +336,7 @@ interface MessageContent {
 | LLM API | Vercel AI SDK | 不适用（无状态） | 分析/讨论 |
 
 OpenCode 集成难度与 Claude Code 基本一致，cc-connect 和 multica 都有现成参考代码。
-- 权限自动批准：环境变量 `OPENCODE_PERMISSION={"*":"allow"}`
+- 权限：agent frontmatter `tools` + `permission`；auto 用 `--auto`，default headless 只读（`OPENCODE_PERMISSION` 在 v2.0.27 不生效，2026-10-20 探针；详见 `docs/design/permission-cli-probe-2026-10-20.md`）
 - Prompt 传入：命令行末尾参数
 - 输出格式：JSON 流（text/tool_use/step_finish/error）
 

@@ -152,8 +152,8 @@ model RecentDir {
 2. 新增 RecentDir 表
 3. CreateGroupDialog 添加目录输入和权限模式选择
 4. 创建会话 API 保存这两个字段
-5. ClaudeCodeAdapter 使用 `--permission-mode` 参数
-6. ClaudeCodeAdapter 使用 `projectDir` 作为工作目录（Agent 直接修改原项目文件）
+5. ClaudeCodeAdapter 使用 `--settings` + `--tools` + `--permission-mode default`；OpenCode 用 agent frontmatter `tools`/`permission`
+6. Agent 使用 `projectDir` 作为工作目录（Agent 直接修改原项目文件）
 7. 实现 `/permission` 聊天命令（含 `/` 气泡提示）
 8. 实现最近打开目录的存储和显示
 9. Git diff 变更检测：每批任务执行后检测越界修改

@@ -820,9 +820,10 @@
 ### 18.1 Claude Code 工具限制
 - **操作**：Agent 配置了 tools 列表
 - **预期**：
-  - CLI 启动参数包含 `--allowedTools` 或 `--disallowedTools`
-  - 只有配置的工具可用
-- **验证方式**：dev server 日志
+  - CLI 启动参数包含 `--tools <agent.tools>`；只有配置的工具可用
+  - `--allowedTools` 仅在 auto 模式出现（免审批），default 模式每次调用走 control_request
+  - 启动参数包含 `--settings` + `--setting-sources user`，不再使用 `--bare`
+- **验证方式**：dev server 日志 / `tests/tool-restriction.test.ts`
 
 ### 18.2 创建时工具选择
 - **操作**：创建 Agent 对话框
@@ -831,6 +832,14 @@
   - 9 个工具可选
   - 默认全选
 - **验证方式**：UI
+
+### 18.3 OpenCode 双维度权限
+- **操作**：Agent 配置 tools + 会话 permissionMode
+- **预期**：
+  - agent md frontmatter 写入 `tools` + `permission`
+  - auto 启动参数含 `--auto`，default 不含
+  - default 下写/执行 `ask` 被 CLI 自动拒绝（只读）；auto 下允许但 deny 仍生效
+- **验证方式**：`.opencode/agents/*.md` + `tests/opencode-permissions.test.ts`
 
 ---
 

@@ -1,12 +1,12 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4774de6`（双维度权限 + CLI 探针；本交接文档随后单独提交）
-> 适用对象: 接手 Batch 1 的 AI/开发者  
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」、本文、`docs/design/roadmap-to-excellence.md` v15
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4774de6`（双维度权限 + CLI 探针）；权限文档同步：`96e8ad8`；neat-freak 文档同步：`7f53bef`
+> 适用对象: 接手后续批次的 AI/开发者
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、`docs/design/roadmap-to-excellence.md` v17
 
 ## 1. 当前状态
 
-已完成两个 commit：
+已完成 commit：
 
 | commit | 内容 |
 |---|---|

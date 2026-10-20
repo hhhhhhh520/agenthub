@@ -206,7 +206,7 @@
 
 **设计文档位置**: 第 275-279 行
 
-### ISSUE-TOOL-001: 工具集硬限制 — 🟢已解决 (2026-06-04)
+### ISSUE-TOOL-001: 工具集硬限制 — 🟢已解决 (2026-06-04；2026-10-20 双维度修订)
 
 **设计要求**（第 276 行）：
 > 后端维护工具集预设映射：`"代码读写" → [Read, Write, Edit]`、`"命令执行" → [Bash]` 等
@@ -215,11 +215,11 @@
 - ✅ 数据模型已存在：`Agent.tools` (string[], schema.prisma:39) + `Agent.capabilities` (JSON, schema.prisma:51)
 - ✅ 运行时工具提示注入：`executeSingleAgent` 读取 `agent.tools` 并在 system prompt 中注入 `[可用工具: ...]`（软引导）
 - ✅ Agent 推荐 API 已实现：`/api/sessions/recommend-agents` 根据任务描述匹配 Agent
-- ✅ **Claude Code 硬限制**：`--allowedTools` / `--disallowedTools` CLI 参数传递（`process-registry.ts`）
-- ✅ **OpenCode 硬限制**：临时 `opencode.json` 配置文件 + `OPENCODE_CONFIG` 环境变量注入（`process-registry.ts`）
-- ✅ **工具名映射**：`Write` → `edit`、`Agent` → `task`、`AskUserQuestion` → `question` 等（`TOOL_NAME_MAP`）
+- ✅ **Claude Code 可用性**：`--tools` 精确列出 `agent.tools`（`--allowedTools` 仅 auto 免审批，不是可用性白名单）
+- ✅ **OpenCode 可用性/审批**：agent frontmatter `tools` + `permission`（`OPENCODE_CONFIG` / `OPENCODE_PERMISSION` 在 v2.0.27 实测不生效，已删除）
+- ✅ **工具名映射**：`Write` → `edit`、`Agent` → `task`、`AskUserQuestion` → `question` 等（`opencode-permissions.ts`）
 - ✅ **进程隔离**：tools hash 附加到 registry key，不同工具配置不复用进程
-- ✅ **OPENCODE_PERMISSION 冲突处理**：有工具限制时移除 `{"*":"allow"}`
+- ✅ **双维度修订（2026-10-20）**：可用性与审批分离；证据见 `docs/design/permission-cli-probe-2026-10-20.md`
 - ❌ 无前端 UI 工具选择器：创建 Agent 时无法配置工具集（预设 Agent 已有 tools，用户自建通过 API 传入）
 - ❌ 无 MCP tools 或 function calling 加载逻辑
 
