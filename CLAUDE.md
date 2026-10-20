@@ -307,8 +307,9 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - 同一个 session 的 chat 请求必须串行处理（per-session lock）
 - 原因：并发请求会读到过时的 phaseStep，导致同一 handler 被触发两次
 - 实现：`src/lib/session-lock.ts` → `acquireSessionLock()`，chat route 和 redo API 共用
-- **超时保护**：等待前一个请求超过 60 秒则跳过等待继续执行
-- **abort 监听**：客户端断开时自动 release 锁
+- **超时保护 fail-closed**：等待前一个请求超过 60 秒直接回 429，绝不并发；显式 waiter 队列，超时/取消的等待者从队列移除（防 A→B→C 链式排队时 B 超时导致 C 永久卡死）
+- **abort 语义**：等待者 abort 只移除自己的队列项；持有者 abort 不释放锁——HTTP 断开不代表后台执行结束，锁必须由调用方的 finally 释放
+- **统一释放**：拿锁后的所有提前返回/异常走 `lockHandedOff` + try/finally；一旦把锁交给 SSE stream，只由 `stream.start` 的 finally 释放（无 eventLogger 创建失败路径也要释放）
 - **SSE 全局超时**：60 分钟无响应则强制关闭流；`streamClosed` 标志位防止超时后往已关闭的 controller 写入（避免锁泄漏）
 - **禁止移除 session lock** — 会导致对齐流程并发 bug
 - **新增 session 相关路由必须加锁** — 任何操作任务/消息的 POST 路由都必须 `acquireSessionLock(sessionId)`，否则与 chat route 并发会竞态

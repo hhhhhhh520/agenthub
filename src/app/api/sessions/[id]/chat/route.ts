@@ -3,7 +3,7 @@ import { executeSingleAgent } from '@/lib/orchestrator'
 import { acquireSessionLock } from '@/lib/session-lock'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
-import { createEventLogger } from '@/lib/services/event-log'
+import { createEventLogger, type EventLogger } from '@/lib/services/event-log'
 import type { TaskAttachment } from '@/lib/adapter/types'
 
 export async function POST(
@@ -49,170 +49,192 @@ export async function POST(
     throw err
   }
 
-  // /permission command
-  if (message.trim().startsWith('/permission')) {
-    const args = message.trim().split(/\s+/)
-    const newMode = args[1]
+  // 统一锁释放：拿锁后的所有提前返回/异常都必须先释放；一旦把锁交给 stream，
+  // 后续只由 stream.start 的 finally 释放（客户端 abort 不代表后台执行结束）。
+  let lockHandedOff = false
+  try {
+    // /permission command
+    if (message.trim().startsWith('/permission')) {
+      const args = message.trim().split(/\s+/)
+      const newMode = args[1]
 
-    if (newMode === 'auto' || newMode === 'default') {
-      await prisma.session.update({ where: { id: sessionId }, data: { permissionMode: newMode } })
-      const encoder = new TextEncoder()
-      const stream = new ReadableStream({
-        start(controller) {
-          const content = newMode === 'auto'
-            ? '已切换到自动模式，Agent 操作将自动执行，无需确认。'
-            : '已切换到默认模式，Agent 操作需要用户确认。'
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content })}\n\n`))
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content })}\n\n`))
-          controller.close()
-        },
-      })
-      releaseLock()
-      return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
-    } else {
-      const encoder = new TextEncoder()
-      const stream = new ReadableStream({
-        start(controller) {
-          const content = '用法：/permission auto 或 /permission default\n\n- auto: 自动模式，减少打扰\n- default: 默认模式，需要确认每次操作'
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content })}\n\n`))
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content })}\n\n`))
-          controller.close()
-        },
-      })
-      releaseLock()
-      return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
-    }
-  }
-
-  // Fetch attachments if provided
-  let msgAttachments: TaskAttachment[] = []
-  if (attachmentIds && attachmentIds.length > 0) {
-    msgAttachments = await prisma.attachment.findMany({
-      where: { id: { in: attachmentIds }, sessionId },
-    }) as TaskAttachment[]
-  }
-
-  if (!regenerate) {
-    const userMsg = await prisma.message.create({
-      data: { role: 'user', rawContent: message, sessionId, replyToId },
-    })
-    // Link attachments to the message
-    if (attachmentIds && attachmentIds.length > 0) {
-      await prisma.attachment.updateMany({
-        where: { id: { in: attachmentIds }, sessionId },
-        data: { messageId: userMsg.id },
-      })
-    }
-  }
-
-  const encoder = new TextEncoder()
-  const SSE_TIMEOUT_MS = 60 * 60_000
-  const globalDeadline = Date.now() + 50 * 60 * 1000
-  const stream = new ReadableStream({
-    async start(controller) {
-      let streamClosed = false
-
-      // roadmap §3.1: 四类过程事件持久化 + 帧 seq 化（eventLogger.stream 即推流）。
-      // 持久化与推流解耦：streamClosed 后仍落库、只是不推流——刷新后按 seq 补发的前提。
-      const eventLogger = await createEventLogger(sessionId, {
-        stream: (event) => {
-          if (streamClosed) return
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
-        },
-      })
-      const sendEvent = eventLogger.sendEvent
-
-      const sseTimeout = setTimeout(() => {
-        streamClosed = true
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（60分钟），请重试' })}\n\n`))
-        } catch {}
-        controller.close()
-      }, SSE_TIMEOUT_MS)
-
-      try {
-        const existingMembers = await prisma.sessionMember.findMany({
-          where: { sessionId },
-          include: { agent: true },
+      if (newMode === 'auto' || newMode === 'default') {
+        await prisma.session.update({ where: { id: sessionId }, data: { permissionMode: newMode } })
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            const content = newMode === 'auto'
+              ? '已切换到自动模式，Agent 操作将自动执行，无需确认。'
+              : '已切换到默认模式，Agent 操作需要用户确认。'
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content })}\n\n`))
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content })}\n\n`))
+            controller.close()
+          },
         })
-        const existingAgents = existingMembers.filter(m => !m.agent.isOrchestrator).map(m => m.agent)
-
-        if (regenerate) {
-          const original = await prisma.message.findUnique({ where: { id: regenerate }, include: { attachments: true } })
-          if (!original || original.sessionId !== sessionId) {
-            sendEvent({ agentId: 'orchestrator', type: 'error', content: '原消息不存在' })
-          } else {
-            const agent = original.agentId ? existingAgents.find(a => a.name === original.agentId) : null
-            const agentName = agent?.name || 'orchestrator'
-            sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
-
-            const { result } = await executeSingleAgent(
-              { id: agent?.id, name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'claude-code', model: agent?.model || undefined, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
-              original.rawContent,
-              '',
-              (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
-              undefined,
-              undefined,
-              original.attachments as TaskAttachment[]
-            )
-
-            await prisma.message.update({ where: { id: regenerate }, data: { rawContent: result } })
-            sendEvent({ agentId: agentName, type: 'done', content: result, messageId: regenerate })
-          }
-        } else if (mentionAll && existingAgents.length > 0) {
-          await handleMentionAllDiscussion(message, sessionId, existingAgents, sendEvent, workDir)
-        } else if (targetAgent) {
-          const agent = existingAgents.find(a => a.name === targetAgent)
-          if (!agent) {
-            sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
-          } else {
-            await handleDirectAgentChat(agent, message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
-          }
-        } else if (session.type === 'private' && existingAgents.length > 0) {
-          try {
-            await handleDirectAgentChat(existingAgents[0], message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
-          } catch (err) {
-            sendEvent({ agentId: existingAgents[0].name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
-          }
-        } else {
-          const isCreateIntent = isCreateAgentIntent(message)
-
-          if (isCreateIntent) {
-            await handleCreateAgent(message, sessionId, sendEvent)
-          } else {
-            await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, { phase: session.phase, phaseStep: session.phaseStep, decisionTrace: session.decisionTrace }, msgAttachments, workDir, permissionMode, globalDeadline)
-          }
-        }
-      } catch (error) {
-        console.error('[Chat API] Error:', error)
-        const errMsg = error instanceof Error ? error.message : String(error)
-        // 对用户友好的提示，隐藏技术细节
-        if (errMsg.includes('400') || errMsg.includes('Param')) {
-          sendEvent({ agentId: 'orchestrator', type: 'error', content: 'AI 服务暂时不可用，请检查 API 配置后重试' })
-        } else if (errMsg.includes('timeout') || errMsg.includes('超时')) {
-          sendEvent({ agentId: 'orchestrator', type: 'error', content: '请求超时，请稍后重试' })
-        } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch')) {
-          sendEvent({ agentId: 'orchestrator', type: 'error', content: '无法连接到 AI 服务，请检查网络连接' })
-        } else {
-          sendEvent({ agentId: 'orchestrator', type: 'error', content: '处理消息时出错，请稍后重试' })
-        }
-      } finally {
-        clearTimeout(sseTimeout)
-        // §3.1: 流关闭前排空持久化写队列，保证断线补发不缺尾部
-        await eventLogger.flush()
-        // 60min 超时路径已 close 过——二次 close 抛 TypeError 会跳过锁释放（审查发现）
-        try { controller.close() } catch { /* 已关闭 */ }
-        // 超时场景下后台操作可能仍在运行，用setTimeout确保锁不被阻塞
-        setTimeout(() => releaseLock(), 0)
+        // 本分支没有后台工作，直接返回；外层 finally 负责释放锁。
+        return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
+      } else {
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+          start(controller) {
+            const content = '用法：/permission auto 或 /permission default\n\n- auto: 自动模式，减少打扰\n- default: 默认模式，需要确认每次操作'
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'text', content })}\n\n`))
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'done', content })}\n\n`))
+            controller.close()
+          },
+        })
+        return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' } })
       }
-    },
-  })
+    }
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-    },
-  })
+    // Fetch attachments if provided
+    let msgAttachments: TaskAttachment[] = []
+    if (attachmentIds && attachmentIds.length > 0) {
+      msgAttachments = await prisma.attachment.findMany({
+        where: { id: { in: attachmentIds }, sessionId },
+      }) as TaskAttachment[]
+    }
+
+    if (!regenerate) {
+      const userMsg = await prisma.message.create({
+        data: { role: 'user', rawContent: message, sessionId, replyToId },
+      })
+      // Link attachments to the message
+      if (attachmentIds && attachmentIds.length > 0) {
+        await prisma.attachment.updateMany({
+          where: { id: { in: attachmentIds }, sessionId },
+          data: { messageId: userMsg.id },
+        })
+      }
+    }
+
+    const encoder = new TextEncoder()
+    const SSE_TIMEOUT_MS = 60 * 60_000
+    const globalDeadline = Date.now() + 50 * 60 * 1000
+    const stream = new ReadableStream({
+      async start(controller) {
+        let streamClosed = false
+        let eventLogger: EventLogger | undefined
+        let sseTimeout: ReturnType<typeof setTimeout> | undefined
+
+        try {
+          // roadmap §3.1: 四类过程事件持久化 + 帧 seq 化（eventLogger.stream 即推流）。
+          // 持久化与推流解耦：streamClosed 后仍落库、只是不推流——刷新后按 seq 补发的前提。
+          eventLogger = await createEventLogger(sessionId, {
+            stream: (event) => {
+              if (streamClosed) return
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
+            },
+          })
+          const sendEvent = eventLogger.sendEvent
+
+          sseTimeout = setTimeout(() => {
+            streamClosed = true
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: '请求超时（60分钟），请重试' })}\n\n`))
+            } catch {}
+            try { controller.close() } catch {}
+          }, SSE_TIMEOUT_MS)
+
+          const existingMembers = await prisma.sessionMember.findMany({
+            where: { sessionId },
+            include: { agent: true },
+          })
+          const existingAgents = existingMembers.filter(m => !m.agent.isOrchestrator).map(m => m.agent)
+
+          if (regenerate) {
+            const original = await prisma.message.findUnique({ where: { id: regenerate }, include: { attachments: true } })
+            if (!original || original.sessionId !== sessionId) {
+              sendEvent({ agentId: 'orchestrator', type: 'error', content: '原消息不存在' })
+            } else {
+              const agent = original.agentId ? existingAgents.find(a => a.name === original.agentId) : null
+              const agentName = agent?.name || 'orchestrator'
+              sendEvent({ agentId: agentName, type: 'status', content: '重新生成中...' })
+
+              const { result } = await executeSingleAgent(
+                { id: agent?.id, name: agentName, systemPrompt: agent?.systemPrompt || '', platform: agent?.platform || 'claude-code', model: agent?.model || undefined, baseUrl: agent?.baseUrl, apiKey: agent?.apiKey, workDir, permissionMode },
+                original.rawContent,
+                '',
+                (agentId, chunk) => sendEvent({ agentId, type: chunk.type, content: chunk.content, data: chunk.data }),
+                undefined,
+                undefined,
+                original.attachments as TaskAttachment[]
+              )
+
+              await prisma.message.update({ where: { id: regenerate }, data: { rawContent: result } })
+              sendEvent({ agentId: agentName, type: 'done', content: result, messageId: regenerate })
+            }
+          } else if (mentionAll && existingAgents.length > 0) {
+            await handleMentionAllDiscussion(message, sessionId, existingAgents, sendEvent, workDir)
+          } else if (targetAgent) {
+            const agent = existingAgents.find(a => a.name === targetAgent)
+            if (!agent) {
+              sendEvent({ agentId: 'orchestrator', type: 'error', content: `未找到名为 ${targetAgent} 的 Agent` })
+            } else {
+              await handleDirectAgentChat(agent, message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
+            }
+          } else if (session.type === 'private' && existingAgents.length > 0) {
+            try {
+              await handleDirectAgentChat(existingAgents[0], message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
+            } catch (err) {
+              sendEvent({ agentId: existingAgents[0].name, type: 'error', content: `执行失败: ${err instanceof Error ? err.message : String(err)}` })
+            }
+          } else {
+            const isCreateIntent = isCreateAgentIntent(message)
+
+            if (isCreateIntent) {
+              await handleCreateAgent(message, sessionId, sendEvent)
+            } else {
+              await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, { phase: session.phase, phaseStep: session.phaseStep, decisionTrace: session.decisionTrace }, msgAttachments, workDir, permissionMode, globalDeadline)
+            }
+          }
+        } catch (error) {
+          console.error('[Chat API] Error:', error)
+          const errMsg = error instanceof Error ? error.message : String(error)
+          // 对用户友好的提示，隐藏技术细节
+          let friendlyMsg = '处理消息时出错，请稍后重试'
+          if (errMsg.includes('400') || errMsg.includes('Param')) {
+            friendlyMsg = 'AI 服务暂时不可用，请检查 API 配置后重试'
+          } else if (errMsg.includes('timeout') || errMsg.includes('超时')) {
+            friendlyMsg = '请求超时，请稍后重试'
+          } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch')) {
+            friendlyMsg = '无法连接到 AI 服务，请检查网络连接'
+          }
+          if (eventLogger) {
+            eventLogger.sendEvent({ agentId: 'orchestrator', type: 'error', content: friendlyMsg })
+          } else {
+            // eventLogger 创建失败时仍要尽量给客户端一个帧；失败则只关闭流。
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ agentId: 'orchestrator', type: 'error', content: friendlyMsg })}\n\n`))
+            } catch {}
+          }
+        } finally {
+          if (sseTimeout) clearTimeout(sseTimeout)
+          // §3.1: 流关闭前排空持久化写队列，保证断线补发不缺尾部。
+          // flush 失败/异常不能跳过锁释放（锁泄漏会让该会话后续请求永久 429）。
+          try {
+            if (eventLogger) await eventLogger.flush()
+          } catch (err) {
+            console.warn('[Chat API] eventLogger.flush failed:', err instanceof Error ? err.message : err)
+          }
+          // 60min 超时路径已 close 过——二次 close 抛 TypeError 会跳过锁释放（审查发现）
+          try { controller.close() } catch { /* 已关闭 */ }
+          releaseLock()
+        }
+      },
+    })
+
+    const response = new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    })
+    // 从这里开始锁归 stream 的 finally 所有；外层 finally 不再释放。
+    lockHandedOff = true
+    return response
+  } finally {
+    if (!lockHandedOff) releaseLock()
+  }
 }

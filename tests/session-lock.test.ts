@@ -1,13 +1,16 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 
 // Reset the module between tests to get a fresh lock Map
 let acquireSessionLock: typeof import('@/lib/session-lock').acquireSessionLock
 
 beforeEach(async () => {
+  const { vi } = await import('vitest')
   vi.resetModules()
   const mod = await import('@/lib/session-lock')
   acquireSessionLock = mod.acquireSessionLock
 })
+
+const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 describe('SessionLock — acquireSessionLock', () => {
   it('returns a release function', async () => {
@@ -44,7 +47,7 @@ describe('SessionLock — acquireSessionLock', () => {
     })
 
     // Small delay then release first
-    await new Promise(r => setTimeout(r, 50))
+    await wait(50)
     order.push(1)
     release1()
 
@@ -57,7 +60,6 @@ describe('SessionLock — acquireSessionLock', () => {
     await acquireSessionLock('timeout-test')
 
     // Second lock must reject instead of proceeding concurrently (phase-write race root cause).
-    // timeoutMs 缩到 50ms：只测"超时抛错"分支语义，不等生产 60s。
     await expect(acquireSessionLock('timeout-test', undefined, { timeoutMs: 50 })).rejects.toMatchObject({
       name: 'SessionBusyError',
       code: 'SESSION_BUSY',
@@ -78,44 +80,85 @@ describe('SessionLock — acquireSessionLock', () => {
     releaseNext()
   })
 
-  it('keeps serializing after a timed-out waiter (order preserved)', async () => {
-    const order: number[] = []
-    const releaseHolder = await acquireSessionLock('order-after-timeout')
+  // 复核指出的关键回归：A 持锁，B/C 同时排队，B 先超时，A 释放后 C 必须拿到锁。
+  // 旧链式实现里 C 等的是 B 的死 promise，会继续超时；本测试在旧实现上必红。
+  it('A holds, B/C queue, B times out, A releases => C acquires (no queue chain break)', async () => {
+    const sid = 'queue-chain-break'
+    const releaseA = await acquireSessionLock(sid)
+    const order: string[] = []
 
-    // B 等锁超时抛错（不等 60s）
+    const pB = acquireSessionLock(sid, undefined, { timeoutMs: 30 })
+      .then(releaseB => { order.push('B'); releaseB() })
+      .catch(err => { order.push(`B:${err.code || err.name}`) })
+
+    const pC = acquireSessionLock(sid, undefined, { timeoutMs: 800 })
+      .then(releaseC => { order.push('C'); releaseC() })
+      .catch(err => { order.push(`C:${err.code || err.name}`) })
+
+    await wait(60)
+    expect(order).toEqual(['B:SESSION_BUSY'])
+    releaseA()
+    await Promise.all([pB, pC])
+
+    expect(order).toEqual(['B:SESSION_BUSY', 'C'])
+  })
+
+  it('aborted waiter is removed; later waiter still gets the lock', async () => {
+    const sid = 'abort-waiter'
+    const releaseA = await acquireSessionLock(sid)
+    const controller = new AbortController()
+    const order: string[] = []
+
+    const pB = acquireSessionLock(sid, controller.signal)
+      .then(releaseB => { order.push('B'); releaseB() })
+      .catch(err => { order.push(`B:${err.name}`) })
+    const pC = acquireSessionLock(sid, undefined, { timeoutMs: 500 })
+      .then(releaseC => { order.push('C'); releaseC() })
+      .catch(err => { order.push(`C:${err.name}`) })
+
+    controller.abort()
+    await wait(20)
+    releaseA()
+    await Promise.all([pB, pC])
+
+    expect(order[0]).toBe('B:AbortError')
+    expect(order).toContain('C')
+  })
+
+  // 新语义：持有者 abort 只代表客户端断开，后台执行可能还在跑，不能释放锁。
+  it('holder abort does not release the lock; caller must release in finally', async () => {
+    const sid = 'abort-holder'
+    const controller = new AbortController()
+    const releaseA = await acquireSessionLock(sid, controller.signal)
+
+    controller.abort()
     await expect(
-      acquireSessionLock('order-after-timeout', undefined, { timeoutMs: 30 }),
+      acquireSessionLock(sid, undefined, { timeoutMs: 30 }),
     ).rejects.toMatchObject({ code: 'SESSION_BUSY' })
 
-    // C 在持有者释放后仍能正常串行拿到锁
-    const pC = acquireSessionLock('order-after-timeout').then((releaseC) => {
-      order.push(2)
-      releaseC()
-    })
-    await new Promise((r) => setTimeout(r, 20))
-    order.push(1)
-    releaseHolder()
-    await pC
-    expect(order).toEqual([1, 2])
+    releaseA()
+    const releaseB = await acquireSessionLock(sid)
+    expect(typeof releaseB).toBe('function')
+    releaseB()
   })
 
-  it('releases lock when abort signal fires', async () => {
-    const controller = new AbortController()
-    const release1 = await acquireSessionLock('abort-test', controller.signal)
+  it('calling release multiple times does not throw and does not double-handoff', async () => {
+    const sid = 'idempotent-test'
+    const release = await acquireSessionLock(sid)
+    const order: string[] = []
 
-    // Abort should release the lock
-    controller.abort()
+    const pB = acquireSessionLock(sid, undefined, { timeoutMs: 500 })
+      .then(releaseB => { order.push('B'); releaseB() })
+      .catch(err => { order.push(`B:${err.name}`) })
+    const pC = acquireSessionLock(sid, undefined, { timeoutMs: 500 })
+      .then(releaseC => { order.push('C'); releaseC() })
+      .catch(err => { order.push(`C:${err.name}`) })
 
-    // Second acquire should succeed since first was aborted
-    const release2 = await acquireSessionLock('abort-test')
-    expect(typeof release2).toBe('function')
-    release2()
-  })
-
-  it('calling release multiple times does not throw', async () => {
-    const release = await acquireSessionLock('idempotent-test')
     release()
-    expect(() => release()).not.toThrow()
+    release() // 二次释放不得把 C 提前放进来
+    await Promise.all([pB, pC])
+
+    expect(order).toEqual(['B', 'C'])
   })
 
   it('cleans up lock entry after release', async () => {
