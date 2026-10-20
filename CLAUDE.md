@@ -98,8 +98,13 @@ prisma/
 
 - `--system-prompt` 被 CLI 默认系统提示覆盖，需合并到 prompt 中
 - Windows 上必须用 `shell: true` + stdin 传递 prompt
-- 使用 `--bare` 跳过 hooks/plugins
+- **禁止 `--bare`**：v2.1.270 实测只暴露 Bash/Edit/Read 且忽略 `--tools`；改用
+  `CLAUDE_CONFIG_DIR` + `--settings` 隔离/投递 provider，`--setting-sources user` +
+  `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 隔离 workDir 设置与 CLAUDE.md
 - **禁止使用 `--dangerously-skip-permissions`** — 会导致 CLI 卡住
+- **权限参数**：CLI 始终 `--permission-mode default` + `--permission-prompt-tool stdio`；
+  可用性用 `--tools <agent.tools>`（空 = `default`）；auto 额外传 `--allowedTools` 并由
+  ProcessRegistry 自动 allow。**不要传 `--permission-mode auto`**（`-p` 下不发 control_request）
 - **中文编码**：stdin.write 必须使用 `Buffer.from(text, 'utf-8')`，否则 Windows 下中文变乱码
 - **heredoc 含大量双引号内容会解析失败**：shell:true 包装层下 `cat > file <<EOF` 写含大量 `"` 的内容（如技术文档/代码）触发解析错误，Agent 会误判为环境问题反复调试。产物类内容优先引导 Agent 用 Edit 工具写入，不要用 heredoc
 - **进程清理**：使用 `taskkill /pid <PID> /T /F` 杀掉整个进程树，避免残留
@@ -121,9 +126,11 @@ prisma/
 
 ### 适配器层
 
-- `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + bare 模式，支持 `--resume` 恢复会话）
+- `platform: 'claude-code'` → ClaudeCodeAdapter（stdin + 受管配置目录，支持 `--resume` 恢复会话）
   - 120 秒无输出超时（`noOutputTimer`），超时自动 killProcessTree
-  - **权限交互**：`--permission-prompt-tool stdio`，CLI 通过 `control_request`/`control_response` 协议与前端交互。`default` 模式下发 `control_request`，前端显示确认横幅；`auto` 模式不发请求
+  - **权限交互**：CLI 始终 `default` 模式 + `--permission-prompt-tool stdio`；`default` 模式
+    `control_request` 转前端确认；`auto` 模式由 ProcessRegistry 直接写 allow（不发前端）。
+    可用性由 `--tools` 控制，`--allowedTools` 只是 auto 的免审批列表
   - **权限路由**：`respondPermissionByRequestId(requestId, result)` 通过 `requestIdToKey` 反向索引 O(1) 查找进程，解决 permission route 无法构造 `effectiveKey`（含 toolsHash）的问题。失败返回 404
   - **并发权限**：`pendingPermissions: Map<string, PendingPermission>` 按 requestId 存储，支持多个 Agent 同时请求权限；`requestIdToKey: Map<string, string>` 反向索引；前端 `pendingPermissions[]` 数组，横幅支持多个同时显示
   - **进程状态**：ProcessEntry 有 `state: 'idle' | 'working'`，send() 时设 working，完成后设 idle，cleanupIdle 只杀 idle 且超时的进程，不会误杀长任务
@@ -136,8 +143,10 @@ prisma/
   - **System Prompt 注入**：写入 `.opencode/agents/agenthub-{agentId}.md`，通过 `--agent` 参数选择
   - **MCP 配置注入**：通过 `XDG_CONFIG_HOME` 环境变量注入独立配置目录，每个 Agent 独立配置避免并发冲突
   - **附件支持**：通过 `--file` 参数传递附件路径（图片和非图片都走 `--file`）
-  - **工具限制**：配置文件 `tools` 字段映射（Read→read, Write→write 等），`OPENCODE_PERMISSION` 作为 fallback（无限制时全部放行）
-  - **权限模式**：`--dangerously-skip-permissions` 标志（auto 模式）
+  - **工具/权限双维度**：写入 agent frontmatter `tools`（可用性）与 `permission`（ask/allow/deny）；
+    `OPENCODE_CONFIG` / `OPENCODE_PERMISSION` 在 v2.0.27 实测不生效，已删除
+  - **权限模式**：`--auto`（auto；自动批准 ask、仍尊重 deny）；default 不传。headless 下
+    `ask` 会被 CLI 自动拒绝，因此 OpenCode default = 只读（写/执行需切 auto）
   - **工作目录**：三重锚定（`--dir` + `cmd.Dir` + `PWD` 环境变量），确保正确发现 `.opencode/` 目录
   - **环境变量**：`ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`（非 OPENAI_*）
   - **模型名格式**：`provider/model`（如 `mimo/mimo-v2.5-pro`），通过 `opencode models` 命令动态发现
@@ -233,13 +242,18 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **创建会话必须透传 projectDir**（前端 `create` 第 4 参；实测「私聊」曾漏传 → 私聊 agent workDir 回落 process.cwd() 仓库根，误报仓库根文件，commit 0adb713）
 - 最近打开的目录存储在 `RecentDir` 表，API：`/api/recent-dirs`
 - 聊天命令 `/permission auto` 或 `/permission default` 切换权限模式
-- ClaudeCodeAdapter 支持 `--permission-mode` + `--permission-prompt-tool stdio` 参数
+- **双维度**：`agent.tools` = 可用性（Claude `--tools` / OpenCode frontmatter `tools`）；
+  `permissionMode` = 审批（Claude `default` + ProcessRegistry auto / OpenCode frontmatter
+  `permission` + `--auto`）。不要把 `--allowedTools` 当可用性白名单
+- ClaudeCodeAdapter 传 `--settings`（provider）+ `--setting-sources user` +
+  `--permission-mode default` + `--permission-prompt-tool stdio`；`--tools` 控制可用性
 - **default 模式权限流程**：CLI `control_request` → SSE `permission_request` → 前端横幅 → POST `/api/sessions/{id}/permission` → CLI `control_response`
+- **OpenCode default 只读**：headless `ask` 被 CLI 自动拒绝；写/执行需切 auto（UI 已提示）
 - **禁止修改 ProcessRegistry key 格式** — chat route 和 permission route 必须用相同的 `${sessionId}:${agentId}:${workDir}`
 - **ProcessRegistry 内部禁止直接调 `killEntry(key)`** — 内部已持有 entry 的路径必须用私有 `killEntryIfCurrent(key, expectedEntry)`,它会校验 `registry.get(key) === expectedEntry`。公开 `killEntry(key)` 仅作外部兼容入口。违反会让旧进程的 exit handler 误删同 key 新 entry(僵尸进程泄漏)
 - **杀进程必须走 adapter 套路,不准自拼 key/config** — orchestrator 调 `gracefulKillEntry` 时必须用 `adapter.getRegistryKey()` + `adapter.getSpawnConfig()` 拿权威值,**不准**自己 `buildRegistryKey` 或自拼 partial config。原因:`toEffectiveKey` 含 `configHash`(apiKey/baseUrl/model/permissionMode/mcpConfig 等指纹),partial config 算出来的 effectiveKey 跟 spawn 时不一致,`registry.get` 返回 undefined,函数静默 no-op,超时杀进程失效。adapter 接口契约见 `src/lib/adapter/types.ts`,两个 adapter 在 `send()` 真正 spawn 后才缓存 `lastSpawnConfig`(send 前调 `getSpawnConfig()` 返回 null)
 - **同 effectiveKey 并发 send 必须经 `acquireLock`/`releaseLock`** — ProcessRegistry 的 entry 互斥锁用 FIFO baton-passing(`entry.busy` + `entry.busyWaiters`),保护 stdin.write + readRound 临界区。绕过会让两路 send 的 stdin/stdout 交错 → Claude CLI 收到乱码 JSON。release 必须在 `finally`,同步 throw 路径也要释放。retry iteration 独立 acquire/release,不跨 retry
-- **`toEffectiveKey` 的指纹字段不能漏** — 改 apiKey/model/baseUrl/mcpConfig/permissionMode/command/args/format/disallowedTools 必须触发新进程(进 `buildConfigHash`),否则旧 entry 用老配置继续跑(review #13:配置改了 10 分钟不生效)。`env`/`sessionId`/`workDir`/`allowedTools` 不进 config hash(env 开放容器可能含动态值,进指纹会破坏进程复用)
+- **`toEffectiveKey` 的指纹字段不能漏** — 改 apiKey/model/baseUrl/mcpConfig/permissionMode/command/args/format/disallowedTools/settingsPath 必须触发新进程(进 `buildConfigHash`),否则旧 entry 用老配置继续跑(review #13:配置改了 10 分钟不生效)。`env`/`sessionId`/`workDir`/`allowedTools` 不进 config hash(env 开放容器可能含动态值,进指纹会破坏进程复用)
 - **executeTaskBatch 的 agents 数组必须包含 `id` 字段** — 缺少 `id` 会导致所有 Agent 的 registry key 变成 `sessionId:default:workDir`,共享同一个 CLI 进程,并行执行时输出完全相同
 - 详见 `docs/design/workspace-and-permissions.md`
 
@@ -341,7 +355,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
 - **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v10):阶段一/阶段二收口记录、拍板记录、CI 门禁口径、P11 monitor A/B harness
 - **写入点清单**:`docs/design/phase2-3.2-write-points.md` — §3.2 全部状态写点的条件写语义、竞态窗口分析、"不纳入"清单（新增写点前必读）
-- **工作区与权限**:`docs/design/workspace-and-permissions.md`
+- **工作区与权限**:`docs/design/workspace-and-permissions.md`（CLI 实测证据：`docs/design/permission-cli-probe-2026-10-20.md`）
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
 - **受控实验 spec 系列(P5/P6/P9)**:`docs/superpowers/specs/`(A方向状态机/2×2矩阵/三臂×强弱模型),harness 在 `experiments/p5/`,报告在 `experiments/p5/results/`
 - 参考资料:`docs/reference/anthropic-scaling-managed-agents.md`、`docs/reference/multi-agent-reference.md`

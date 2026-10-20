@@ -3,12 +3,13 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v16：CI 门禁、架构守卫、SSE 重放、锁队列/取消链路、批次审计三态；阶段一/阶段二已收口）
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v17：CI 门禁、架构守卫、SSE 重放、锁队列/取消、批次审计、双维度权限；阶段一/阶段二已收口）
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
 - [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
 - [对齐流程](design/alignment-flow-plan.md) — Orchestrator 智能编排对齐流程
 - [cc-connect Agent 参考](design/cc-connect-agent-reference.md) — cc-connect 架构借鉴
+- [权限模型 CLI 探针](design/permission-cli-probe-2026-10-20.md) — Claude 2.1.270 / OpenCode 2.0.27 双维度权限实测
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 锁队列/取消链路已完成，下一批执行恢复边界与审计三态
 
 ## 参考资料

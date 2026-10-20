@@ -1,6 +1,6 @@
 # 工作区与权限模式设计
 
-> 创建时间: 2026-05-22 | 最后更新: 2026-05-29 | 状态: 已完成
+> 创建时间: 2026-05-22 | 最后更新: 2026-10-20 | 状态: 已完成（双维度权限，2026-10-20 修订）
 
 ---
 
@@ -35,8 +35,14 @@ model RecentDir {
 ### 已确定
 
 - **两种模式**：
-  - `default` — 需要用户确认每次操作
+  - `default` — 需要用户确认每次操作（OpenCode headless 无法确认，见下）
   - `auto` — 自动处理，减少打扰
+- **双维度**（2026-10-20 修订）：
+  - **可用工具**：Agent.tools → Claude `--tools` / OpenCode agent frontmatter `tools`；
+    未列出的工具不可用（不是“允许但会提示”）。
+  - **审批**：Session.permissionMode → Claude `--permission-mode default` + ProcessRegistry
+    的 auto 分支 / OpenCode agent frontmatter `permission` + `--auto`。
+  - 不要把 `--allowedTools` 当可用性白名单：Claude 里它只表示“免审批”；真正可用性用 `--tools`。
 - **默认值**：`default`
 - **选择时机**：创建群聊时让用户选择
 - **允许修改**：创建后可以修改
@@ -45,11 +51,37 @@ model RecentDir {
 - **UX 优化**：输入 `/` 后显示可用命令气泡列表，降低记忆负担
 - **命令列表**：仅 `/permission` 一个命令（其他功能用 UI 按钮实现）
 
-### Claude Code CLI 参数
+### Claude Code CLI 参数（v2.1.270 实测，2026-10-20）
 
 ```bash
-claude --permission-mode <mode> --permission-prompt-tool stdio --output-format stream-json --verbose --bare
+claude -p --output-format stream-json --input-format stream-json --verbose \
+  --permission-prompt-tool stdio \
+  --settings <managed>/settings.json \
+  --setting-sources user \
+  --permission-mode default \
+  --tools <agent.tools 或 "default">
 ```
+
+- **不再使用 `--bare`**：实测 `--bare` 只暴露 `Bash/Edit/Read`，且忽略 `--tools`；
+- `CLAUDE_CONFIG_DIR` 负责隔离 transcript/插件 + `--settings` 投递 provider 配置；
+- `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` 关闭 workDir 的 CLAUDE.md 自动发现；
+- `auto` 模式额外传 `--allowedTools <agent.tools>`，ProcessRegistry 对剩余
+  control_request 统一 allow；`default` 模式不传 `--allowedTools`，每次工具调用走前端确认；
+- `--permission-mode auto` 在 `-p` + stdio 下**不发 control_request**（实测 AbortError），
+  CLI 始终使用 `default`。
+
+### OpenCode 权限（v2.0.27 实测，2026-10-20）
+
+- `OPENCODE_CONFIG` / `OPENCODE_PERMISSION` **不生效**，已删除；
+- 权限写入 `.opencode/agents/agenthub-*.md` frontmatter：
+  - `tools`：可用性（true/false）
+  - `permission`：`ask | allow | deny`（`bash` 映射为 OpenCode `shell` 规则）
+  - `read` 用对象规则保留 `.env` ask（`*` allow 不会覆盖敏感文件默认审批）
+- `auto` 模式传 `--auto`（自动批准 ask、仍尊重 deny）；`default` 不传；
+- **headless `opencode run` 没有 TTY 确认协议**：`ask` 会被自动拒绝。因此 OpenCode
+  的 `default` 实际是只读（read/glob/grep/list/todowrite allow，写/执行/联网 ask）；
+  需要写操作请切 `auto`。UI 已提示该限制。
+- `Bash` 同时授予 OpenCode `bash` 与 `execute`，避免 v2 provider 只暴露 execute 时能力丢失。
 
 ### 权限交互协议（default 模式）
 
@@ -82,8 +114,9 @@ claude --permission-mode <mode> --permission-prompt-tool stdio --output-format s
 ```
 
 **关键约束**：
-- `auto` 模式下 CLI 不发 `control_request`，权限横幅不会出现
-- LLM/OpenCode Adapter 不走 ProcessRegistry，不受影响
+- Claude CLI 始终以 `default` 模式启动；`auto` 模式下 ProcessRegistry 收到 `control_request`
+  后直接写 allow（权限横幅不出现），`default` 模式转发前端
+- OpenCode 不走 Claude 的 control_request 协议；权限由 agent frontmatter + `--auto` 控制
 - ProcessRegistry key 格式：`${sessionId}:${agentId}:${workDir}`，permission API 必须用相同格式
 
 ---
