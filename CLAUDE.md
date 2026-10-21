@@ -120,7 +120,7 @@ prisma/
 - **shell:true 命令注入**：适配器使用 `shell: true`（Windows CLI 是 npm .cmd shim，`shell:false` 无法启动）；spawn 前经 `arg-safety.ts` 的 `assertSpawnSafe` fail-closed 校验（拒绝 cmd 元字符与空白），**新增适配器参数不得引入这些字符**——agent 名含空格/中文时必须先过 `sanitizeOpencodeAgentId`（opencode-adapter.ts，实测「UI 设计师」曾触发拒启）；shadow-git 走 `execFileSync` 参数数组，**禁止 execSync 模板串拼 shell**（含 `"` 的 projectDir 曾构成注入）
 - **本地运行边界**：`npm run dev` 绑定 `127.0.0.1`（拍板不加锁，只在本机运行），访问用 `http://localhost:3000`——直连 `127.0.0.1:3000` 会触发 Next16 跨源拦截
 - **accept 路由 baseDir**：`target === 'project'` 时 baseDir 为 `process.cwd()`，客户端可覆盖源码，应改用 `session.projectDir`
-- **所有 API 无认证**：31 个端点无任何认证/授权检查，公开部署前必须添加（2026-09-20 拍板：维持缓期，前提只在本机运行——技术保障见 docs/design/roadmap-to-excellence.md §2.2 第 3 项）
+- **所有 API 无认证**：33 个端点无任何认证/授权检查，公开部署前必须添加（2026-09-20 拍板：维持缓期，前提只在本机运行——技术保障见 docs/design/roadmap-to-excellence.md §2.2 第 3 项）
 - **中文乱码检测**：`POST /api/sessions` 检测 `hasLoneSurrogates(title)` 拒绝 GBK 误编 UTF-8 的请求，返回 400
 - **附件上传安全**：10MB 文件大小限制 + mimeType 白名单 + UUID 文件名防路径遍历 + 路径遍历防护（resolved path 必须在 uploads/ 内）
 
@@ -354,7 +354,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
 - **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
 - **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v57):阶段一/阶段二收口、CI 门禁、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、SSE body cancel 安全、嵌套 `.env` 敏感分类、拿锁后会话快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批、`.ENV` 大小写、问句不算批准、恢复写入前取消复查、Q&A 批准保存、managed 资源最终清理、超时优先、Windows 进程树确认、取消安全 Agent 创建、私聊只读提示、清扫 owner 护栏、事件 seq/SSE 轮询、未确认进程树状态保留、超时先结算、终态 managed 清理、本进程 retry owner 保护、per-session 共享写链、permission 归属校验、in-flight 终止、容量保护、owner 发布宽限期、files 固定根 junction、SVG 安全下载、临时配置清理、transitionPhase 返回值检查、permissionMode/replyToId/redo/private agentIds/附件/Pin 校验、会话切换复位/权限入口/Dialog 可达性/MCP DATABASE_URL 与 P11 harness
-- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — 当前未闭环清单（P1/P2 全闭环；P3 已闭环 20 项；剩旧 P3 8 项，#3 已接受风险）、复现材料、验收顺序（接手先读）
+- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — P3 可执行项已全部闭环，仅 #3（API 无认证）为已接受风险；含复现材料与验收顺序（接手先读）
 - **写入点清单**:`docs/design/phase2-3.2-write-points.md` — §3.2 全部状态写点的条件写语义、竞态窗口分析、"不纳入"清单（新增写点前必读）
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`（CLI 实测证据：`docs/design/permission-cli-probe-2026-10-20.md`）
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分

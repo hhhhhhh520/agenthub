@@ -12,6 +12,17 @@ export GLM_API_KEY=...   # 实验 LLM key（env 名沿用 GLM_API_KEY 历史命�
 npx vitest run --config experiments/p5/vitest.config.ts
 ```
 
+### 直接运行 / 复现配置
+
+- `GLM_MODEL`：覆盖默认 `deepseek-v4-flash`（报告回显实际值）。
+- `GLM_BASE_URL`：覆盖默认 `https://opencode.ai/zen/go`；key 必须与端点匹配。
+- `P5_DB_PATH`：实验 SQLite 路径，默认 `experiments/p5/p5.db`；可传路径或 `file:` URL。
+- `P5_WORK_DIR`：单次 run 工作目录，默认 `experiments/p5/work`。
+- `P5_RESULTS_DIR`：metrics/report 输出目录，默认 `experiments/p5/results`；harness 单测使用系统临时目录，不写这里。
+- `MONITOR_AB=1`：只跑 P11 monitor A/B 批（与 legacy pilot 互斥）。
+
+所有默认路径从仓库内 `experiments/p5` 派生，不再写死盘符。
+
 ## P11 monitor A/B 跑批（与 legacy 批互斥）
 
 ```bash

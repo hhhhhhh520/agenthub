@@ -1,5 +1,6 @@
 # P3 剩余 7 项一次性修复交接（2026-10-21）
 
+> **状态：已完成（2026-10-21）**。完成记录见 `docs/design/handoff-2026-10-21-p3-29-36.md`；本文保留原根因/验收口径作为历史说明。
 > 代码 HEAD: `2a71253` | 文档 HEAD: 本次交接提交 | 分支: master
 > 回归基线: `138 files / 1535 passed / 3 skipped`；`next build` 通过；工作区 clean；未 push
 > 权威待办: `docs/design/repair-backlog-2026-10-20.md`

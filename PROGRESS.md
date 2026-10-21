@@ -301,11 +301,19 @@
 | P3 #9：attachments SVG inline（commit 9931fa8） | 根因：上传白名单允许 image/svg+xml，下载路由把所有 image/* 设为 inline，且无 nosniff；含 script 的 SVG 可同源执行。修复：规范化 MIME；SVG 强制 Content-Disposition: attachment，并加 X-Content-Type-Options: nosniff 与 CSP sandbox；普通图片仍 inline。新增 SVG/PNG 回归；把 SVG 改回 inline 后测试精确红。全量 130 files / 1488 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 | P3 #8：files symlink 路径逃逸（commit b24a6d7 + 6e7ea3a） | 根因：isPathSafe 对不存在目标只做 resolve+startsWith，父目录 symlink 可把 accept 新文件写到 workspace 外；download 只用 join+readFile，workspace 内文件 symlink 可读取外部文件。修复：isPathSafe 向上找最近存在祖先并 realpath，悬空 symlink fail-closed；accept 在 mkdir 后 writeFile 前复查；download 读取前 realpath 校验。Round 6 补固定根 junction：新增 isPathRootSafe，workspaces/<sessionId> 自身不能是 symlink/junction；accept/download 入口和 accept mkdir 后复查。新增父目录/悬空 symlink、accept 写入与复检、download、根 junction、缺失根、EACCES fail-closed 回归；父目录、download、post-mkdir、根 symlink 四次变异均精确红。审计真实 Windows junction fixture 4/4 通过。全量 129 files / 1486 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 
+| P3 #29：MCP read_messages 最新 50 条（commit 1c9f93b） | 根因：`asc + take 50` 永远读最旧一页。修复：`buildChannelQuery` 改 `desc + take 50`，输出前 reverse 回时间正序；新增 query/接线回归，asc 变异精确红。全量 142 files / 1547 passed / 3 skipped | 2026-10-21 |
+| P3 #30：seed 失败非 0 退出（commit 36fd0d6） | 根因：`.catch(console.error)` 不设 exitCode。修复：`markSeedFailure` 设 `process.exitCode=1`，保留 finally disconnect；helper + 接线回归，删除 exitCode 变异精确红。 | 2026-10-21 |
+| P3 #36：message-parser CRLF/行号/metadata（commit 970f0a0） | 根因：围栏只认 LF、lineStart 是计数器、`split('=')` 截断含等号值。修复：`\r?\n`、按原文 offset 算 1-based 行号、首个等号切分；三条回归逐项变异红。 | 2026-10-21 |
+| P3 #31：v2 migration 非空库回填（commit 5504b60） | 根因：Message.rawContent 与 Task.updatedAt NOT NULL 未回填。修复：旧 content 回填 rawContent，CURRENT_TIMESTAMP 回填 updatedAt；内存 SQLite 回归，逐列变异精确红。不改 schema。 | 2026-10-21 |
+| P3 #32：P5 路径派生与 metrics 隔离（commit fdc963a） | 根因：路径写死 `D:/...`，harness 单测改真实 metrics。修复：从 experiments/p5 派生并支持 P5_DB_PATH/P5_WORK_DIR/P5_RESULTS_DIR；metrics 读写可注入临时目录；README 补直跑配置。变硬编码精确红。 | 2026-10-21 |
+| P3 #33：CI 跑 coverage（commit da28bae） | 根因：CI 裸 `vitest run` 绕过阈值。修复：改 `npm test`，新增 workflow 守卫；本地 coverage 全绿。变异回裸 vitest 精确红。 | 2026-10-21 |
+| P3 #34：README/roadmap/CLAUDE 文档核对（本次文档提交） | 统一 33 路由、1547 测试、CI coverage、E2E 命令与 skip 条件、Node 20.19+ 口径；修正 CLAUDE 端点数与 roadmap 当前事实表。 | 2026-10-21 |
+
 ### ⏳ 进行中
 
 | 任务 | 状态 |
 |------|------|
-| （无——P3 #28 已闭环；下一项 P3 #29） | — |
+| （无——P3 可执行项全部闭环；仅 #3 API 无认证为已接受风险） | — |
 
 ### 📋 待办（2026-09-20 更新）
 

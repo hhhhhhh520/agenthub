@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
-> 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`2a71253`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`138 files / 1535 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 状态：**closed**（P3 可执行项全部闭环；仅 #3 已接受风险）
+> 代码 HEAD：`da28bae`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`142 files / 1547 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error（3 条既有 warning）
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` + `f873181` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 写链由 `1de1fbc` 补齐，P3 #19 随之闭环。**P1/P2 全闭环**：P2-08 由 `f873181` 补齐并发/容量；P2-11 由 `4092e99` 补齐 owner 初始化发布窗口。P3 #6 由 `2339123` 闭环；P3 #8 由 `b24a6d7` + `6e7ea3a` 完成普通 symlink 与固定根 junction；P3 #9 由 `9931fa8` 闭环；P3 #10 的临时配置清理由 `4e869a9` 补齐（Windows ACL 仍为 §5 已接受残余）；P3 #12 由 `b017152` 闭环；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环；剩余旧 P3 8 项（#3 按用户决定保持已接受风险）。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` + `f873181` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 写链由 `1de1fbc` 补齐，P3 #19 随之闭环。**P1/P2 全闭环**：P2-08 由 `f873181` 补齐并发/容量；P2-11 由 `4092e99` 补齐 owner 初始化发布窗口。P3 #6 由 `2339123` 闭环；P3 #8 由 `b24a6d7` + `6e7ea3a` 完成普通 symlink 与固定根 junction；P3 #9 由 `9931fa8` 闭环；P3 #10 的临时配置清理由 `4e869a9` 补齐（Windows ACL 仍为 §5 已接受残余）；P3 #12 由 `b017152` 闭环；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环；P3 #29/#30/#36/#31/#32/#33 分别由 `1c9f93b`/`36fd0d6`/`970f0a0`/`5504b60`/`fdc963a`/`da28bae` 闭环；#34 文档核对随本轮收尾提交完成。**仅 #3（API 无认证）按用户决定保持已接受风险。**
 
 ---
 
@@ -335,13 +335,13 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 26 | ✅ | `chat-area.tsx` 等 | 已由 `6198d62` 闭环：diff 失败 toast、Dialog role/aria/焦点、移动端侧栏入口；+ 添加 Agent 已有 onClick |
 | 27 | ✅ | `task-poller.ts` | 已由 `6198d62` 闭环：比较 description/dependencies/assignedAgentId/trace 并刷新 |
 | 28 | ✅ | `mcp-config.ts` | 已由 `2a71253` 闭环：优先 DATABASE_URL；相对 file URL 以主进程 cwd 解析绝对路径；非 file 原样 |
-| 29 | 未修 | `mcp-server/index.ts:125` | `asc + take 50` 读最旧 50 条；改最新 50 后反序 |
-| 30 | 未修 | `prisma/seed.ts:140` | `.catch(console.error)` 不设 exitCode；失败仍成功退出 |
-| 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
-| 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
-| 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1444 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
-| 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
+| 29 | ✅ | `mcp-server/index.ts:125` | 已由 `1c9f93b` 闭环：`desc + take 50` 取最新页，输出前 reverse 回时间正序 |
+| 30 | ✅ | `prisma/seed.ts:140` | 已由 `36fd0d6` 闭环：`markSeedFailure` 设 `process.exitCode=1`，finally 仍 disconnect |
+| 31 | ✅ | `prisma/migrations` | 已由 `5504b60` 闭环：旧 content 回填 rawContent，CURRENT_TIMESTAMP 回填 updatedAt；仅 v2 migration |
+| 32 | ✅ | `experiments/p5/config.ts:52`、`run.test.ts` | 已由 `fdc963a` 闭环：路径从 experiments/p5 派生，P5_* env 可覆盖；harness metrics 写临时目录；README 补直跑配置 |
+| 33 | ✅ | `.github/workflows/ci.yml` | 已由 `da28bae` 闭环：CI 改 `npm test`（coverage 阈值生效），新增 workflow 守卫 |
+| 34 | ✅ | `README.md`、roadmap、CLAUDE.md | 本次文档提交：33 路由、1547 测试、CI coverage、E2E 命令/skip 条件、Node 20.19+ 口径已对齐 |
+| 36 | ✅ | `message-parser.ts:30,34,46` | 已由 `970f0a0` 闭环：CRLF、真实 1-based 行号、metadata 首个等号切分 |
 
 ---
 
@@ -350,7 +350,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 以下不是“忘了修”，而是当前明确接受或有前置条件；不要在没有用户确认时自行扩大范围：
 
 1. **API 无认证**：项目定位本机单用户；`dev` 绑 `127.0.0.1`。生产/局域网暴露前必须补认证。
-2. **历史 migration 缺陷**：推荐路径是 `prisma db push`；不执行历史 migration。若用户要求 migrate deploy，再单独立项。
+2. **历史 migration 缺陷**：v2 的 rawContent/updatedAt 回填已由 `5504b60` 修复；其他历史 migration 未逐条审计，主流程仍推荐 `prisma db push`。
 3. **Windows-only 参数安全**：`assertSpawnSafe` 只覆盖 cmd 元字符；POSIX 字符不在目标平台威胁面。临时配置 API key 的清理已由 `4e869a9` 补齐；Windows ACL 仍依赖 `%TEMP%`/home profile ACL，作为已接受残余。
 4. **共享 projectDir 的外部并发修改**：可能落入本批审计 diff；逐任务硬边界需要 worktree 隔离，当前未启用。
 5. **OpenCode default 只读**：headless `ask` 自动拒绝是 CLI 行为；不擅自改成默认 auto。
@@ -364,8 +364,8 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 |---|---|---|
 | `--settings` 路径含空格被 `assertSpawnSafe` 拒绝 | `process-registry.ts` / `arg-safety.ts` | 统一短路径/转义策略，或把路径放到无空格受管目录；补含空格工作区测试 |
 | 刷新后恢复仍有效的权限请求 | `GET /api/sessions/[id]/runtime`（未实现） | 从 ProcessRegistry 快照返回 pending permissions，前端恢复确认框；测试刷新恢复 |
-| E2E 与 `migrate deploy` 文档/路径不一致 | `docs/test-plan-detailed.md`、E2E 配置 | 统一为 `db push` 或明确 CI 的 migrate 路径；更新命令与断言 |
-| MCP `since` 分页 | `src/mcp-server/index.ts` | 最新 50 条 + `since` 游标（与旧 #29 合并处理） |
+| E2E 文档口径 | `README.md`、`roadmap-to-excellence.md`、`playwright.config.ts` | 已核对：Playwright 13 UI 冒烟无需 key；API contract 用 `E2E=1` + `MIMO_TEST_API_KEY`，缺 key skip |
+| MCP `since` 分页 | `src/mcp-server/index.ts` | 已由 `1c9f93b` 闭环：最新 50 条 + since 过滤 |
 | OpenCode 私聊只读提示 | `chat-fab.tsx` | 见 P2-10，私聊与群聊一致提示 |
 
 ---
@@ -389,7 +389,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
 16. ~~P2-11 send/retry 生命周期资源引用~~（`37473ef` 已闭环）
 17. ~~P2-12 per-session 写队列 + 旧 #19~~（`1de1fbc` 已闭环）
-18. 旧 36 项 P3 表按风险分批；**P2-08、P2-11、P3 #5/#8/#9/#10/#12/#14/#15/#16/#17/#18/#21/#22/#23/#24/#25/#26/#27/#28 均已闭环；下一项 #29（MCP 最新 50 条）**；随后 #30、#31。Pin、MCP、附件、UI 可各自独立提交。
+18. **P3 可执行项全部闭环**：P2-08、P2-11 与 P3 #5/#8/#9/#10/#12/#14/#15/#16/#17/#18/#21–#34/#36 均已闭环；仅 #3（API 无认证）为已接受风险。完成记录见 `docs/design/handoff-2026-10-21-p3-29-36.md`。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -411,7 +411,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `138 files / 1535 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `142 files / 1547 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -439,6 +439,6 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 写链已用 `1de1fbc` 补齐，旧 P3 #19 同步闭环。
-- Round 6 复核修正：P2-08 的并发取消与容量驱逐由 `f873181` 补齐；P2-11 初始化发布窗口由 `4092e99` 补齐；P3 #8 固定根 junction 由 `6e7ea3a` 补齐。P3 #9 SVG inline 由 `9931fa8` 补齐；P3 #10 临时配置清理由 `4e869a9` 补齐；P3 #12 transitionPhase 返回值检查由 `b017152` 补齐；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环。**P1/P2 全闭环**；P3 已闭环 20 项，当前剩余旧 P3 8 项（#3 按用户决定保持已接受风险）。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 6 复核修正：P2-08 的并发取消与容量驱逐由 `f873181` 补齐；P2-11 初始化发布窗口由 `4092e99` 补齐；P3 #8 固定根 junction 由 `6e7ea3a` 补齐。P3 #9 SVG inline 由 `9931fa8` 补齐；P3 #10 临时配置清理由 `4e869a9` 补齐；P3 #12 transitionPhase 返回值检查由 `b017152` 补齐；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环；P3 #29–#36 由 `1c9f93b`/`36fd0d6`/`970f0a0`/`5504b60`/`fdc963a`/`da28bae` 及本轮文档提交闭环。**P1/P2 全闭环；P3 可执行项全部闭环，仅 #3 按用户决定保持已接受风险**。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

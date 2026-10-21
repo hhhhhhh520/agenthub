@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v57（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #5/#6/#8/#9/#10/#12/#14/#15/#16/#17/#18/#19/#21–#28 闭环；剩旧 P3 8 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v58（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 全部可执行项闭环（仅 #3 已接受风险）） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -64,6 +64,7 @@
 | v55 | 2026-10-21 | **安全/API 校验六项闭环（commit b4fa42a）**：#5 permissionMode、#14 附件数量/总大小/回滚、#15 chat replyToId、#16 redo description 类型、#17 private agentIds 预校验、#18 Pin 上限事务化。新增并发/边界/回滚回归并逐项变异验证。全量 133 files / 1514 passed / 3 skipped。**#3 按用户决定保持已接受风险；P3 已闭环 12 项，剩 16 项**。 |
 | v56 | 2026-10-21 | **P3 #21–#27 交互闭环（commit 6198d62）**：会话切换复位、项目页权限入口、附件并发合并、setup res.ok/测试顺序、provider 导入 await、Dialog aria/焦点与移动侧栏、task-poller 描述/依赖刷新。新增纯函数与源码接线回归；四项变异精确红。全量 138 files / 1532 passed / 3 skipped。**P3 已闭环 19 项，剩 9 项（#3 已接受风险）**。 |
 | v57 | 2026-10-21 | **P3 #28 MCP DATABASE_URL 闭环（commit 2a71253）**：优先使用主进程 DATABASE_URL；相对 file URL 以主进程 cwd 解析绝对路径；非 file 原样传递。新增四类回归，恢复硬编码后环境变量用例精确红。全量 138 files / 1535 passed / 3 skipped。**P3 已闭环 20 项，剩 8 项（#3 已接受风险）**。 |
+| v58 | 2026-10-21 | **P3 #29/#30/#31/#32/#33/#34/#36 一次性闭环**：#29 最新 50 条+反序；#30 seed 失败 exitCode；#31 v2 migration rawContent/updatedAt 回填；#32 P5 路径派生与 metrics 临时目录；#33 CI 跑 coverage；#34 README/roadmap/CLAUDE 计数与 E2E 口径；#36 CRLF/真实行号/metadata `=`。逐项回归+变异；全量 **142 files / 1547 passed / 3 skipped**，build ✓，改动文件 eslint 0 error。**P3 可执行项全部闭环，仅 #3 已接受风险**。 |
 
 
 ---
@@ -84,10 +85,10 @@
 
 | 判据 | Codeg 的样子 | AgentHub 现状 | 差距性质 |
 |---|---|---|---|
-| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml` 实测全绿（PR#1：lint-gate 40s + test 2m29s；vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫；test job 跑 windows-latest——测试套件是 Windows 平台假设，目标运行平台）；1154 单测（2026-09-21）+ E2E 仅 13 个冒烟用例（自动化待 §5）；`npx eslint .` 当前 **48 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
+| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml` 实测全绿（PR#1：lint-gate 40s + test 2m29s；vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫；test job 跑 windows-latest——测试套件是 Windows 平台假设，目标运行平台）；1547 单测（2026-10-21）+ 13 个 Playwright UI 冒烟用例（API contract E2E 需密钥，默认 skip）；`npx eslint .` 当前 **48 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
-| **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 31 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 与 shadow-git 注入面已守卫（2026-09-20，§2.2 第 1/4 项）；`list_files`/`attachments` 路径校验已收口（§2.2 第 2 项） | 注入面已收敛 |
-| **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md:106` 端点数为过时数字（16 → 实为 31） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
+| **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 33 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 与 shadow-git 注入面已守卫（2026-09-20，§2.2 第 1/4 项）；`list_files`/`attachments` 路径校验已收口（§2.2 第 2 项） | 注入面已收敛 |
+| **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md` 端点数为过时数字（16 → 实为 33，2026-10-21） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
 | **独有杠杆** | ACP 协议 + 17 转录解析器（一次投资，永久收益） | decisionTrace / process mining 已有最小消费面（2 个 API 端点 + 231 行 analytics 页），距"可消费"完成度远 | 资产完成度低 |
 | **可信交付** | 一键安装 + docs 站 + 10 语种 README | README 已含徽章/卖点/quickstart/架构图（815f2f0、59b07dd）——**缺实验数据**；交付形态仅 `npm run dev` | 差最后一段 |
 
@@ -99,7 +100,7 @@
 
 ### 2.1 上 CI（GitHub Actions）✅ 2026-09-21 完成
 
-- ✅ `vitest` + `build` 全量 + **lint 采用"改动文件门禁"**（`.github/workflows/ci.yml`，push=master / PR）：PR 用 base.sha、push 用 `event.before`（全零回退 HEAD~1），ACMR 过滤 .ts/.tsx，0 error 阻塞、warning 不阻塞。**tests/ 的 `no-explicit-any` 实测为 error 级且存量 ~310 个**，已按"可先放宽"落 eslint.config.mjs（`tests/**` off）；全仓基线 362→**52 errors / 83 warnings**（experiments/p5 集中 39，收敛节奏 §9#4）。CI 里 `prisma generate`（generated 目录不跟踪）+ `prisma db push`（**Prisma 7 已移除 `--skip-generate` flag**，审查隔离实测；触发分支为 master——origin 实际默认分支，审查抓出 main 失配）。
+- ✅ `vitest` + `build` 全量 + **lint 采用"改动文件门禁"**（`.github/workflows/ci.yml`，push=master / PR）：PR 用 base.sha、push 用 `event.before`（全零回退 HEAD~1），ACMR 过滤 .ts/.tsx，0 error 阻塞、warning 不阻塞。**tests/ 的 `no-explicit-any` 实测为 error 级且存量 ~310 个**，已按"可先放宽"落 eslint.config.mjs（`tests/**` off）；全仓基线 362→**52 errors / 83 warnings**（experiments/p5 集中 39，收敛节奏 §9#4）。CI 里 `prisma generate`（generated 目录不跟踪）+ `prisma db push`（**Prisma 7 已移除 `--skip-generate` flag**，审查隔离实测；触发分支为 master——origin 实际默认分支，审查抓出 main 失配）。测试命令为 `npm test`（`vitest run --coverage`），`vitest.config.ts` 阈值在 CI 生效。
 - ✅ **架构守卫**（tests/architecture-phase-guard.test.ts，随 vitest 进 CI）：①非 state-machine.ts 的 `prisma.session.*` 写调用参数不得含 `phase:` 字面量（平衡括号提取，跳过字符串/注释配对）②`STATE_PHASE` 不得被外部引用。**每条均做过故意违规→精确红→还原**；盲区清单（$executeRaw/交互式事务/别名导入/方括号访问等 7 项 + 字符串字面量误报向量，18 例变异探测确认均无现役实例）固化进测试注释。
 - 验收：✅ push/PR 上 CI 全绿（PR#1 实测：首跑暴露 ubuntu 平台差异 → test job 换 windows-latest + runner git identity + 门禁拦下 process-registry.ts 存量 error 清零，第二轮全绿）；lint 门禁本地等效验证（脏文件 exit 1 / 干净文件 exit 0）。
 
@@ -200,8 +201,8 @@
 1. **README 补实验数据**（已含徽章/卖点/quickstart/架构图，"重写"降级为"补一节"）。
 2. **v0.1 版本化**：CHANGELOG、release tag（版本号 0.1.0 已有）、issues 模板。
 3. **LICENSE / CONTRIBUTING 复核**（两文件已存在）。
-4. **E2E 从 13 补到 ~50 + 进 CI**（✅ 已拍板 2026-09-20：自动化）。前置工作：
-   - 先修不一致：`playwright.config.ts` 无 globalSetup、e2e/ 无 skip 守卫，与 README 声称的"默认 skip，需密钥"不符；
+4. **E2E 从 13 补到 ~50 + 进 CI**（✅ 已拍板 2026-09-20：自动化）。当前事实（2026-10-21）：
+   - Playwright 13 个 UI 冒烟用例不需要 MIMO key（`playwright.config.ts` 直接启动 dev server）；API contract E2E 用 `E2E=1` + `MIMO_TEST_API_KEY`，无 key 时 skip；README 命令与此一致；
    - 密钥走 GitHub Secrets（**禁止硬编码**，沿用测试内 env + skipIf 惯例）；无密钥时 CI 内自动 skip，保证 fork/PR 不因缺密钥全红；
    - 评估 dev server 启动方式与运行时长（真 LLM 调用），必要时降频（如仅 main 分支或每日跑）。
 
@@ -259,7 +260,7 @@
 | 实验开关在生产热路径 | `chat-router.ts:9/94/121/160`；`state-machine.ts:133/152/178/252` | grep |
 | 根目录 5 遗留文件为 git 已跟踪 | `git ls-files` | 命令确认 |
 | 无 CI | ~~无 `.github/`~~ → 2026-09-21 起有 `.github/workflows/ci.yml`（vitest + build + 改动文件 lint 门禁 + 架构守卫；push=master/PR） | ls |
-| API 路由 31 个、零认证 | `find src/app/api -name route.ts \| wc -l` = 31 | 命令（v1 写 32 有误） |
+| API 路由 33 个、零认证 | `(Get-ChildItem src/app/api -Recurse -Filter route.ts).Count` = 33（2026-10-21） | 命令（v1 写 32 有误；2026-09-20 为 31） |
 | `cliSessionId: null` 6 处 2 文件 | ~~`redo/route.ts:82,96` + `execution.ts:326,333,478,483`~~ → 2026-09-21 已收口至统一入口 `cli-session.ts`（守卫锁定该字面量仅存于统一入口） | grep（审查报告写 7 处，复核为 6） |
 | eslint 现状 | `npx eslint .` → **131 problems (48 errors, 83 warnings)**（2026-09-21：tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 存量 any 清零后；v2 记录 362 errors 为放宽前口径） | 实跑 |
 | SSE 无重连 | 全仓无 EventSource / Last-Event-ID；`use-chat.ts` fetch+getReader | grep |
@@ -267,7 +268,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1535 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1547 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
