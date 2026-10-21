@@ -287,6 +287,7 @@
 | Windows 进程树退出确认（commit 9201e30） | 根因：Windows 终止只等待直接 ChildProcess exit；taskkill /T 启动后 unref，不能证明后代进程已退出，父进程退出即可被误报 confirmed。修复：terminateEntry 并发等待直接 exit 与 taskkill /T 子进程退出码；treeConfirmed 必须为 true，非 0/超时/error 走 force 或返回 unconfirmed。新增 taskkill 树确认失败但父进程已退出回归；变异验证移除 treeConfirmed 条件后测试精确红。全量 123 files / 1452 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条存量 warning） | 2026-10-20 |
 | Agent 创建取消安全（commit a73f2d7） | 根因：LLM 分析完成后直接 findUnique/create，stop/delete 在 LLM 或 DB await 期间到达仍继续创建 Agent/成员/消息。修复：入口、LLM 返回后检查取消；Agent+成员+消息同一事务，事务内每个写前复查并抛 SessionCancelledError；取消/失败回滚，不留下半个 Agent，也不再发成功 done。新增 LLM 返回后取消、Agent 创建期间取消两条回归；变异验证移除 LLM 后检查后测试精确红。全量 123 files / 1454 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | OpenCode 私聊只读提示（commit a45921a） | 根因：群聊创建路径已有 OpenCode default 只读提示，私聊 ChatFab 没有；用户在私聊里发送写操作会因 CLI headless 限制被拒绝且无解释。修复：新增 OpencodeReadOnlyHint，按 selectedAgent.platform === opencode 在输入区显示只读提示与 /permission auto 切换说明；Agent 接口补 platform 字段。新增 server-render 组件回归：opencode 显示、claude/未选择不显示；变异验证移除平台门禁后测试精确红。全量 124 files / 1456 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| OpenCode XDG 清扫 owner 护栏（commit f889819） | 根因：sweep active 集合只有 DB Agent 行与本进程 ProcessRegistry，其他 AgentHub 实例正在使用的会话级 XDG 目录不可见，会被当孤儿删除。修复：OpenCode 创建 XDG 目录时写 .agenthub-owner.json（pid/updatedAt）；sweep 对非 active 目录检查 owner PID，其他实例存活则保留，owner 为本进程或已退出才清理。新增其他实例存活保留、死 owner 清理、owner 文件写入回归；变异验证删除 owner 检查后测试精确红。全量 124 files / 1458 passed / 3 skipped，build ✓，改动文件 eslint 0 error（14 条测试存量 warning） | 2026-10-20 |
 
 ### ⏳ 进行中
 
