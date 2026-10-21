@@ -389,7 +389,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
 16. ~~P2-11 send/retry 生命周期资源引用~~（`37473ef` 已闭环）
 17. ~~P2-12 per-session 写队列 + 旧 #19~~（`1de1fbc` 已闭环）
-18. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+18. 旧 36 项 P3 表按风险分批；**下一项 #8：files 路径 symlink 逃逸**；随后 #9、#10、#12。Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
