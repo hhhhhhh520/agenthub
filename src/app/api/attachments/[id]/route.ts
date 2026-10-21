@@ -30,15 +30,20 @@ export async function GET(
   }
 
   const buffer = await readFile(resolvedPath)
-  const disposition = attachment.mimeType.startsWith('image/')
+  // SVG 可以内嵌 script；即使客户端伪造 mimeType，也不能以 inline 导航执行。
+  // 其他图片仍保留 inline 预览；SVG 强制下载，并用 nosniff + CSP sandbox 兜底。
+  const mimeType = attachment.mimeType.split(';', 1)[0].trim().toLowerCase()
+  const isSvg = mimeType === 'image/svg+xml'
+  const disposition = mimeType.startsWith('image/') && !isSvg
     ? 'inline'
     : 'attachment'
+  const headers: Record<string, string> = {
+    'Content-Type': attachment.mimeType,
+    'Content-Disposition': `${disposition}; filename="${encodeURIComponent(attachment.filename)}"`,
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'public, max-age=31536000',
+  }
+  if (isSvg) headers['Content-Security-Policy'] = 'sandbox'
 
-  return new NextResponse(buffer, {
-    headers: {
-      'Content-Type': attachment.mimeType,
-      'Content-Disposition': `${disposition}; filename="${encodeURIComponent(attachment.filename)}"`,
-      'Cache-Control': 'public, max-age=31536000',
-    },
-  })
+  return new NextResponse(buffer, { headers })
 }
