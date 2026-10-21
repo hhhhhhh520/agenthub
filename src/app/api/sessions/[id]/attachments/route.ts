@@ -3,6 +3,7 @@ import { writeFile, mkdir, unlink } from 'fs/promises'
 import { join, extname } from 'path'
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/db'
+import { readFormDataWithLimit, RequestBodyTooLargeError } from '@/lib/request-body-limit'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 export const MAX_ATTACHMENT_FILES = 10
@@ -52,8 +53,14 @@ export async function POST(
 
   let formData: FormData
   try {
-    formData = await request.formData()
-  } catch {
+    // 有 body 流时按实际读取字节截断；无流的老测试/适配器回退原生解析。
+    formData = request.body
+      ? await readFormDataWithLimit(request, MAX_ATTACHMENT_REQUEST_BYTES)
+      : await request.formData()
+  } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ error: err.message }, { status: 413 })
+    }
     return NextResponse.json({ error: 'Invalid FormData' }, { status: 400 })
   }
 

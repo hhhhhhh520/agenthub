@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const mocks = vi.hoisted(() => ({
   sessionFindUnique: vi.fn(),
@@ -29,6 +31,7 @@ import {
   MAX_ATTACHMENT_TOTAL_BYTES,
   MAX_ATTACHMENT_REQUEST_BYTES,
 } from '@/app/api/sessions/[id]/attachments/route'
+import { readFormDataWithLimit, RequestBodyTooLargeError } from '@/lib/request-body-limit'
 
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
 const params = { params: Promise.resolve({ id: SESSION_ID }) }
@@ -106,6 +109,32 @@ describe('POST /api/sessions/[id]/attachments — P3 #14 上传边界', () => {
     expect(mocks.mkdir).not.toHaveBeenCalled()
   })
 
+  it('没有 Content-Length 时按实际读取字节拒绝超限请求', async () => {
+    const chunk = new Uint8Array(1024 * 1024)
+    let sent = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= 54) {
+          controller.close()
+          return
+        }
+        sent++
+        controller.enqueue(chunk)
+      },
+    })
+    const request = new Request(`http://localhost/api/sessions/${SESSION_ID}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': 'multipart/form-data; boundary=x' },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+
+    const res = await POST(request, params)
+
+    expect(res.status).toBe(413)
+    expect(mocks.mkdir).not.toHaveBeenCalled()
+  })
+
   it('DB 事务失败时删除已写入文件并返回 500', async () => {
     const files = [fakeFile('a.txt', 'text/plain', 4), fakeFile('b.txt', 'text/plain', 4)]
     mocks.transaction.mockRejectedValueOnce(new Error('db down'))
@@ -130,5 +159,50 @@ describe('POST /api/sessions/[id]/attachments — P3 #14 上传边界', () => {
     expect(mocks.writeFile).toHaveBeenCalledTimes(2)
     expect(mocks.transaction).toHaveBeenCalledTimes(1)
     expect(mocks.unlink).not.toHaveBeenCalled()
+  })
+})
+
+describe('readFormDataWithLimit — 无 Content-Length 的实际字节上限', () => {
+  it('实际读取超过上限时取消源流并抛 413 错误', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(32))
+        controller.enqueue(new Uint8Array(32))
+      },
+      cancel() { cancelled = true },
+    })
+    const request = new Request(`http://localhost/api/sessions/${SESSION_ID}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': 'multipart/form-data; boundary=x' },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+
+    await expect(readFormDataWithLimit(request, 40)).rejects.toBeInstanceOf(RequestBodyTooLargeError)
+    expect(cancelled).toBe(true)
+  })
+
+  it('上限内的 multipart 正常解析，不依赖 Content-Length', async () => {
+    const form = new FormData()
+    form.append('description', 'hello')
+    form.append('files', new File(['abc'], 'a.txt', { type: 'text/plain' }))
+    const request = new Request(`http://localhost/api/sessions/${SESSION_ID}/attachments`, {
+      method: 'POST',
+      body: form,
+    })
+
+    expect(request.headers.get('content-length')).toBeNull()
+    const parsed = await readFormDataWithLimit(request, 1024 * 1024)
+    expect(parsed.get('description')).toBe('hello')
+    expect((parsed.get('files') as File).name).toBe('a.txt')
+  })
+
+  it('上传路由接线到实际字节上限，不再直接 request.formData()', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../src/app/api/sessions/[id]/attachments/route.ts'),
+      'utf8',
+    )
+    expect(src).toContain('readFormDataWithLimit(request, MAX_ATTACHMENT_REQUEST_BYTES)')
   })
 })
