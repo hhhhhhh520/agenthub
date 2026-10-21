@@ -18,6 +18,8 @@ describe('P3 #21/#23/#24/#25/#26 UI 接线守卫', () => {
     const wizard = read('src/components/setup-wizard.tsx')
     const testBlock = wizard.slice(wizard.indexOf('const testConnection'), wizard.indexOf('const handleComplete'))
     expect(testBlock).not.toContain("fetch('/api/config/orchestrator'")
+    expect(testBlock).toContain("body: JSON.stringify({ apiKey, model, baseUrl })")
+    expect(testBlock).toContain("headers: { 'Content-Type': 'application/json' }")
     expect(wizard).toContain("assertOkResponse(saveRes, '保存配置失败')")
     expect(wizard).toContain("assertOkResponse(completeRes, '保存完成状态失败')")
   })

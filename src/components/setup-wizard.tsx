@@ -101,8 +101,12 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
     setTestResult(null)
     setError('')
     try {
-      // 连接测试不落库：未保存的配置不应因为“测试”而被写入。
-      const res = await fetch('/api/config/test-connection', { method: 'POST' })
+      // 连接测试不落库：把表单草稿交给后端实际测试；CLI 模式发送空草稿，后端回退 CLI 检测。
+      const res = await fetch('/api/config/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey, model, baseUrl }),
+      })
       await assertOkResponse(res, '连接测试失败')
       const data = await res.json()
       setTestResult(data)

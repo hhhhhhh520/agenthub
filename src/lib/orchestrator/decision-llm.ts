@@ -40,7 +40,7 @@ export function openAiChatUrl(baseUrl: string): string {
 }
 
 /** scheme 校验（与 adapter 层 assertSafeBaseUrl 同规则）：https 任意，http 仅回环 */
-function assertSafeBaseUrl(baseUrl: string): void {
+export function assertSafeBaseUrl(baseUrl: string): void {
   let url: URL
   try {
     url = new URL(baseUrl)
