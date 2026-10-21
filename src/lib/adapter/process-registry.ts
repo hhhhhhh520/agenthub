@@ -637,11 +637,15 @@ class ProcessRegistry {
     let latestSessionId = config?.sessionId || null
     let dieWhileWaitingCount = 0  // EntryDiedWhileWaitingError 连续触发次数,触顶就 abort 防底层 bug 死循环
     let dropResume = false       // ISSUE-027：--resume 落空后丢一次 sessionId 以全新会话重试
+    // P1-03 F4: send 是 managed 资源的最终 owner；registry entry 可能已被 exit
+    // handler 删除，终态仍要能用原引用补做 finalizeManagedCleanup。
+    let lastEntry: ProcessEntry | null = null
 
     const effectiveKey = this.toEffectiveKey(key, config)
 
     while (attempt <= MAX_SEND_RETRIES) {
       if (config?.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+        if (lastEntry) this.finalizeManagedCleanup(lastEntry)
         throw new SessionCancelledError(config.chatSessionId)
       }
       let entry = this.registry.get(effectiveKey)
@@ -669,6 +673,7 @@ class ProcessRegistry {
         entry = this.spawnProcess(effectiveKey, config)
         entry.stderrBuffer = ''
       }
+      lastEntry = entry
 
       // 锁姿势:每次 retry iteration 独立 acquire/release。
       // 不跨 retry —— retry 之间的 exponential backoff 不应持锁,语义上违反"保护共享资源"。
@@ -703,6 +708,7 @@ class ProcessRegistry {
       } catch (err) {
         // 取消不是瞬时错误：立即退出重试循环，绝不重建/重试
         if (err instanceof SessionCancelledError) {
+          this.finalizeManagedCleanup(entry)
           throw err
         }
 
@@ -745,6 +751,8 @@ class ProcessRegistry {
           if (currentEntry?.format === 'ndjson') {
             this.killEntryIfCurrent(effectiveKey, currentEntry)
           }
+          // exit handler 可能已删除 registry entry；用本轮 entry 引用完成最终清理。
+          this.finalizeManagedCleanup(entry)
           yield { type: 'error', content: lastError }
           throw new Error(lastError)
         }
@@ -758,6 +766,7 @@ class ProcessRegistry {
           yield { type: 'status', content: `retrying in ${delay}ms...`, data: { retry: attempt } }
           await new Promise(resolve => setTimeout(resolve, delay))
           if (config?.chatSessionId && isSessionCancelled(config.chatSessionId)) {
+            this.finalizeManagedCleanup(entry)
             throw new SessionCancelledError(config.chatSessionId)
           }
         }
@@ -777,6 +786,8 @@ class ProcessRegistry {
     if (finalEntry?.format === 'ndjson') {
       this.killEntryIfCurrent(effectiveKey, finalEntry)
     }
+    // registry 里可能已经没有 entry；最后一轮引用仍持有 managedCleanupPending。
+    if (lastEntry) this.finalizeManagedCleanup(lastEntry)
 
     // All attempts exhausted — yield error for frontend notification, then throw
     const errMsg = `Process failed after ${MAX_SEND_RETRIES + 1} attempts: ${lastError}`

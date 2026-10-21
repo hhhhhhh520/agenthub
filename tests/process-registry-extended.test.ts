@@ -500,6 +500,34 @@ describe('ProcessRegistry — extended coverage', () => {
       expect(rmSync).toHaveBeenCalledWith('/cfg/exit-before-close', { recursive: true, force: true })
     })
 
+    it('P1-03 Round 5: 永久失败 exit→stdout.close 仍最终清理 managed 路径', async () => {
+      vi.useRealTimers()
+      const { unlinkSync, rmSync } = await import('fs')
+      const config = {
+        workDir: '/dir',
+        command: 'opencode',
+        args: ['run'],
+        format: 'ndjson' as const,
+        managedAgentFile: '/agents/permanent-failed.md',
+        managedConfigDir: '/cfg/permanent-failed',
+      }
+      processRegistry.getOrCreate('permanent-managed', config)
+      setTimeout(() => {
+        fakeProc.stdout.write(Buffer.from(JSON.stringify({
+          type: 'error',
+          message: 'authentication_error: invalid api key',
+        }) + '\n'))
+        fakeProc.exitCode = 1
+        fakeProc.emit('exit', 1)
+        fakeProc.stdout.emit('close')
+      }, 10)
+
+      await expect(collect(processRegistry.send('permanent-managed', 'test', config)))
+        .rejects.toThrow('authentication_error')
+      expect(unlinkSync).toHaveBeenCalledWith('/agents/permanent-failed.md')
+      expect(rmSync).toHaveBeenCalledWith('/cfg/permanent-failed', { recursive: true, force: true })
+    })
+
     it('P1-03: 进程自然退出也清理会话级 agent 文件与 XDG 目录', async () => {
       const { unlinkSync, rmSync } = await import('fs')
       processRegistry.getOrCreate('natural-exit', {
