@@ -301,12 +301,19 @@ export async function handleOrchestratorDecision(
         await handleOrchestratorChat(decision.message || message, sessionId, sendEvent, agents, orchSessionId)
       }
       break
-    case 'done':
+    case 'done': {
       // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则只写库不双记,no-op 或 append 失败则兜底补记
-      await transitionPhase(sessionId, 'done', { recordTrace: !(decisionRecorded && decisionApplied) })
+      const phase = await transitionPhase(sessionId, 'done', { recordTrace: !(decisionRecorded && decisionApplied) })
+      if (!phase.ok) {
+        const msg = `进入完成状态失败：${phase.reason ?? '未知错误'}。请重试。`
+        sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+        sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
+        break
+      }
       sendEvent({ agentId: 'orchestrator', type: 'text', content: decision.message || '任务已完成' })
       sendEvent({ agentId: 'orchestrator', type: 'done', content: decision.message || '任务已完成' })
       break
+    }
     default:
       // P5 OFF 模式：表外 action 无对应 case（如对抗性 toString）时兜底走聊天回复，不静默吞掉、UI/实验驱动不悬挂。
       // ON 模式到不了这里——非法 action 已被上方的 escalate 拦截（transition.ok=false 提前 return）。

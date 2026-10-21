@@ -825,7 +825,18 @@ export async function handleExecution(
 
   const allDone = tasks.every(t => t.status === 'completed' || t.status === 'blocked')
   if (allDone) {
-    await transitionPhase(sessionId, 'done')
+    const phase = await transitionPhase(sessionId, 'done')
+    if (!phase.ok) {
+      const msg = `所有任务已结束，但进入完成状态失败：${phase.reason ?? '未知错误'}。请重试或手动确认。`
+      try {
+        await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+      } catch {
+        // 提示落库失败不掩盖 phase 失败；至少保证 SSE 可见。
+      }
+      sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+      sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
+      return
+    }
   }
 
   // ISSUE-011 F2: 部分失败/遗留时诚实收尾,不静默停在 execution。

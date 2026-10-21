@@ -221,7 +221,17 @@ export async function handlePMConfirm(
 
   // P4 T1: recordTrace 默认 false(handlePMConfirm 仅 LLM 决策路径调用,决策点已记 align_confirm);
   // 决策点 append 失败时 chat-router 传 true 兜底补记
-  await transitionPhase(sessionId, 'align_confirm', { recordTrace: opts?.recordTrace ?? false })
+  const phase = await transitionPhase(sessionId, 'align_confirm', { recordTrace: opts?.recordTrace ?? false })
+  if (!phase.ok) {
+    const msg = `进入需求确认状态失败：${phase.reason ?? '未知错误'}，请重试。`
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+    } catch {
+      // 提示落库失败不掩盖 phase 失败；至少保证 SSE 可见。
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+    return
+  }
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
   const pmPrompt = PM_CONFIRMATION_PROMPT.replace('{userMessage}', message)
@@ -603,7 +613,17 @@ export async function handleAgentQA(
   }
   // P4 T1: recordTrace 默认 false(handleAgentQA 入口仅 LLM 决策路径,决策点已记 align_qa);
   // 决策点 append 失败时 chat-router 传 true 兜底补记
-  await transitionPhase(sessionId, 'align_qa', { recordTrace: opts?.recordTrace ?? false })
+  const phase = await transitionPhase(sessionId, 'align_qa', { recordTrace: opts?.recordTrace ?? false })
+  if (!phase.ok) {
+    const msg = `进入问答状态失败：${phase.reason ?? '未知错误'}，请重试。`
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+    } catch {
+      // 提示落库失败不掩盖 phase 失败；至少保证 SSE 可见。
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+    return
+  }
 
   const history = await prisma.message.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } })
   const originalRequest = history.find(m => m.role === 'user')?.rawContent || ''

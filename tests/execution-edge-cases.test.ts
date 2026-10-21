@@ -484,6 +484,34 @@ describe('Execution — safety limits', () => {
       expect.objectContaining({ data: { phase: 'done', phaseStep: '' } })
     )
   })
+
+  it('P3 #12: allDone 但 done phase 写入失败 → 不发布成功 done/summary，报错停下', async () => {
+    const { handleExecution } = await import('@/lib/services/execution')
+
+    const task = makeTask()
+    mocks.mockTaskFindMany.mockResolvedValue([task])
+    mocks.mockExecuteTaskBatch.mockResolvedValue({
+      results: new Map([['task-1', { result: 'done', sessionId: 's1' }]]),
+      failedTaskIds: [],
+    })
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: JSON.stringify({
+      needsCorrection: false, quality: 'good',
+    }) })
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 0 })
+
+    const sendEvent = vi.fn()
+    await handleExecution('test', 'sess-1', AGENTS, sendEvent)
+
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('完成状态失败') }),
+    )
+    const successDone = sendEvent.mock.calls
+      .map(c => c[0])
+      .filter(e => e.type === 'done' && (
+        String(e.content).includes('所有任务已完成') || String(e.content).startsWith('任务完成：')
+      ))
+    expect(successDone).toEqual([])
+  })
 })
 
 describe('Execution — git diff boundary detection', () => {

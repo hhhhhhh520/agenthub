@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   mockSessionFindUnique: vi.fn(),
+  mockSessionUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockTaskFindMany: vi.fn(),
   mockTaskFindUnique: vi.fn(),
   mockTaskUpdate: vi.fn(),
@@ -40,7 +41,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/db', () => {
   const prisma = {
-    session: { findUnique: mocks.mockSessionFindUnique },
+    session: { findUnique: mocks.mockSessionFindUnique, updateMany: mocks.mockSessionUpdateMany },
     task: {
       findMany: mocks.mockTaskFindMany,
       findUnique: mocks.mockTaskFindUnique,
@@ -109,7 +110,8 @@ describe('Task 批次状态条件写（§3.2 B1-B7）', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionFindUnique.mockResolvedValue({ id: 'sess-1', phase: 'execution', phaseStep: '', projectDir: '', permissionMode: 'default' })
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 1 })
     mocks.mockMessageCreate.mockResolvedValue({})
     mocks.mockTaskUpdate.mockResolvedValue({})
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

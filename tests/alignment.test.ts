@@ -48,7 +48,7 @@ vi.mock('@/lib/services/execution', () => ({
   handleExecution: mocks.mockHandleExecution,
 }))
 
-import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans, buildPlanId, isExplicitPlanApproval, recordPlanApproval } from '@/lib/services/alignment'
+import { transitionToExecution, handleArchitectPlan, handlePMConfirm, handleAgentQA, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans, buildPlanId, isExplicitPlanApproval, recordPlanApproval } from '@/lib/services/alignment'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
 
@@ -1003,5 +1003,89 @@ describe('ISSUE-008 — isCodeTask / buildVerifyDescription', () => {
     expect(desc).toContain('src/api/login.ts')
     expect(desc).toContain('写测试')
     expect(desc).toContain('验证通过')
+  })
+})
+
+describe('P3 #12 — phase transition returns checked in alignment handlers', () => {
+  const phaseAgents = [
+    { id: 'pm-1', name: '产品经理', systemPrompt: '', platform: 'claude-code', expertise: 'product', model: '', baseUrl: '', apiKey: '', tools: '[]' },
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 0 })
+    mocks.mockSessionFindUnique.mockResolvedValue({
+      phase: 'idle',
+      phaseStep: '',
+      decisionTrace: null,
+      projectDir: '',
+      permissionMode: 'default',
+    })
+    mocks.mockMessageFindMany.mockResolvedValue([])
+    mocks.mockSessionMemberFindUnique.mockResolvedValue(null)
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: 'should not run' })
+    mocks.mockCallLLMForAnalysis.mockResolvedValue('should not run')
+  })
+
+  it('handlePMConfirm: align_confirm 写失败时报错并中止，不发 phase_transition/不跑 PM', async () => {
+    clearSessionCancel('sess-pm-phase-fail')
+
+    await handlePMConfirm('做个网站', 'sess-pm-phase-fail', phaseAgents, mocks.mockSendEvent)
+
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('需求确认状态失败') }),
+    )
+    expect(mocks.mockSendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition' }),
+    )
+    expect(mocks.mockExecuteSingleAgent).not.toHaveBeenCalled()
+    expect(mocks.mockCallLLMForAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('handleAgentQA: align_qa 写失败时报错并中止，不读 history/不跑多 Agent', async () => {
+    clearSessionCancel('sess-qa-phase-fail')
+
+    await handleAgentQA('做个网站', 'sess-qa-phase-fail', phaseAgents, mocks.mockSendEvent)
+
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('问答状态失败') }),
+    )
+    expect(mocks.mockMessageFindMany).not.toHaveBeenCalled()
+    expect(mocks.mockExecuteSingleAgent).not.toHaveBeenCalled()
+    expect(mocks.mockCallLLMForAnalysis).not.toHaveBeenCalled()
+  })
+
+  it('handlePMConfirm: align_confirm 成功时仍发 phase_transition 并执行 PM', async () => {
+    clearSessionCancel('sess-pm-phase-ok')
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 1 })
+
+    await handlePMConfirm('做个网站', 'sess-pm-phase-ok', phaseAgents, mocks.mockSendEvent)
+
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'phase_transition', content: 'alignment' }),
+    )
+    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalled()
+  })
+
+  it('handleAgentQA: align_qa 成功时仍读取 history 并执行多 Agent', async () => {
+    clearSessionCancel('sess-qa-phase-ok')
+    mocks.mockSessionFindUnique.mockResolvedValue({
+      phase: 'alignment',
+      phaseStep: 'architect_plan',
+      decisionTrace: null,
+      projectDir: '',
+      permissionMode: 'default',
+    })
+    mocks.mockSessionUpdateMany.mockResolvedValue({ count: 1 })
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
+    mocks.mockExecuteSingleAgent.mockResolvedValue({ result: '需要确认数据库吗？' })
+
+    await handleAgentQA('做个网站', 'sess-qa-phase-ok', phaseAgents, mocks.mockSendEvent)
+
+    expect(mocks.mockMessageFindMany).toHaveBeenCalled()
+    expect(mocks.mockExecuteSingleAgent).toHaveBeenCalled()
+    expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: 'agent_qa' }),
+    )
   })
 })

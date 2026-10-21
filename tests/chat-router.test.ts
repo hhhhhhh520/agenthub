@@ -210,6 +210,25 @@ describe('handleOrchestratorDecision', () => {
     expect(mockSessionUpdateMany).toHaveBeenCalledTimes(2)
   })
 
+  it('P3 #12: action=done 但 phase 写入失败 → 报错并停止，不发送成功 done', async () => {
+    mockGetOrchestratorDecision.mockResolvedValueOnce({ decision: { action: 'done', message: 'all done', reason: 'r' }, sessionId: 'orch-ses' })
+    mockTaskCount.mockResolvedValueOnce(0)
+    mockSessionFindUnique.mockResolvedValue({ phase: 'idle', phaseStep: '', decisionTrace: null })
+    mockSessionUpdateMany.mockResolvedValue({ count: 0 })
+
+    await handleOrchestratorDecision('hello', 's1', agents, sendEvent, idle)
+
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', content: expect.stringContaining('完成状态失败') }),
+    )
+    expect(sendEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'awaiting_user_input', content: 'escalate' }),
+    )
+    expect(sendEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'done', content: 'all done' }),
+    )
+  })
+
   it('getOrchestratorDecision throws → falls back to handleOrchestratorChat', async () => {
     mockGetOrchestratorDecision.mockRejectedValueOnce(new Error('LLM down'))
     mockSessionFindUnique.mockResolvedValueOnce({ projectDir: '/dir' })
