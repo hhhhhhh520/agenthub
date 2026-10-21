@@ -107,6 +107,28 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     }
   })
 
+  it('P2-11 Round 5: 本进程 owner 在非 active/retry 期间也保留目录', async () => {
+    const ownInstanceDir = join(h.root, 'agenthub-oc-own-retry')
+    mkdirSync(ownInstanceDir, { recursive: true })
+    writeFileSync(join(ownInstanceDir, OPENCODE_OWNER_FILE), JSON.stringify({ pid: process.pid }))
+
+    const removed = await sweepWithCurrentConfigs()
+
+    expect(existsSync(ownInstanceDir)).toBe(true)
+    expect(removed).not.toContain('agenthub-oc-own-retry')
+  })
+
+  it('P2-11 Round 5: owner marker 损坏时保留目录，不能当可删证据', async () => {
+    const corruptOwnerDir = join(h.root, 'agenthub-oc-corrupt-owner')
+    mkdirSync(corruptOwnerDir, { recursive: true })
+    writeFileSync(join(corruptOwnerDir, OPENCODE_OWNER_FILE), '{not-json')
+
+    const removed = await sweepWithCurrentConfigs()
+
+    expect(existsSync(corruptOwnerDir)).toBe(true)
+    expect(removed).not.toContain('agenthub-oc-corrupt-owner')
+  })
+
   it('P2-11: owner 进程已退出时清理目录', async () => {
     const deadOwnerPid = 424243
     const staleInstanceDir = join(h.root, 'agenthub-oc-stale-instance')

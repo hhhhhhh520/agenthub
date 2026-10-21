@@ -44,10 +44,11 @@ function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[], activeManagedDirs:
     for (const e of readdirSync(tmpdir(), { withFileTypes: true })) {
       if (!e.isDirectory() || !e.name.startsWith('agenthub-oc-')) continue
       if (active.has(e.name)) continue
-      // P2-11: 同一 tmpdir 上可能还有另一个 AgentHub 实例；owner PID 存活时
-      // 本实例不能删它的 XDG 目录。owner 是本进程但不在 active 集合，说明是
-      // 本进程遗留的孤儿，可以清理。
-      if (isOtherInstanceOwnerAlive(e.name)) continue
+      // P2-11: owner PID 存活时（包括本进程）不能删。本进程 send 可能正处在
+      // exit→retry backoff，registry 已删 entry 但 XDG 仍会被下一轮复用。
+      // 无 marker 的历史 agent-only 目录仍按旧规则清理；有 marker 但损坏/不可读
+      // 不能作为“已证明无人使用”的证据，先保留。
+      if (mustPreserveOwnerDirectory(e.name)) continue
       rmSync(join(tmpdir(), e.name), { recursive: true })
       out.push(e.name)
     }
@@ -55,19 +56,29 @@ function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[], activeManagedDirs:
   return out
 }
 
-function isOtherInstanceOwnerAlive(dirName: string): boolean {
+function mustPreserveOwnerDirectory(dirName: string): boolean {
+  let raw: string
   try {
-    const raw = readFileSync(join(tmpdir(), dirName, OPENCODE_OWNER_FILE), 'utf-8')
-    const parsed = JSON.parse(raw) as { pid?: unknown }
-    const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
-    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch (err) {
-      return (err as NodeJS.ErrnoException).code === 'EPERM'
-    }
+    raw = readFileSync(join(tmpdir(), dirName, OPENCODE_OWNER_FILE), 'utf-8')
+  } catch (err) {
+    // 没有 owner marker：兼容历史 agent-only 目录，仍按旧规则允许清理。
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false
+    // 文件存在但读不了：不能证明 owner 已死，宁可不删。
+    return true
+  }
+
+  let parsed: { pid?: unknown }
+  try {
+    parsed = JSON.parse(raw) as { pid?: unknown }
   } catch {
-    return false
+    return true // marker 损坏：不能作为可删证据
+  }
+  const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
+  if (!Number.isInteger(pid) || pid <= 0) return true
+  try {
+    process.kill(pid, 0)
+    return true // 包括 process.pid：本进程 retry 资源仍在使用
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH'
   }
 }
