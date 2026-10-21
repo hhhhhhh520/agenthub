@@ -303,7 +303,8 @@ export class OpenCodeAdapter implements AgentAdapter {
       )
     } catch (err) {
       // 不能带着“无 owner 保护”的目录继续 spawn；否则另一个实例的 sweep
-      // 可能把它当孤儿删除。写失败直接 fail-fast，由调用方显式失败。
+      // 可能把它当孤儿删除。写失败直接 fail-fast，并清掉本次新建目录。
+      try { rmSync(configDir, { recursive: true, force: true }) } catch { /* best-effort */ }
       throw new Error(
         `[OpenCodeAdapter] Failed to publish owner marker: ${(err as Error).message}`,
       )
@@ -433,15 +434,36 @@ export class OpenCodeAdapter implements AgentAdapter {
     // 这样 spawn 失败(generator 第一帧就 throw)时不会留下假 lastSpawnConfig,
     // 避免 onTimeout 误报"effectiveKey miss"(实际是进程根本没起来)
     let cachedSpawnConfig = false
-    for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
-      if (!cachedSpawnConfig) {
-        this.lastSpawnConfig = spawnConfig
-        cachedSpawnConfig = true
+    try {
+      for await (const chunk of processRegistry.send(key, fullPrompt, spawnConfig)) {
+        if (!cachedSpawnConfig) {
+          this.lastSpawnConfig = spawnConfig
+          cachedSpawnConfig = true
+        }
+        if (chunk.type === 'session') {
+          this.sessionId = chunk.content
+        }
+        yield chunk
       }
-      if (chunk.type === 'session') {
-        this.sessionId = chunk.content
+    } catch (err) {
+      // send 在 registry 建 entry 前失败（spawn ENOENT 等）时，没有任何 entry
+      // 接管 managed 路径；立即清掉含 provider apiKey 的 XDG 目录和 agent 文件。
+      let managed = false
+      if (configDir) {
+        try {
+          managed = processRegistry.getActiveManagedConfigDirs?.().includes(configDir) ?? false
+        } catch {
+          managed = false
+        }
       }
-      yield chunk
+      if (configDir && !managed) {
+        try { rmSync(configDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+        const agentFile = this.agentFilePath()
+        if (agentFile) {
+          try { rmSync(agentFile, { force: true }) } catch { /* best-effort */ }
+        }
+      }
+      throw err
     }
   }
 

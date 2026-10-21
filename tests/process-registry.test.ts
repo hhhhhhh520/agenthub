@@ -105,8 +105,21 @@ describe('ProcessRegistry', () => {
     it('writes mcpConfig to temp file and adds --mcp-config arg', () => {
       processRegistry.getOrCreate('key1', { workDir: '/dir', mcpConfig: '{"tools":["a"]}' })
       expect(mockWriteFileSync).toHaveBeenCalled()
+      const mcpWrite = mockWriteFileSync.mock.calls.find((c: any[]) => String(c[0]).includes('agenthub-mcp-'))
+      expect(mcpWrite?.[2]).toEqual({ encoding: 'utf-8', mode: 0o600 })
       const args = mockSpawn.mock.calls[0][1]
       expect(args).toContain('--mcp-config')
+    })
+
+    it('removes mcpConfigFile when spawn throws', () => {
+      mockSpawn.mockImplementationOnce(() => {
+        throw new Error('spawn EACCES')
+      })
+      expect(() => processRegistry.getOrCreate('spawn-fail', {
+        workDir: '/dir',
+        mcpConfig: '{"tools":[]}',
+      })).toThrow('spawn EACCES')
+      expect(mockUnlinkSync).toHaveBeenCalled()
     })
 
     it('always passes --permission-mode default; auto approval is registry-side', () => {

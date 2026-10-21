@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const h = vi.hoisted(() => ({
@@ -64,5 +64,6 @@ describe('OpenCodeAdapter — P2-11 owner publication failure', () => {
     })()).rejects.toThrow(/owner marker/i)
 
     expect(h.mockSend).not.toHaveBeenCalled()
+    expect(readdirSync(h.root).filter(name => name.startsWith('agenthub-oc-'))).toEqual([])
   })
 })

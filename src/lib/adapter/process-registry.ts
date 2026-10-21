@@ -350,7 +350,12 @@ class ProcessRegistry {
 
       if (config.mcpConfig) {
         mcpConfigFile = join(tmpdir(), `agenthub-mcp-${Date.now()}.json`)
-        writeFileSync(mcpConfigFile, config.mcpConfig, 'utf-8')
+        try {
+          writeFileSync(mcpConfigFile, config.mcpConfig, { encoding: 'utf-8', mode: 0o600 })
+        } catch (err) {
+          try { unlinkSync(mcpConfigFile) } catch { /* best-effort */ }
+          throw err
+        }
         args.push('--mcp-config', mcpConfigFile)
       }
 
@@ -405,13 +410,22 @@ class ProcessRegistry {
       mkdirSync(workDir, { recursive: true })
     }
 
-    const proc = spawn(command, args, {
-      cwd: workDir,
-      // NODE_ENV 由本服务进程继承恒存在；compose 返回宽化 Record 只是静态上不含必填键
-      env: composeSpawnEnv(process.env, config, providerEnv) as NodeJS.ProcessEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: config.shell !== false,  // 默认 true，OpenCode 可设为 false
-    })
+    let proc: ChildProcess
+    try {
+      proc = spawn(command, args, {
+        cwd: workDir,
+        // NODE_ENV 由本服务进程继承恒存在；compose 返回宽化 Record 只是静态上不含必填键
+        env: composeSpawnEnv(process.env, config, providerEnv) as NodeJS.ProcessEnv,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: config.shell !== false,  // 默认 true，OpenCode 可设为 false
+      })
+    } catch (err) {
+      // spawn 抛错时 entry 还没建立，mcpConfigFile 没有 cleanupEntry 接管。
+      if (mcpConfigFile) {
+        try { unlinkSync(mcpConfigFile) } catch { /* best-effort */ }
+      }
+      throw err
+    }
 
     const entry: ProcessEntry = {
       process: proc,
