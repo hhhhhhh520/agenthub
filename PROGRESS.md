@@ -282,6 +282,7 @@
 | 问句不再算计划批准（commit 3bb12ad） | 根因：`isExplicitPlanApproval` 的 normalize 删除全角/ASCII 问号，`执行？` 变成 `执行` 并命中批准集合。修复：保留问号，问句不再命中；感叹号/句号等语气标点仍忽略。新增 `执行？`/`确认执行?` 拒绝与 `执行！` 通过回归；变异验证恢复问号剥离后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 恢复 phase 写入前复查取消（commit 1af2112） | 根因：已批准恢复在查询计划/批准记录后直接写 align_decompose/execute，取消发生在查询期间时 phase 已推进，调用方之后才发现停止。修复：approval gate 后、align_pm→align_decompose 后各加取消复查；取消后不再写 execute。新增 approved plan + 查询期间取消、断言零 phase 写入回归；变异验证移除 gate 后复查后测试精确红。全量 123 files / 1448 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | Q&A 路由保存明确批准（commit 0412a39） | 根因：`recordPlanApproval` 只在 execute 分支调用；用户明确确认执行但模型路由到 align_qa 时不保存批准，QA 无问题后 transitionToExecution 仍要求再次确认。修复：align_qa 分支也记录明确批准；后续 user 消息仍会使旧批准失效。新增真实 route + handleAgentQA 无问题直接执行回归；变异验证移除 align_qa 记录后测试精确红。全量 123 files / 1449 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
+| OpenCode managed 资源正常退出清理（commit d6ef4a0） | 根因：exit 发生在 send 仍 busy/working 时，exit handler 为 retry 保留 managed 资源并删除 registry entry；随后 stdout.close 正常完成，killEntryIfCurrent 因 entry 不在 registry 直接返回，md/XDG 失去最终清理者。修复：cleanupEntry 在 preserveManaged 时记录 managedCleanupPending；send 成功收尾用当前 entry 引用执行 finalizeManagedCleanup，再走 killEntryIfCurrent。新增 exit 先于 stdout.close 的正常 NDJSON 回归；变异验证移除 finalize 后测试精确红。全量 123 files / 1450 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条存量 warning） | 2026-10-20 |
 
 ### ⏳ 进行中
 
