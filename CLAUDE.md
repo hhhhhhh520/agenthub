@@ -353,8 +353,8 @@ Orchestrator 自主决定流程，支持 9 种 action：
 
 - **Agent 协作 contract v1**:`docs/discussions/agenthub-contract-v1.md` — 数据流契约、可信度契约、连续性契约(决定 task.result / outputSchema / 影子 git / declaredFiles 校验等的设计)
 - **v2 设计决策**:`docs/design/agenthub-v2-design-decisions.md` — 早期架构决策(混合执行层、Agent 预设池、群聊协作、工件驱动等)
-- **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v42):阶段一/阶段二收口、CI 门禁、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、SSE body cancel 安全、嵌套 `.env` 敏感分类、拿锁后会话快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批、`.ENV` 大小写、问句不算批准、恢复写入前取消复查、Q&A 批准保存、managed 资源最终清理、超时优先、Windows 进程树确认、取消安全 Agent 创建、私聊只读提示、清扫 owner 护栏与 P11 harness
-- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — 当前唯一未闭环 P1/P2/P3 清单（P1-01/02 闭环，P1-03 有 F4 尾项；P2-03/P2-04 有 Round 2 补项）、复现材料、验收顺序（接手先读）
+- **卓越路线图**:`docs/design/roadmap-to-excellence.md` — 对标 Codeg 工程质量(v43):阶段一/阶段二收口、CI 门禁、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、SSE body cancel 安全、嵌套 `.env` 敏感分类、拿锁后会话快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批、`.ENV` 大小写、问句不算批准、恢复写入前取消复查、Q&A 批准保存、managed 资源最终清理、超时优先、Windows 进程树确认、取消安全 Agent 创建、私聊只读提示、清扫 owner 护栏、事件 seq/SSE 轮询护栏与 P11 harness
+- **修复待办总表**:`docs/design/repair-backlog-2026-10-20.md` — 当前唯一未闭环 P3 清单（P1/P2 全部闭环；剩旧 36 项）、复现材料、验收顺序（接手先读）
 - **写入点清单**:`docs/design/phase2-3.2-write-points.md` — §3.2 全部状态写点的条件写语义、竞态窗口分析、"不纳入"清单（新增写点前必读）
 - **工作区与权限**:`docs/design/workspace-and-permissions.md`（CLI 实测证据：`docs/design/permission-cli-probe-2026-10-20.md`）
 - **实现计划**:`docs/design/implementation-plan.md` — 8 阶段任务拆分
