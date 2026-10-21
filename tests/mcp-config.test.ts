@@ -1,5 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { isAbsolute, resolve } from 'node:path'
 import { buildMCPConfig } from '../src/lib/mcp-config'
+
+afterEach(() => vi.unstubAllEnvs())
 
 describe('buildMCPConfig', () => {
   it('should return valid JSON with correct structure', () => {
@@ -31,5 +34,32 @@ describe('buildMCPConfig', () => {
     const config = JSON.parse(buildMCPConfig('s', 'a', '.'))
     expect(config.mcpServers.agenthub.command).toBe('node')
     vi.unstubAllEnvs()
+  })
+
+  it('P3 #28: 未配置 DATABASE_URL 时回退到主进程 cwd 的绝对 dev.db', () => {
+    vi.stubEnv('DATABASE_URL', '')
+    const config = JSON.parse(buildMCPConfig('s', 'a', '/some/work'))
+    const dbUrl = config.mcpServers.agenthub.env.DATABASE_URL as string
+    expect(dbUrl).toBe(`file:${resolve(process.cwd(), 'dev.db')}`)
+  })
+
+  it('P3 #28: 相对 file DATABASE_URL 以主进程 cwd 解析为绝对路径', () => {
+    vi.stubEnv('DATABASE_URL', 'file:./data/agenthub.db')
+    const config = JSON.parse(buildMCPConfig('s', 'a', '/some/work'))
+    const dbUrl = config.mcpServers.agenthub.env.DATABASE_URL as string
+    expect(dbUrl).toBe(`file:${resolve(process.cwd(), 'data/agenthub.db')}`)
+    const filePath = dbUrl.slice('file:'.length)
+    expect(isAbsolute(filePath)).toBe(true)
+  })
+
+  it('P3 #28: 绝对 file URL 与非 file URL 原样传递', () => {
+    const absolute = `file:${resolve(process.cwd(), 'absolute.db')}`
+    vi.stubEnv('DATABASE_URL', absolute)
+    let config = JSON.parse(buildMCPConfig('s', 'a', '.'))
+    expect(config.mcpServers.agenthub.env.DATABASE_URL).toBe(absolute)
+
+    vi.stubEnv('DATABASE_URL', 'libsql://example.turso.io')
+    config = JSON.parse(buildMCPConfig('s', 'a', '.'))
+    expect(config.mcpServers.agenthub.env.DATABASE_URL).toBe('libsql://example.turso.io')
   })
 })
