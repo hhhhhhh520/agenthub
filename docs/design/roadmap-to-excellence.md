@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v55（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #5/#6/#8/#9/#10/#12/#14/#15/#16/#17/#18/#19 闭环；剩旧 P3 16 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v56（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #5/#6/#8/#9/#10/#12/#14/#15/#16/#17/#18/#19/#21–#27 闭环；剩旧 P3 9 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -62,6 +62,7 @@
 | v53 | 2026-10-21 | **P3 #10 临时配置清理闭环（commit 4e869a9）**。MCP 临时文件 0o600，写入/spawn 失败立即 unlink；OpenCode owner 写失败删除新建目录；send 在 registry 建 entry 前失败时清理 XDG 与 agent 文件。Windows ACL 仍依赖 `%TEMP%`/profile ACL（§5 已接受残余）。新增三条回归；去掉对应清理分别精确红。全量 131 files / 1490 passed / 3 skipped。**P3 #6/#8/#9/#10/#19 闭环，剩 23 项**。 |
 | v54 | 2026-10-21 | **P3 #12 transitionPhase 返回值检查闭环（commit b017152）**。根因：PM/QA、execution allDone、chat-router done 四处只 await，phase 未写入仍发成功事件。修复：PM/QA 报错即返回；execution/chat-router 不发布成功总结，发 error + `awaiting_user_input: escalate`。保留 recordTrace/CAS 拒绝回执；四条失败回归 + 两条正常路径守卫，逐处移除检查均精确红。全量 131 files / 1496 passed / 3 skipped。**P3 #6/#8/#9/#10/#12/#19 闭环，剩 22 项**。 |
 | v55 | 2026-10-21 | **安全/API 校验六项闭环（commit b4fa42a）**：#5 permissionMode、#14 附件数量/总大小/回滚、#15 chat replyToId、#16 redo description 类型、#17 private agentIds 预校验、#18 Pin 上限事务化。新增并发/边界/回滚回归并逐项变异验证。全量 133 files / 1514 passed / 3 skipped。**#3 按用户决定保持已接受风险；P3 已闭环 12 项，剩 16 项**。 |
+| v56 | 2026-10-21 | **P3 #21–#27 交互闭环（commit 6198d62）**：会话切换复位、项目页权限入口、附件并发合并、setup res.ok/测试顺序、provider 导入 await、Dialog aria/焦点与移动侧栏、task-poller 描述/依赖刷新。新增纯函数与源码接线回归；四项变异精确红。全量 138 files / 1532 passed / 3 skipped。**P3 已闭环 19 项，剩 9 项（#3 已接受风险）**。 |
 
 
 ---
@@ -265,7 +266,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1514 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1532 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

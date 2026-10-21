@@ -3,7 +3,7 @@
 > 代码 HEAD: `b4fa42a` | 文档 HEAD: 本次记录提交 | 分支: master
 > 回归基线: `133 files / 1514 passed / 3 skipped`；`next build` 通过；工作区 clean；未 push
 > 权威待办: `docs/design/repair-backlog-2026-10-20.md`
-> **状态：✅ #5/#14/#15/#16/#17/#18 已闭环；#3 按用户决定保持已接受风险；下一项 P3 #21**
+> **状态：✅ #5/#14/#15/#16/#17/#18 已闭环；#3 按用户决定保持已接受风险；下一项 P3 #28**
 
 ## 1. 本批修复
 
@@ -39,4 +39,4 @@
 
 ## 4. 下一项
 
-P3 **#21**：切 session 不清 messages/pending/loading，也不 abort 旧 fetch。
+P3 **#28**：MCP 硬编码 `cwd/dev.db`，主进程使用 `DATABASE_URL`。
