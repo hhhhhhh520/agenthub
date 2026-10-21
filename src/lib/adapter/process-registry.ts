@@ -46,6 +46,9 @@ interface ProcessEntry {
   // P2-08: 父进程已退出但 taskkill /T 未确认进程树退出。entry 必须保留到后续
   // 确认成功；父进程 exit 或重复取消都不能把它当作“已确认退出”。
   terminationUnconfirmed: boolean
+  // P2-08 Round 6: 同一 entry 的终止确认共享在途 Promise。第一次 taskkill 尚未
+  // 回执时，第二次 stop/DELETE 必须等同一结果，不能走死父分支提前报成功。
+  terminationInFlight?: Promise<boolean>
   // 权限缓存：同会话内已批准/拒绝的操作自动放行/拒绝，避免重复审批
   // key: "toolName:JSON.stringify(toolInput)", value: true=allow, false=deny
   // 上限 100 条，超过时删除最早的条目
@@ -1437,6 +1440,24 @@ class ProcessRegistry {
     entry: ProcessEntry,
     opts?: { graceMs?: number; forceMs?: number },
   ): Promise<boolean> {
+    if (entry.terminationInFlight) return entry.terminationInFlight
+
+    const operation = this.terminateEntryInner(key, entry, opts)
+    entry.terminationInFlight = operation
+    try {
+      return await operation
+    } finally {
+      if (entry.terminationInFlight === operation) {
+        entry.terminationInFlight = undefined
+      }
+    }
+  }
+
+  private async terminateEntryInner(
+    key: string,
+    entry: ProcessEntry,
+    opts?: { graceMs?: number; forceMs?: number },
+  ): Promise<boolean> {
     const graceMs = opts?.graceMs ?? 5_000
     const forceMs = opts?.forceMs ?? 5_000
     entry.cancelled = true
@@ -1600,11 +1621,14 @@ class ProcessRegistry {
       }
     }
 
-    if (this.registry.size > MAX_PROCESSES) {
-      const entries = Array.from(this.registry.entries())
-      entries.sort((a, b) => a[1].lastActive - b[1].lastActive)
-      const toKill = entries.slice(0, entries.length - MAX_PROCESSES)
-      for (const [key, entry] of toKill) {
+    const overflow = this.registry.size - MAX_PROCESSES
+    if (overflow > 0) {
+      // 容量驱逐必须和普通 idle 清扫使用同一保护条件。cancelled/未确认树
+      // 不能为了满足上限被删；必要时允许 registry 暂时超容量。
+      const candidates = Array.from(this.registry.entries())
+        .filter(([, entry]) => !entry.cancelled && !entry.terminationUnconfirmed)
+      candidates.sort((a, b) => a[1].lastActive - b[1].lastActive)
+      for (const [key, entry] of candidates.slice(0, overflow)) {
         this.killEntryIfCurrent(key, entry)
       }
     }
