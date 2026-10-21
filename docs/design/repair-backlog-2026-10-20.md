@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`2339123`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`127 files / 1470 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`b24a6d7`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`127 files / 1477 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 写链由 `1de1fbc` 补齐，P3 #19 随之闭环。**P1/P2 全闭环**，P3 #6 由 `2339123` 闭环；剩余旧 P3 26 项。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 写链由 `1de1fbc` 补齐，P3 #19 随之闭环。**P1/P2 全闭环**，P3 #6 由 `2339123` 闭环，P3 #8 由 `b24a6d7` 闭环；剩余旧 P3 25 项。
 
 ---
 
@@ -316,7 +316,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 3 | 未修 | API 路由 / README | 无认证；README 已明确仅本机。若产品化/暴露局域网，必须加 Bearer/token |
 | 5 | 部分 | `sessions/route.ts:22`、`[id]/route.ts:71` | API 未校验 `permissionMode ∈ {default,auto}`；CLI 已固定 default，不能绕过，但非法值会静默按 default |
 | 6 | ✅ | `permission/route.ts:22` | 已由 `2339123` 闭环：route 传 sessionId；registry 校验 entry.ownerSessionId，错误 session 不消费 requestId 映射 |
-| 8 | 部分 | `path-safety.ts:20`、files accept/download | 已存在路径有 realpath；新文件父目录 symlink 未校验；下载仍 `join + readFile` |
+| 8 | ✅ | `path-safety.ts:20`、files accept/download | 已由 `b24a6d7` 闭环：不存在目标向上找最近存在祖先并 realpath；悬空 symlink fail-closed；accept mkdir 后复查；download 读取前 realpath |
 | 9 | 未修 | attachments 上传/下载 | SVG 仍允许并 `inline` 返回；改 `attachment` 或加 CSP/sandbox |
 | 10 | 部分 | `arg-safety.ts:8`、`opencode-adapter.ts:246` | Windows cmd 元字符已挡；POSIX 字符未覆盖（Windows-only 接受）；临时配置中的 API key 仍未做 ACL/清理 |
 | 12 | 部分 | `alignment.ts:83,421`、`execution.ts:819`、`chat-router.ts:289` | 仍有 4 处 `transitionPhase` 返回值未检查；补检查/测试 |
@@ -389,7 +389,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
 16. ~~P2-11 send/retry 生命周期资源引用~~（`37473ef` 已闭环）
 17. ~~P2-12 per-session 写队列 + 旧 #19~~（`1de1fbc` 已闭环）
-18. 旧 36 项 P3 表按风险分批；**下一项 #8：files 路径 symlink 逃逸**；随后 #9、#10、#12。Pin、MCP、附件、UI 可各自独立提交。
+18. 旧 36 项 P3 表按风险分批；**P3 #8 已由 `b24a6d7` 闭环；下一项 #9（attachments SVG inline）**；随后 #10、#12。Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -411,7 +411,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `127 files / 1470 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `127 files / 1477 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -439,6 +439,6 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 写链已用 `1de1fbc` 补齐，旧 P3 #19 同步闭环。
-- **P1/P2 全闭环**；P3 #6 已闭环，当前剩余为旧 P3 的 26 项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- **P1/P2 全闭环**；P3 #6、#8 已闭环，当前剩余为旧 P3 的 25 项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
