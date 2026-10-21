@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`61c7218`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`122 files / 1426 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`d2fb158`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`122 files / 1430 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06 保留完成记录；P2-03/P2-04/P1-03 的 Round 2 补项见 §2.1；旧 36 项中已修/部分修的映射见 §4。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06 保留完成记录；P2-07 已由 `d2fb158` 补齐；P2-03/P2-04/P1-03 的 Round 2 补项见 §2.1；旧 36 项中已修/部分修的映射见 §4。
 
 ---
 
@@ -44,6 +44,7 @@
 | `6292cdd` | 恢复计划审批关联 | 计划消息写任务集 plan ID；恢复要求计划已呈现且之后有用户消息；缺失时重展示到 align_arch，不自动执行 |
 | `7520866` | SSE body cancel 安全 | safeEnqueue 捕获推流异常；ReadableStream cancel 置关闭标记并清超时；后台执行与锁释放不变 |
 | `61c7218` | 嵌套 `.env` 敏感分类 | 任意目录层级 `.env`/`.env.*` 命中敏感规则；真实影 Git 审计返回 violation |
+| `d2fb158` | 拿锁后重读会话快照 | 排队请求使用锁内最新 phase/phaseStep/decisionTrace/permissionMode/projectDir/type；重读 null 回 404 |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -250,12 +251,12 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 
 **状态：** ✅ 已闭环（commit `7520866`，2026-10-20）。统一 `safeEnqueue` 捕获 enqueue 异常并停止推流；`ReadableStream.cancel()` 置 `streamClosed` 并清理 60min 超时；后台执行继续，锁仍由 `stream.start` 的 finally 释放。新增 body cancel 后继续发事件、cancel 清理定时器回归。
 
-### P2-07 拿锁前读取的会话快照可能过期
+### ✅ P2-07 拿锁前读取的会话快照可能过期
 
-**位置：** `src/app/api/sessions/[id]/chat/route.ts:28`
-**现状：** 拿锁前读取 session 的 phase/permissionMode/projectDir；排队等锁期间可能被其他请求修改，拿锁后只检查取消，没有重读。
-**最小修法：** 拿锁后重读 phase/permissionMode/projectDir（或至少校验版本），使用新快照做决策；早退路径仍释放锁。
-**测试：** 请求 A 持锁并改 permission/phase；请求 B 排队后拿到锁，必须使用新值。
+**状态：** ✅ 已闭环（commit `d2fb158`，2026-10-20）。拿锁后重新读取 `currentSession`；null 回 404；重新检查取消/删除；用新快照派生 `permissionMode`/`workDir`，并把最新 `phase/phaseStep/decisionTrace/type` 用于后续分支。新增权限/目录、phase/trace、等待中删除、等待中 stop 四条并发排队回归；变异验证移除重读后 3 条新测试精确红。
+**位置：** `src/app/api/sessions/[id]/chat/route.ts:29`
+**原现状：** 拿锁前读取 session 的 phase/permissionMode/projectDir；排队等锁期间可能被其他请求修改，拿锁后只检查取消，没有重读。
+**测试：** 请求 A 持锁并改 permission/phase；请求 B 排队后拿到锁，使用新值。
 
 ### P2-08 Windows 进程树退出确认不足
 
@@ -376,7 +377,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 
 ## 6. 建议执行顺序
 
-1. **P2-07 拿锁前旧快照**
+1. ~~P2-07 拿锁前旧快照~~（`d2fb158` 已闭环）
 2. **P2-04 F2/F3/F6/R2：明确批准记录 + align_pm 路由恢复 + 展示/执行集合一致 + 取消复查**
 3. **P2-03 F5：并发 DELETE 的 deleting 所有权**
 4. **P1-03 F4：OpenCode managed 资源最终清理**
@@ -405,7 +406,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `122 files / 1426 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `122 files / 1430 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -432,6 +433,6 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - Round 2 后不能再说“P1 全部闭环、所列 P2 均已完成”：P1-01/F1 已由 `61c7218` 闭环；P1-03 仍有 F4 资源清理尾项；P2-03 仍有 F5 并发所有权；P2-04 仍有 F2/F3/F6/R2；P2-06 已闭环。
-- 最危险的剩余项：**P2-07 拿锁前旧快照、P2-04 F2/F3（审批/真实恢复入口）、P2-03 F5（并发 DELETE）**；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。
+- 最危险的剩余项：**P2-04 F2/F3（审批/真实恢复入口）、P2-03 F5（并发 DELETE）**；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。P2-07 已由 `d2fb158` 闭环。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

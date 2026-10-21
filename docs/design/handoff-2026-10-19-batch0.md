@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `61c7218`（嵌套 `.env` 敏感分类 + SSE body cancel 安全 + 恢复计划审批关联 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `61c7218` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `d2fb158`（拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + 恢复计划审批关联 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `d2fb158` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02 已闭环；P1-03 核心隔离已完成但 F4 资源清理尾项未闭环；P2-03（F5 并发 DELETE）与 P2-04（F2/F3/F6/R2）不能整体标 ✅；P2-06 已闭环。**当前下一项是 P2-07**，Round 2 补项见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 接续提示、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v29
+> 历史说明: P1-01/02 已闭环；P1-03 核心隔离已完成但 F4 资源清理尾项未闭环；P2-03（F5 并发 DELETE）与 P2-04（F2/F3/F6/R2）不能整体标 ✅；P2-06/P2-07 已闭环。**当前下一项是 P2-04 F2/F3（审批语义与 align_pm 真实恢复入口）**，Round 2 补项见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v30
 
 ## 1. 当前状态
 
@@ -29,10 +29,11 @@
 | `6292cdd` | 恢复执行关联同一获批计划；计划 ID + 用户确认；缺失时重展示等待确认 |
 | `7520866` | SSE body cancel 安全；safeEnqueue、cancel 清理超时、后台执行与锁释放不变 |
 | `61c7218` | 任意目录层级 `.env`/`.env.*` 判敏感；嵌套 `.env` 审计 violation |
+| `d2fb158` | 拿锁后重读会话快照；排队请求使用最新阶段/权限/目录/type |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：122 files / **1426 passed / 3 skipped**
+- `npx vitest run`：122 files / **1430 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -130,7 +131,8 @@
 - ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；
 - ⚠️ P2-03 stop/delete deleting 屏障（commit `31c5946`）：单 DELETE 达标；F5 并发 DELETE 可互相清除无 owner 标记，未闭环；
 - ⚠️ P2-04 恢复执行计划审批关联（commit `6292cdd`）：机制已落地；F2/F3/F6/R2 未闭环；
-- ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；下一项 P2-07；
+- ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；
+- ✅ P2-07 拿锁后重读会话快照（commit `d2fb158`）：排队请求使用锁内最新 phase/phaseStep/decisionTrace/permissionMode/projectDir/type；重读 null 回 404；下一项 P2-04 F2/F3；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - 事件 seq 不可变 + 单 logger；
 - ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；

@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v29（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06 闭环；P1-03/P2-03/P2-04 有 Round 2 补项；下一批 P2-07 + F2/F3/F5） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v30（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环；P1-03/P2-03/P2-04 有 Round 2 补项；下一批 P2-04 F2/F3/F6/R2 + P2-03 F5） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -36,6 +36,7 @@
 | v27 | 2026-10-20 | **P2-04 恢复执行关联同一获批计划（commit 6292cdd）**。根因：任务事务已提交但 phase 未推进时，`ensureExecutableState` 只看 phase/taskCount，会自动从 align_pm/align_arch/align_qa 推进到 exec；崩溃后用户可能从未看到计划，或计划尚未确认。修复：计划消息追加任务集 plan ID（任务 ID 集合 sha256 前 16 位，无 schema 变更）；恢复前要求计划消息对应当前任务集且之后有用户消息；缺失/不匹配时 `transitionToExecution` 用现有任务重新展示计划并停回 align_arch 等待确认，不重拆、不重复建任务、不调用 handleExecution。新增 producer/consumer、未呈现、未确认、任务集不匹配、无计划重展示与 chat 路由级回归；变异验证删除计划检查/确认检查/计划 ID 均精确红。全量 122 files / 1422 passed / 3 skipped。**下一批**：P2-06/07 HTTP cancel/旧快照。 |
 | v28 | 2026-10-20 | **P2-06 SSE body cancel 安全（commit 7520866）**。根因：`controller.enqueue` 无关闭保护，ReadableStream 也没有 `cancel()` 分支；客户端取消 body 后继续推流抛 TypeError，异常穿透业务 handler 并提前结束后台处理。修复：统一 `safeEnqueue` 捕获 enqueue 异常并停止推流；`cancel()` 置关闭标记并清理 60min SSE 超时；超时/停止/错误帧均走 safeEnqueue；后台执行继续，锁仍由 stream.start 的 finally 释放。新增 reader.cancel 后继续发事件不抛错/不中断后台、cancel 清理定时器回归；变异验证 cancel 分支删除后定时器测试精确红。全量 122 files / 1424 passed / 3 skipped。**下一批**：P2-07 拿锁前旧快照、P2-08/09。 |
 | v29 | 2026-10-20 | **Round 2 复核：嵌套 `.env` 补漏（commit 61c7218）**。根因：`SENSITIVE_PREFIX` 只匹配相对路径开头，`secrets/.env` 被当作普通越界，审计仍 pass。修复：敏感模式增加任意目录层级 `(^|/)\.env(\..*)?$`；新增 `isSensitivePath`/`pickSensitive` 单元回归和真实临时 Git 的 `auditBatchChanges` violation 回归；变异验证移除模式后 3 条测试精确红。全量 122 files / 1426 passed / 3 skipped。**Round 2 仍未闭环**：F2 任意 user 消息当计划确认、F3 align_pm 真实 POST 不可达、F4 OpenCode managed 资源清理丢失、F5 并发 DELETE 清除 deleting 标记、F6 展示/批准/执行任务集不一致、R1 timeout 清理竞争、R2 needsPlan 分支取消复查不足；P1-03/P2-03/P2-04 不能整体标 ✅。**下一批**：P2-07 + F2/F3/F5。 |
+| v30 | 2026-10-20 | **P2-07 拿锁后重读会话快照（commit d2fb158）**。根因：chat route 在 `acquireSessionLock` 前读取 session，排队等锁期间上一持有者可能修改 phase/phaseStep/decisionTrace、permissionMode 或 projectDir；拿锁后只复查取消/删除，后续仍用旧快照。修复：拿锁后重读 `currentSession`，null 回 404，重新检查取消/删除，并用新值派生 permissionMode/workDir、传最新阶段信息；新增权限/目录、phase/trace、等待中删除、等待中 stop 四条并发排队回归；变异验证移除重读后 3 条新测试精确红。全量 122 files / 1430 passed / 3 skipped。**下一批**：P2-04 F2/F3/F6/R2、P2-03 F5、P1-03 F4、P2-13 R1。 |
 
 
 ---
@@ -239,7 +240,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1426 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1430 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
