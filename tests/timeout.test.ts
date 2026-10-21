@@ -23,6 +23,12 @@ async function drain(iterable: AsyncIterable<number>) {
   for await (const value of iterable) { void value }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
 describe('withTimeout — 有界清理', () => {
   it('onTimeout 抛错仍抛 TimeoutError（清理错误不能吞掉超时语义）', async () => {
     const onTimeout = vi.fn().mockRejectedValue(new Error('cleanup failed'))
@@ -71,6 +77,29 @@ describe('withTimeout — 有界清理', () => {
     await expect(
       drain(withTimeout(source, 20, { cleanupTimeoutMs: 30 })),
     ).rejects.toBeInstanceOf(TimeoutError)
+  }, 2000)
+
+  it('R1: onTimeout 清理期间 next 完成，仍必须抛 TimeoutError', async () => {
+    const cleanupStarted = deferred<void>()
+    const releaseCleanup = deferred<void>()
+    let resolveNext!: (value: IteratorResult<number>) => void
+    const source = {
+      [Symbol.asyncIterator]() { return this },
+      next: () => new Promise<IteratorResult<number>>((resolve) => { resolveNext = resolve }),
+      return: async () => ({ done: true as const, value: undefined }),
+    }
+    const onTimeout = vi.fn(async () => {
+      cleanupStarted.resolve()
+      await releaseCleanup.promise
+    })
+
+    const pending = drain(withTimeout(source, 20, { onTimeout, cleanupTimeoutMs: 500 }))
+    await cleanupStarted.promise
+    resolveNext({ done: true, value: undefined })
+    releaseCleanup.resolve()
+
+    await expect(pending).rejects.toBeInstanceOf(TimeoutError)
+    expect(onTimeout).toHaveBeenCalledTimes(1)
   }, 2000)
 
   it('正常完成不触发 onTimeout', async () => {

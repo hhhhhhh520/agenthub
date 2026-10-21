@@ -73,22 +73,20 @@ export async function* withTimeout<T>(
       const result = await Promise.race([
         iterator.next(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(async () => {
+          timer = setTimeout(() => {
             timedOut = true
-            try {
-              if (options?.onTimeout) {
-                await runCleanupBounded(
-                  options.onTimeout,
-                  options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS,
-                  'onTimeout cleanup',
-                )
-              }
-            } catch (err) {
-              console.warn('[withTimeout] onTimeout cleanup failed:', err instanceof Error ? err.message : err)
-            } finally {
-              // 关键：cleanup 抛错/挂起都不能跳过 reject；这里只保证 reject 一定执行。
-              reject(new TimeoutError(timeoutMs, 'withTimeout'))
+            // R1: 超时必须先于 next 的迟到结果胜出。onTimeout 只启动有界清理，
+            // 不能 await 它——否则清理期间 next(done) 会先完成并吞掉 TimeoutError。
+            if (options?.onTimeout) {
+              void runCleanupBounded(
+                options.onTimeout,
+                options.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS,
+                'onTimeout cleanup',
+              ).catch((err) => {
+                console.warn('[withTimeout] onTimeout cleanup failed:', err instanceof Error ? err.message : err)
+              })
             }
+            reject(new TimeoutError(timeoutMs, 'withTimeout'))
           }, remaining)
         }),
       ])
