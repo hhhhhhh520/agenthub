@@ -165,6 +165,25 @@ describe('chat recovery route — P2-04 未获批计划不得自动执行', () =
     expect(planMessage?.rawContent).toContain('计划编号：plan-')
   })
 
+  it('P1: done + 新任务但计划未展示，拒绝执行并重呈计划', async () => {
+    mocks.sessionFindUnique.mockResolvedValue({ ...session, phase: 'done', phaseStep: '' })
+    mocks.messageFindMany.mockResolvedValue([{ role: 'user', rawContent: '不同意，先不要执行' }])
+
+    const request = new Request('http://localhost/api/sessions/s1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: '不同意，先不要执行' }),
+    })
+    const res = await POST(request, params)
+    await res.text()
+
+    expect(mocks.handleExecution).not.toHaveBeenCalled()
+    const planMessage = mocks.messageCreate.mock.calls
+      .map(c => c[0]?.data)
+      .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
+    expect(planMessage?.rawContent).toContain('计划编号：plan-')
+  })
+
   it('F2: 明确确认执行写入结构化批准记录并放行', async () => {
     const planId = buildPlanId(['t1'])
     const rows: Array<{ role: string; agentId?: string | null; rawContent: string }> = [

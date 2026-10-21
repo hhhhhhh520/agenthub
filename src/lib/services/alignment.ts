@@ -721,8 +721,9 @@ export async function ensureExecutableState(
 
   const state = stateFromSession(session.phase, rawStep)
   if (state === 'exec') return { ok: true, atExec: true }
-  // idle/done 的 execute 是调用方的合法动作，不经过对齐恢复；计划检查只约束 align_* 的自动推进。
-  if (state === 'idle' || state === 'done') return { ok: true, atExec: false }
+  // idle 的 execute 是调用方的合法动作，不经过对齐恢复；done 仍有未执行任务时
+  // 必须先通过计划 gate（否则“任务已提交、计划未展示”的恢复会绕过审批）。
+  if (state === 'idle') return { ok: true, atExec: false }
 
   // P2-04: 任务已建但 phase 未推进时不能凭 taskCount 直接执行。计划消息必须对应当前任务集，
   // 且之后有用户消息（用户确认/执行指令）。缺失时返回 needsPlan，由 transitionToExecution
@@ -740,6 +741,11 @@ export async function ensureExecutableState(
   const approvalIndex = findApprovalRecordIndex(messageRows, planId)
   if (approvalIndex < 0 || approvalIndex <= planIndex || approvalIndex < latestUserIndex) {
     return { ok: false, needsPlan: true, reason: '计划尚未获得用户明确批准，拒绝自动执行' }
+  }
+
+  if (state === 'done') {
+    // 计划已展示且已明确批准：done 恢复为调用方合法 execute，不额外写 phase。
+    return { ok: true, atExec: false }
   }
 
   if (state === 'align_pm') {
@@ -794,7 +800,7 @@ async function presentPlanForConfirmation(
 
   const state = stateFromSession(session.phase, session.phaseStep ?? '')
   if (state !== 'align_arch') {
-    if (state !== 'align_pm' && state !== 'align_qa') {
+    if (state !== 'align_pm' && state !== 'align_qa' && state !== 'done') {
       sendEvent({ agentId: 'orchestrator', type: 'error', content: `当前状态 ${state} 不支持重新展示计划` })
       return
     }

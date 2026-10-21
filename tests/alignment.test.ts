@@ -386,6 +386,23 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
     expect(phaseWrites).toHaveLength(0)
   })
 
+  it('P1: done + 有任务但计划未呈现：拒绝执行并重呈计划', async () => {
+    setupState('done', '')
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '不同意，先不要执行' }])
+
+    await transitionToExecution('sess1', agents, mocks.mockSendEvent, '不同意，先不要执行')
+
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+    const planMessage = mocks.mockMessageCreate.mock.calls
+      .map(c => c[0]?.data)
+      .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
+    expect(planMessage?.rawContent).toContain('计划编号：plan-')
+    const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))
+    expect(phaseWrites).toEqual([{ phase: 'alignment', phaseStep: 'architect_plan' }])
+  })
+
   it('P2-04: align_pm + 有任务但计划未呈现：拒绝恢复，不写 phase', async () => {
     setupState('alignment', 'pm_confirm')
     mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
