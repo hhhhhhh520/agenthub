@@ -1292,10 +1292,28 @@ class ProcessRegistry {
    * 通过 requestId 响应权限请求
    * 解决 permission route 无法构造 effectiveKey 的问题
    */
-  respondPermissionByRequestId(requestId: string, result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string }): boolean {
+  respondPermissionByRequestId(
+    requestId: string,
+    result: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string },
+    expectedOwnerSessionId?: string,
+  ): boolean {
     const effectiveKey = this.requestIdToKey.get(requestId)
     if (!effectiveKey) {
       console.warn(`[respondPermissionByRequestId] 未找到 requestId=${requestId} 的映射`)
+      return false
+    }
+    const entry = this.registry.get(effectiveKey)
+    if (!entry) {
+      this.requestIdToKey.delete(requestId)
+      return false
+    }
+    // P3 #6: requestId 只能由所属 chat session 响应。错误 session 不能消费
+    // 映射/唤醒 pending，否则跨会话可批准或拒绝另一个会话的工具请求。
+    if (expectedOwnerSessionId !== undefined && entry.ownerSessionId !== expectedOwnerSessionId) {
+      console.warn(
+        `[respondPermissionByRequestId] session 不匹配 requestId=${requestId} ` +
+        `expected=${expectedOwnerSessionId} actual=${entry.ownerSessionId ?? 'null'}`,
+      )
       return false
     }
     this.requestIdToKey.delete(requestId)

@@ -53,7 +53,7 @@ describe('POST /api/sessions/[id]/permission', () => {
     expect(res.status).toBe(404)
   })
 
-  it('calls respondPermissionByRequestId with correct params', async () => {
+  it('calls respondPermissionByRequestId with correct params and owner session', async () => {
     const res = await POST(makeReq({
       requestId: 'req-123',
       behavior: 'allow',
@@ -63,7 +63,8 @@ describe('POST /api/sessions/[id]/permission', () => {
     expect(res.status).toBe(200)
     expect(mockRespondPermissionByRequestId).toHaveBeenCalledWith(
       'req-123',
-      expect.objectContaining({ behavior: 'allow', updatedInput: { command: 'ls' } })
+      expect.objectContaining({ behavior: 'allow', updatedInput: { command: 'ls' } }),
+      's1',
     )
   })
 
@@ -76,7 +77,8 @@ describe('POST /api/sessions/[id]/permission', () => {
     }), params)
     expect(mockRespondPermissionByRequestId).toHaveBeenCalledWith(
       'req-456',
-      expect.objectContaining({ behavior: 'deny', message: 'User denied this tool use' })
+      expect.objectContaining({ behavior: 'deny', message: 'User denied this tool use' }),
+      's1',
     )
   })
 

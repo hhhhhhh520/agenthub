@@ -23,7 +23,7 @@ export async function POST(
     behavior,
     updatedInput,
     message,
-  })
+  }, sessionId)
   if (!success) {
     return Response.json({ error: 'Permission request not found or already expired' }, { status: 404 })
   }

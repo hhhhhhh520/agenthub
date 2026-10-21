@@ -85,6 +85,41 @@ function spyOnStdinWrites(): string[] {
   return writes
 }
 
+describe('P3 #6: permission request 归属校验', () => {
+  it('requestId 只能由所属 session 响应；错误 session 不消费映射', () => {
+    const keyA = 'owner-session-a'
+    const keyB = 'owner-session-b'
+    processRegistry.getOrCreate(keyA, { workDir: '/dir', chatSessionId: 's1' })
+    processRegistry.getOrCreate(keyB, { workDir: '/dir', chatSessionId: 's2' })
+    const entryA = (globalThis as any).__processRegistry.get(keyA)
+    const resolve = vi.fn()
+    entryA.pendingPermissions.set('req-owner', {
+      requestId: 'req-owner',
+      toolName: 'Bash',
+      toolInput: { command: 'ls' },
+      resolve,
+    })
+    ;(processRegistry as any).requestIdToKey.set('req-owner', keyA)
+
+    expect(processRegistry.respondPermissionByRequestId(
+      'req-owner',
+      { behavior: 'allow' },
+      's2',
+    )).toBe(false)
+    expect(entryA.pendingPermissions.has('req-owner')).toBe(true)
+    expect((processRegistry as any).requestIdToKey.get('req-owner')).toBe(keyA)
+    expect(resolve).not.toHaveBeenCalled()
+
+    expect(processRegistry.respondPermissionByRequestId(
+      'req-owner',
+      { behavior: 'allow' },
+      's1',
+    )).toBe(true)
+    expect(resolve).toHaveBeenCalledTimes(1)
+    expect(entryA.pendingPermissions.has('req-owner')).toBe(false)
+  })
+})
+
 describe('ISSUE-006: permissionCache', () => {
   describe('respondPermission 写入缓存', () => {
     it('allow 响应缓存为 true，key 为 toolName:JSON(input)', () => {
