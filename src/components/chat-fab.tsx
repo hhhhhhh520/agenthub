@@ -5,6 +5,7 @@ import { MessageSquare, X, Send, Plus, Minimize2, Shield, Loader2 } from 'lucide
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
+import { OpencodeReadOnlyHint } from '@/components/opencode-readonly-hint'
 import { useChatFab } from '@/lib/hooks/use-chat-fab'
 
 const STARTER_PROMPTS = [
@@ -300,6 +301,8 @@ export function ChatFab() {
               </div>
             </div>
           ))}
+
+          <OpencodeReadOnlyHint platform={selectedAgent?.platform} />
 
           {/* Input */}
           <div className="border-t p-3">

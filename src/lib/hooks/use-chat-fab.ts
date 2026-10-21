@@ -6,6 +6,7 @@ interface Agent {
   id: string
   name: string
   expertise: string
+  platform: string
   accentColor: string
   status: string
 }
