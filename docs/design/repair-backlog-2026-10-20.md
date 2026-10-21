@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`325d32d`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`126 files / 1465 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`37473ef`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`126 files / 1467 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11、P2-12 仍重开，P3 #19 随之重开。剩余 P2-11/12 与旧 P3。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 仍重开，P3 #19 随之重开。剩余 P2-12 与旧 P3。
 
 ---
 
@@ -288,11 +288,10 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 **状态：** ✅ 已闭环（commit `a45921a`，2026-10-20）。新增 `OpencodeReadOnlyHint`，私聊 ChatFab 在 `selectedAgent.platform === 'opencode'` 时显示“默认只读，写操作需 `/permission auto`”提示；Claude/未选择不渲染。新增 server-render 组件回归；变异验证移除平台门禁后测试精确红。
 **位置：** `src/components/chat-fab.tsx`、`src/components/opencode-readonly-hint.tsx`
 
-### 🔴 P2-11 配置清扫 owner/实例/运行引用护栏（Round 5 重新打开）
+### ✅ P2-11 配置清扫 owner/实例/运行引用护栏
 
-**原修复：** commit `f889819` 已覆盖“另一实例 PID 存活”场景：OpenCode 创建 XDG 目录时写 `.agenthub-owner.json`；sweep 对其他存活 owner 保留。
-**Round 5 R5-04：** 不需要多实例。working 进程异常退出后，send 进入 retry backoff；exit handler 保留 XDG 但删除 registry entry，`getActiveManagedConfigDirs()` 漏掉该目录；owner 为本进程时 `isOtherInstanceOwnerAlive()` 判为可清理，正常 `GET /api/agents` sweep 会删掉待复用目录。另：mkdir → marker 发布窗口、marker 写失败被吞仍是无保护窗口。
-**位置：** `src/lib/services/claude-cfg-maintenance.ts`、`src/lib/adapter/process-registry.ts`、`src/lib/adapter/opencode-adapter.ts`
+**状态：** ✅ 已闭环（commit `f889819` + `37473ef`）。`f889819` 覆盖其他实例存活 owner；Round 5 R5-04 补齐本进程 retry 场景：owner PID 存活（含 `process.pid`）一律保留；marker 损坏/不可读也保留；无 marker 的历史 agent-only 目录仍按旧规则清理。新增本进程 retry 目录与损坏 marker 回归；变异验证恢复 self 可删/损坏可删后测试分别精确红。
+**位置：** `src/lib/services/claude-cfg-maintenance.ts`、`src/lib/adapter/opencode-adapter.ts`
 
 ### 🔴 P2-12 事件 seq 不可变 + 单 logger + SSE 轮询重叠（Round 5 重新打开 / 旧 #19）
 
@@ -390,7 +389,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 13. ~~P2-10 OpenCode 私聊只读提示~~（`a45921a` 已闭环）
 14. ~~P2-13 同步清理前缀吞 TimeoutError~~（`cec556f` 已闭环）
 15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
-16. **P2-11 send/retry 生命周期资源引用**（Round 5 重开）
+16. ~~P2-11 send/retry 生命周期资源引用~~（`37473ef` 已闭环）
 17. **P2-12 per-session 写队列 + 旧 #19**（Round 5 重开）
 18. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
@@ -414,7 +413,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `126 files / 1465 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `126 files / 1467 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -441,7 +440,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11、P2-12 仍重开；旧 P3 #19 随之重开。
-- 当前剩余：P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 仍重开；旧 P3 #19 随之重开。
+- 当前剩余：P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

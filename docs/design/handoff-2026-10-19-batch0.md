@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `325d32d`（P1-03 终态 managed 清理 + P2-13 超时先结算 + P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `325d32d` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `37473ef`（P2-11 本进程 retry owner 保护 + P1-03 终态 managed 清理 + P2-13 超时先结算 + P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `37473ef` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02/03 已闭环；P2-01..10 保持验收；P2-08/P2-13 经 Round 5 二次闭环，P1-03 终态清理由 `325d32d` 补齐，P2-11/12 重开。**当前下一项是 P2-11，其次 P2-12，再旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v46
+> 历史说明: P1-01/02/03 已闭环；P2-01..10 保持验收；P2-08/P2-11/P2-13 经 Round 5 二次闭环，P1-03 终态清理由 `325d32d` 补齐，P2-12 仍重开。**当前下一项是 P2-12，随后旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v47
 
 ## 1. 当前状态
 
@@ -47,10 +47,11 @@
 | `1fd420e` | 未确认进程树状态保留；二次 stop/DELETE 仍返回 unconfirmed |
 | `cec556f` | 超时先 reject 再启动清理；同步 next(done) 不能吞 TimeoutError |
 | `325d32d` | 永久失败/取消/重试耗尽用原 entry 引用最终清理 managed 路径 |
+| `37473ef` | sweep 保留本进程 owner 的 retry XDG；损坏 marker 不删 |
 
 回归基线（2026-10-21）：
 
-- `npx vitest run`：126 files / **1465 passed / 3 skipped**
+- `npx vitest run`：126 files / **1467 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -150,7 +151,7 @@
 - ✅ P2-03 stop/delete deleting 屏障（commit `31c5946` + `95e0755`）：单 DELETE 达标；并发 DELETE 第二个直接 409，不破坏首个删除者标记；
 - ✅ P2-09 Agent 创建取消安全（commit `a73f2d7`）：入口/LLM 后/事务内复查取消；Agent+成员+消息原子提交；
 - ✅ P2-10 OpenCode 私聊只读提示（commit `a45921a`）：ChatFab 按 platform 显示只读提示与 `/permission auto` 切换说明；
-- ⚠️ P2-11 配置清扫 owner 护栏（commit `f889819`）：其他实例存活 owner 已保护；Round 5 发现同进程 send/retry 目录会被 sweep 删除，重开；
+- ✅ P2-11 配置清扫 owner 护栏（commit `f889819` + `37473ef`）：其他实例与本进程 retry owner 均保留；损坏 marker 不删；
 - ⚠️ P2-12 事件 seq / SSE 轮询护栏（commit `61f5b0d`）：seq 唯一与 SSE in-flight 已修；Round 5 发现跨 logger 写链仍可 `1、3、2` 落库漏补发，重开；
 - ✅ P2-04 恢复执行计划审批关联（commit `6292cdd` + `351cdbe` + `52d66c9` + `3bb12ad` + `1af2112` + `0412a39`）：结构化批准绑定 plan ID、align_pm 真实恢复、全任务集一致、done 恢复审批、问句不算批准、恢复写入前取消复查、Q&A 批准保存均已完成；下一项 P1-03 F4；
 - ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；
