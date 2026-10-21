@@ -281,6 +281,7 @@
 | `.ENV` 大小写敏感分类（commit 4a7efec） | 根因：`.env` 敏感模式大小写敏感；Windows 上 `.ENV` 与 `.env` 是同一文件，但 `.ENV` 被审计判为普通越界。修复：任意层级 `.env` 模式加 `i` 标志；补 `.ENV`/`.Env.Local` 与 `pickSensitive` 回归；变异验证移除 `i` 后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 问句不再算计划批准（commit 3bb12ad） | 根因：`isExplicitPlanApproval` 的 normalize 删除全角/ASCII 问号，`执行？` 变成 `执行` 并命中批准集合。修复：保留问号，问句不再命中；感叹号/句号等语气标点仍忽略。新增 `执行？`/`确认执行?` 拒绝与 `执行！` 通过回归；变异验证恢复问号剥离后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 恢复 phase 写入前复查取消（commit 1af2112） | 根因：已批准恢复在查询计划/批准记录后直接写 align_decompose/execute，取消发生在查询期间时 phase 已推进，调用方之后才发现停止。修复：approval gate 后、align_pm→align_decompose 后各加取消复查；取消后不再写 execute。新增 approved plan + 查询期间取消、断言零 phase 写入回归；变异验证移除 gate 后复查后测试精确红。全量 123 files / 1448 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| Q&A 路由保存明确批准（commit 0412a39） | 根因：`recordPlanApproval` 只在 execute 分支调用；用户明确确认执行但模型路由到 align_qa 时不保存批准，QA 无问题后 transitionToExecution 仍要求再次确认。修复：align_qa 分支也记录明确批准；后续 user 消息仍会使旧批准失效。新增真实 route + handleAgentQA 无问题直接执行回归；变异验证移除 align_qa 记录后测试精确红。全量 123 files / 1449 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
 
 ### ⏳ 进行中
 
