@@ -14,6 +14,7 @@ import { Shield, Pin } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FileCard } from '@/components/file-card'
 import { AttachmentInput, type AttachmentPreview } from '@/components/attachment-input'
+import { toast } from 'sonner'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
   user: { bg: 'bg-blue-500 text-white ml-auto', label: 'You' },
@@ -135,6 +136,10 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   }
 
   const handleSend = () => {
+    if (attachments.some(a => a.uploading)) {
+      toast.error('附件仍在上传中，请稍候')
+      return
+    }
     const mentionAll = input.includes('@所有人')
     let targetAgent: string | undefined
     if (!mentionAll) {
@@ -528,14 +533,21 @@ function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionI
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filePath, content, force: true }),
         })
-        if (retryRes.ok) setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
+        if (!retryRes.ok) {
+          const data = await retryRes.json().catch(() => null)
+          throw new Error(data?.error || `覆盖失败 (${retryRes.status})`)
+        }
+        setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
         return
       }
-      if (res.ok) {
-        setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || `接受失败 (${res.status})`)
       }
+      setDiffStatus(prev => ({ ...prev, [idx]: 'accepted' }))
     } catch (e) {
       console.error('Accept failed:', e)
+      toast.error(e instanceof Error ? e.message : '接受文件失败')
     }
   }
 

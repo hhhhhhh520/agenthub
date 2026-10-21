@@ -1,22 +1,22 @@
 "use client"
 
-import { useRef, useCallback } from "react"
+import { useRef, useCallback, type Dispatch, type SetStateAction } from "react"
 import { Paperclip, X, Loader2 } from "lucide-react"
 import { toast } from "sonner"
+import {
+  appendPlaceholders,
+  mergeUploaded,
+  removePlaceholders,
+  type AttachmentUploadState,
+  type UploadedAttachment,
+} from '@/lib/attachment-upload'
 
-export interface AttachmentPreview {
-  id: string
-  filename: string
-  mimeType: string
-  size: number
-  uploading: boolean
-  previewUrl?: string
-}
+export type AttachmentPreview = AttachmentUploadState
 
 interface AttachmentInputProps {
   sessionId: string
   attachments: AttachmentPreview[]
-  onAttachmentsChange: (attachments: AttachmentPreview[]) => void
+  onAttachmentsChange: Dispatch<SetStateAction<AttachmentPreview[]>>
 }
 
 export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }: AttachmentInputProps) {
@@ -41,7 +41,7 @@ export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }:
       uploading: true,
       previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
     }))
-    onAttachmentsChange([...attachments, ...placeholders])
+    onAttachmentsChange(prev => appendPlaceholders(prev, placeholders))
 
     // Upload
     const formData = new FormData()
@@ -56,7 +56,10 @@ export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }:
         const err = await res.json()
         throw new Error(err.error || 'Upload failed')
       }
-      const result: Array<{ id: string; filename: string; mimeType: string; size: number }> = await res.json()
+      const result: UploadedAttachment[] = await res.json()
+      if (result.length !== placeholders.length) {
+        throw new Error(`上传结果数量不一致：期望 ${placeholders.length}，实际 ${result.length}`)
+      }
 
       // Show toast for images
       const hasImages = result.some(r => r.mimeType.startsWith('image/'))
@@ -64,36 +67,14 @@ export function AttachmentInput({ sessionId, attachments, onAttachmentsChange }:
         toast.info('请确认当前模型支持图片输入')
       }
 
-      // Update placeholders with real IDs
-      const updated = attachments.map(a => {
-        const match = placeholders.find(p => p.id === a.id)
-        if (match) {
-          const real = result.find(r => r.filename === a.filename)
-          if (real) {
-            return { ...a, id: real.id, uploading: false }
-          }
-        }
-        return a
-      })
-      // Add newly uploaded items that weren't placeholders
-      const newItems = result
-        .filter(r => !updated.some(u => u.id === r.id))
-        .map(r => ({
-          id: r.id,
-          filename: r.filename,
-          mimeType: r.mimeType,
-          size: r.size,
-          uploading: false,
-          previewUrl: r.mimeType.startsWith('image/') ? `/api/attachments/${r.id}` : undefined,
-        }))
-      onAttachmentsChange([...updated, ...newItems])
+      // 函数式合并：两个并发上传各自只更新自己的占位，不覆盖对方的批次。
+      onAttachmentsChange(prev => mergeUploaded(prev, placeholders, result))
     } catch (err) {
       console.error('Upload failed:', err)
       toast.error('附件上传失败')
-      // Remove failed placeholders
-      onAttachmentsChange(attachments.filter(a => !placeholders.some(p => p.id === a.id)))
+      onAttachmentsChange(prev => removePlaceholders(prev, placeholders))
     }
-  }, [sessionId, attachments, onAttachmentsChange])
+  }, [sessionId, onAttachmentsChange])
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])

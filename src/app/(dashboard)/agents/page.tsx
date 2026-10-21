@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { ProviderImportDialog } from "@/components/provider-import-dialog"
+import { assertOkResponse } from "@/lib/http-error"
 
 interface Agent {
   id: string
@@ -133,11 +134,12 @@ export default function AgentsPage() {
         open={showImport}
         onOpenChange={setShowImport}
         onImport={async (config) => {
-          await fetch('/api/providers/import', {
+          const res = await fetch('/api/providers/import', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config),
           })
+          await assertOkResponse(res, '导入服务商失败')
           loadAgents()
         }}
       />

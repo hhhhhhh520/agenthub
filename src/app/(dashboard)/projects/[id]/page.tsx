@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useParams } from "next/navigation"
-import { ArrowLeft, Send } from "lucide-react"
+import { ArrowLeft, Send, Shield } from "lucide-react"
 import Link from "next/link"
+import { toast } from "sonner"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentPanel } from "@/components/agent-panel"
+import { applyProjectPermissionEvent, type ProjectPendingPermission } from "@/lib/project-permissions"
 
 interface Session {
   id: string
@@ -49,10 +51,12 @@ export default function ProjectDetailPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
+  const [pendingPermissions, setPendingPermissions] = useState<ProjectPendingPermission[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!sessionId) return
+    setPendingPermissions([])
     fetch(`/api/sessions/${sessionId}`).then(r => r.json()).then(setSession)
     fetch(`/api/sessions/${sessionId}/messages`).then(r => r.json()).then(data => { if (Array.isArray(data)) setMessages(data) })
     fetch(`/api/sessions/${sessionId}/agents`).then(r => r.json()).then(data => { if (Array.isArray(data)) setAgents(data) })
@@ -110,6 +114,8 @@ export default function ProjectDetailPage() {
                 agentId: event.agentId === "orchestrator" ? undefined : event.agentId,
                 createdAt: new Date().toISOString(),
               }])
+            } else if (event.type === "permission_request" || event.type === "permission_cancel") {
+              setPendingPermissions(prev => applyProjectPermissionEvent(prev, event))
             }
           } catch {}
         }
@@ -119,6 +125,19 @@ export default function ProjectDetailPage() {
     } finally {
       setSending(false)
     }
+  }
+
+  const respondPermission = async (requestId: string, behavior: 'allow' | 'deny', agentId: string) => {
+    const res = await fetch(`/api/sessions/${sessionId}/permission`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId, behavior, agentId }),
+    })
+    if (!res.ok) {
+      toast.error('权限响应失败，请重试')
+      return
+    }
+    setPendingPermissions(prev => prev.filter(p => p.requestId !== requestId))
   }
 
   if (!session) {
@@ -200,6 +219,25 @@ export default function ProjectDetailPage() {
               <div ref={messagesEndRef} />
             </div>
           </ScrollArea>
+
+          {pendingPermissions.map(p => (
+            <div key={p.requestId} className="border-t px-3 py-2 text-sm bg-amber-50 text-amber-800 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-1 min-w-0">
+                <Shield className="w-4 h-4 shrink-0" />
+                Agent 请求使用 <strong>{p.toolName}</strong>
+                {p.toolName === 'Bash' && !!p.toolInput?.command && (
+                  <code className="ml-1 text-xs bg-amber-100 px-1 rounded truncate">{String(p.toolInput.command)}</code>
+                )}
+                {p.toolName === 'Write' && !!p.toolInput?.file_path && (
+                  <code className="ml-1 text-xs bg-amber-100 px-1 rounded truncate">{String(p.toolInput.file_path)}</code>
+                )}
+              </span>
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="destructive" onClick={() => respondPermission(p.requestId, 'deny', p.agentId)}>拒绝</Button>
+                <Button size="sm" onClick={() => respondPermission(p.requestId, 'allow', p.agentId)}>允许</Button>
+              </div>
+            </div>
+          ))}
 
           {/* Input */}
           <div className="border-t p-3 shrink-0">

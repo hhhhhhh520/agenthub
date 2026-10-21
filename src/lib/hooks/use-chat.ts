@@ -192,10 +192,29 @@ export function useChat(sessionId: string | null) {
     }
   }, [sessionId])
 
-  // §3.1: 游标跨刷新恢复——after=lastSeq 精准补发断线窗口（非全量历史回放）
+  // P3 #21: 切换会话必须中止旧流并清空瞬时状态，避免 A 会话的 streaming/权限/
+  // 思考块/工具调用串到 B；游标同时切到 B 的 lastSeq（或 0），不能继承 A。
   useEffect(() => {
-    if (!sessionId) return
-    seqGateRef.current = createSeqGate(loadLastSeq(sessionId))
+    abortRef.current?.abort()
+    abortRef.current = null
+    if (streamTimerRef.current) {
+      clearTimeout(streamTimerRef.current)
+      streamTimerRef.current = null
+    }
+    streamBufferRef.current = {}
+    setMessages([])
+    setStreaming({})
+    setLoading(false)
+    setPhase('idle')
+    setAwaitingInput(null)
+    setPendingPermissions([])
+    setThinking({})
+    setToolCalls([])
+    if (sessionId) {
+      seqGateRef.current = createSeqGate(loadLastSeq(sessionId))
+    } else {
+      seqGateRef.current = createSeqGate(0)
+    }
   }, [sessionId])
 
   // §3.1: 重放通道——连接内断线由 EventSource 原生自动重连（带 Last-Event-ID）；

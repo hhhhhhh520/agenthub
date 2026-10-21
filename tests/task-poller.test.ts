@@ -119,6 +119,20 @@ describe('createTaskPoller 轮询生命周期', () => {
     h.poller.stop()
   })
 
+  it('P3 #27: description/dependencies 变化必须刷新任务板（不能只看 status/trace）', async () => {
+    const oldTask = { id: 't1', status: 'pending', description: '旧描述', dependencies: '[]', trace: '[]' }
+    const newTask = { id: 't1', status: 'pending', description: '新描述', dependencies: '["t0"]', trace: '[]' }
+    const h = harness((call) => (call === 1 ? [oldTask] : [newTask]))
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(h.tasks()).toEqual([oldTask])
+    await vi.advanceTimersByTimeAsync(3_000)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(h.tasks()).toEqual([newTask])
+    h.poller.stop()
+  })
+
   it('redo 常开时无变化也保持 1s', async () => {
     const h = harness(() => [task('pending')], true)
     await vi.advanceTimersByTimeAsync(0)

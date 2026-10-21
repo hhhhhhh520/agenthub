@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { assertOkResponse } from '@/lib/http-error'
 
 interface Props {
   open: boolean
@@ -53,6 +54,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
     setDetecting(true)
     try {
       const res = await fetch('/api/config/detect-platform', { method: 'POST' })
+      await assertOkResponse(res, '检测平台失败')
       const data = await res.json()
       setDetectedPlatform(data.cliAvailable ? data.platform : null)
     } catch {
@@ -65,6 +67,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
   const fetchProviders = async () => {
     try {
       const res = await fetch('/api/providers')
+      await assertOkResponse(res, '读取服务商配置失败')
       const data = await res.json()
       setProviders(data)
       setShowProviders(true)
@@ -98,14 +101,9 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
     setTestResult(null)
     setError('')
     try {
-      if (!imported && !detectedPlatform) {
-        await fetch('/api/config/orchestrator', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ apiKey, model, baseUrl, platform: 'claude-code' }),
-        })
-      }
+      // 连接测试不落库：未保存的配置不应因为“测试”而被写入。
       const res = await fetch('/api/config/test-connection', { method: 'POST' })
+      await assertOkResponse(res, '连接测试失败')
       const data = await res.json()
       setTestResult(data)
     } catch (e) {
@@ -122,7 +120,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
       // 保存配置到 Orchestrator Agent 和 AppConfig
       const platform = detectedPlatform || 'claude-code'
       if (!imported) {
-        await fetch('/api/config/orchestrator', {
+        const saveRes = await fetch('/api/config/orchestrator', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -132,15 +130,18 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
             platform,
           }),
         })
+        await assertOkResponse(saveRes, '保存配置失败')
       }
 
       if (applyToPresets) {
         const orchRes = await fetch('/api/config/orchestrator')
+        await assertOkResponse(orchRes, '读取配置失败')
         const orchData = await orchRes.json()
         const agentsRes = await fetch('/api/agents?preset=true')
+        await assertOkResponse(agentsRes, '读取预设 Agent 失败')
         const agents = await agentsRes.json()
         for (const agent of agents) {
-          await fetch(`/api/agents/${agent.id}`, {
+          const updateRes = await fetch(`/api/agents/${agent.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -148,14 +149,16 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
               model: orchData.model || model,
             }),
           })
+          await assertOkResponse(updateRes, `更新 Agent ${agent.name || agent.id} 失败`)
         }
       }
 
-      await fetch('/api/config', {
+      const completeRes = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ setupCompleted: 'true' }),
       })
+      await assertOkResponse(completeRes, '保存完成状态失败')
 
       setStep('done')
       setTimeout(() => { onComplete(); onOpenChange(false) }, 1500)
@@ -167,12 +170,18 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
   }
 
   const handleSkip = async () => {
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setupCompleted: 'true' }),
-    })
-    onOpenChange(false)
+    setError('')
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ setupCompleted: 'true' }),
+      })
+      await assertOkResponse(res, '保存跳过状态失败')
+      onOpenChange(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保存失败')
+    }
   }
 
   return (

@@ -13,6 +13,9 @@ import { isTaskList } from './tasks-payload'
 export interface TaskSnapshot {
   id: string
   status: string
+  description?: string
+  dependencies?: string
+  assignedAgentId?: string
   trace?: string
 }
 
@@ -44,11 +47,19 @@ export function createTaskPoller({ fetchTasks, setTasks, setLoading, redoFast }:
         const list = data as TaskSnapshot[]
         setTasks((prev) => {
           if (list.length !== prev.length) return list
-          const changed = list.some((t, i) => t.status !== prev[i].status || t.trace !== prev[i].trace)
+          const changed = list.some((t, i) =>
+            t.status !== prev[i].status
+            || t.description !== prev[i].description
+            || t.dependencies !== prev[i].dependencies
+            || t.assignedAgentId !== prev[i].assignedAgentId
+            || t.trace !== prev[i].trace
+          )
           return changed ? list : prev
         })
-        // 节奏判定用的轻量签名（id+status+trace长度），与渲染层 diff 解耦
-        const sig = list.map((t) => `${t.id}:${t.status}:${t.trace?.length ?? 0}`).join('|')
+        // 节奏判定签名覆盖任务板所有可见字段；只看 status/trace 会让 redo 改描述/依赖后 UI 不刷新。
+        const sig = list.map((t) =>
+          `${t.id}:${t.status}:${t.description ?? ''}:${t.dependencies ?? ''}:${t.assignedAgentId ?? ''}:${t.trace?.length ?? 0}`
+        ).join('|')
         changedSinceLastPoll = sig !== lastSig
         lastSig = sig
         errorCount = 0

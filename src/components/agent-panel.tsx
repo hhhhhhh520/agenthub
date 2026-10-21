@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getAgentStyle, STATUS_COLORS } from '@/lib/agent-colors'
 import { createTaskPoller } from '@/lib/task-poller'
+import { assertOkResponse } from '@/lib/http-error'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
 import { toast } from 'sonner'
@@ -298,14 +299,16 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config),
           })
+          await assertOkResponse(res, '导入服务商失败')
           const data = await res.json()
           // Add the imported agent to current session
           if (sessionId && data.agent?.id) {
-            await fetch(`/api/sessions/${sessionId}/members`, {
+            const memberRes = await fetch(`/api/sessions/${sessionId}/members`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ agentId: data.agent.id }),
             })
+            await assertOkResponse(memberRes, '加入当前会话失败')
           }
           loadAgents()
         }}

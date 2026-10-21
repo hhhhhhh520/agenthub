@@ -18,13 +18,14 @@ interface Provider {
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onImport: (config: { provider: string; agentId?: string }) => void
+  onImport: (config: { provider: string; agentId?: string }) => void | Promise<void>
   agentId?: string
 }
 
 export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: Props) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [loading, setLoading] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -38,10 +39,18 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
       .finally(() => setLoading(false))
   }, [open])
 
-  const handleSelect = (provider: Provider) => {
-    onImport({ provider: provider.name, agentId })
-    toast.success(`已导入 ${provider.displayName}`)
-    onOpenChange(false)
+  const handleSelect = async (provider: Provider) => {
+    if (importing) return
+    setImporting(true)
+    try {
+      await onImport({ provider: provider.name, agentId })
+      toast.success(`已导入 ${provider.displayName}`)
+      onOpenChange(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '导入失败')
+    } finally {
+      setImporting(false)
+    }
   }
 
   return (
@@ -61,12 +70,12 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
           <div className="space-y-2">
             <p className="text-sm text-gray-500 mb-3">从已配置的服务商中选择（来源：CC-Switch）：</p>
             <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-3">
-              💡 同名不同配置的 Provider 仅显示一个（按 URL 去重）。如需切换其他配置，请在 CC-Switch 中将其设为"当前使用"后重新导入。
+              💡 同名不同配置的 Provider 仅显示一个（按 URL 去重）。如需切换其他配置，请在 CC-Switch 中将其设为“当前使用”后重新导入。
             </p>
             {providers.map(p => (
               <div
                 key={p.name}
-                className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                className={`p-3 border rounded-lg cursor-pointer hover:bg-gray-50 ${importing ? 'pointer-events-none opacity-60' : ''}`}
                 onClick={() => handleSelect(p)}
               >
                 <div className="flex items-center justify-between">
@@ -84,7 +93,7 @@ export function ProviderImportDialog({ open, onOpenChange, onImport, agentId }: 
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>取消</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
