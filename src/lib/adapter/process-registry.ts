@@ -1321,6 +1321,55 @@ class ProcessRegistry {
     })
   }
 
+  /**
+   * P2-08: Windows 上确认 taskkill /T 自身成功退出，作为进程树终止的 OS 级证据。
+   * 仅等待直接 ChildProcess exit 不能证明后代退出；taskkill 非 0 时必须报 unconfirmed。
+   * POSIX 进程组信号没有等价的子进程回执，仍以直接进程 exit + 进程组信号语义为准。
+   */
+  private signalProcessTreeAndConfirm(
+    entry: ProcessEntry,
+    force: boolean,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const pid = entry.process.pid
+    if (!pid || process.platform !== 'win32') {
+      this.signalProcessTree(entry, force)
+      return Promise.resolve(true)
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const timerRef: { current?: ReturnType<typeof setTimeout> } = {}
+      let child: ReturnType<typeof spawn> | undefined
+      const done = (confirmed: boolean) => {
+        if (settled) return
+        settled = true
+        if (timerRef.current) clearTimeout(timerRef.current)
+        if (child) {
+          child.removeListener('error', onError)
+          child.removeListener('exit', onExit)
+        }
+        resolve(confirmed)
+      }
+      const onError = () => done(false)
+      const onExit = (code: number | null) => done(code === 0)
+
+      try {
+        child = spawn('taskkill', ['/pid', pid.toString(), '/T', ...(force ? ['/F'] : [])], { shell: false })
+      } catch {
+        try { entry.process.kill(force ? 'SIGKILL' : 'SIGTERM') } catch {}
+        done(false)
+        return
+      }
+      child.once('error', onError)
+      child.once('exit', onExit)
+      timerRef.current = setTimeout(() => {
+        try { child?.kill('SIGKILL') } catch {}
+        done(false)
+      }, timeoutMs)
+    })
+  }
+
   /** 向进程树发信号；Windows 用 taskkill /T，POSIX 优先杀进程组。 */
   private signalProcessTree(entry: ProcessEntry, force: boolean): void {
     const pid = entry.process.pid
@@ -1363,14 +1412,22 @@ class ProcessRegistry {
       return true
     }
 
-    this.signalProcessTree(entry, false)
-    let exited = await this.waitForProcessExit(entry, graceMs)
-    if (!exited) {
-      this.signalProcessTree(entry, true)
-      exited = await this.waitForProcessExit(entry, forceMs)
+    const [graceExited, graceTreeConfirmed] = await Promise.all([
+      this.waitForProcessExit(entry, graceMs),
+      this.signalProcessTreeAndConfirm(entry, false, graceMs),
+    ])
+    let exited = graceExited
+    let treeConfirmed = graceTreeConfirmed
+    if (!exited || !treeConfirmed) {
+      const [forceExited, forceTreeConfirmed] = await Promise.all([
+        this.waitForProcessExit(entry, forceMs),
+        this.signalProcessTreeAndConfirm(entry, true, forceMs),
+      ])
+      exited = forceExited
+      treeConfirmed = forceTreeConfirmed
     }
 
-    if (exited) {
+    if (exited && treeConfirmed) {
       this.cleanupEntry(entry)
       if (this.registry.get(key) === entry) this.registry.delete(key)
       return true

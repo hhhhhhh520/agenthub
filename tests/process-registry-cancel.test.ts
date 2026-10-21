@@ -16,11 +16,21 @@ function createFakeProcess() {
 
 let targetProcs: any[] = []
 let taskkillProcs: any[] = []
+let taskkillExitCode = 0
 
 const mockSpawn = vi.fn((command: string) => {
   const proc = createFakeProcess()
-  if (command === 'taskkill') taskkillProcs.push(proc)
-  else targetProcs.push(proc)
+  if (command === 'taskkill') {
+    taskkillProcs.push(proc)
+    // 模拟 taskkill 自身很快退出；P2-08 的确认逻辑会等待这个 exit code。
+    setTimeout(() => {
+      if (proc.exitCode !== null) return
+      proc.exitCode = taskkillExitCode
+      proc.emit('exit', taskkillExitCode)
+    }, 5)
+  } else {
+    targetProcs.push(proc)
+  }
   return proc
 })
 
@@ -42,6 +52,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   targetProcs = []
   taskkillProcs = []
+  taskkillExitCode = 0
 
   delete (globalThis as any).__processRegistry
   delete (globalThis as any).__processRegistryCleanupTimer
@@ -111,6 +122,19 @@ describe('ProcessRegistry — 会话取消与真实退出', () => {
     const taskkills = mockSpawn.mock.calls.filter(c => c[0] === 'taskkill')
     expect(taskkills.length).toBeGreaterThanOrEqual(2)
     expect(taskkills.some(c => Array.isArray(c[1]) && c[1].includes('/F'))).toBe(true)
+  })
+
+  it('P2-08: 父进程退出但 taskkill 树确认失败 → unconfirmed', async () => {
+    taskkillExitCode = 1
+    processRegistry.getOrCreate('tree-unconfirmed', CONFIG('s1', '/tmp/tree'))
+    const p = targetProcs[0]
+    setTimeout(() => p.emit('exit', 0), 5)
+
+    const result = await processRegistry.cancelByOwnerSession('s1', { graceMs: 50, forceMs: 50 })
+
+    expect(result.total).toBe(1)
+    expect(result.exited).toBe(0)
+    expect(result.unconfirmed).toHaveLength(1)
   })
 
   it('强制后仍不退出 → unconfirmed，registry 保留 entry，不假报成功', async () => {
