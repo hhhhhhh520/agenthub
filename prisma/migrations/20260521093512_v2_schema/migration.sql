@@ -52,7 +52,7 @@ CREATE TABLE "new_Message" (
     CONSTRAINT "Message_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "Task" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Message_replyToId_fkey" FOREIGN KEY ("replyToId") REFERENCES "Message" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
-INSERT INTO "new_Message" ("agentId", "createdAt", "id", "role", "sessionId", "taskId") SELECT "agentId", "createdAt", "id", "role", "sessionId", "taskId" FROM "Message";
+INSERT INTO "new_Message" ("agentId", "createdAt", "id", "rawContent", "role", "sessionId", "taskId") SELECT "agentId", "createdAt", "id", COALESCE("content", ''), "role", "sessionId", "taskId" FROM "Message";
 DROP TABLE "Message";
 ALTER TABLE "new_Message" RENAME TO "Message";
 CREATE TABLE "new_Session" (
@@ -79,7 +79,7 @@ CREATE TABLE "new_Task" (
     CONSTRAINT "Task_assignedAgentId_fkey" FOREIGN KEY ("assignedAgentId") REFERENCES "Agent" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "Task_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "Session" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
-INSERT INTO "new_Task" ("assignedAgentId", "createdAt", "dependencies", "description", "id", "sessionId", "status") SELECT "assignedAgentId", "createdAt", "dependencies", "description", "id", "sessionId", "status" FROM "Task";
+INSERT INTO "new_Task" ("assignedAgentId", "createdAt", "dependencies", "description", "id", "sessionId", "status", "updatedAt") SELECT "assignedAgentId", "createdAt", "dependencies", "description", "id", "sessionId", "status", CURRENT_TIMESTAMP FROM "Task";
 DROP TABLE "Task";
 ALTER TABLE "new_Task" RENAME TO "Task";
 PRAGMA foreign_keys=ON;
