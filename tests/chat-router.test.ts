@@ -49,12 +49,13 @@ vi.mock('@/lib/services/review', () => ({
   runMultiAgentDiscussion: mockRunMultiAgentDiscussion,
 }))
 
-const { mockHandlePMConfirm, mockHandleArchitectPlan, mockHandleAgentQA, mockTransitionToExecution, mockIsCodeTask } = vi.hoisted(() => ({
+const { mockHandlePMConfirm, mockHandleArchitectPlan, mockHandleAgentQA, mockTransitionToExecution, mockIsCodeTask, mockRecordPlanApproval } = vi.hoisted(() => ({
   mockHandlePMConfirm: vi.fn(),
   mockHandleArchitectPlan: vi.fn(),
   mockHandleAgentQA: vi.fn(),
   mockTransitionToExecution: vi.fn(),
   mockIsCodeTask: vi.fn().mockReturnValue(false),
+  mockRecordPlanApproval: vi.fn().mockResolvedValue(false),
 }))
 
 vi.mock('@/lib/services/alignment', () => ({
@@ -63,6 +64,7 @@ vi.mock('@/lib/services/alignment', () => ({
   handleAgentQA: mockHandleAgentQA,
   transitionToExecution: mockTransitionToExecution,
   isCodeTask: mockIsCodeTask,
+  recordPlanApproval: mockRecordPlanApproval,
 }))
 
 import { handleOrchestratorDecision, handleOrchestratorChat, isCreateAgentIntent, parseDeclaredFiles } from '@/lib/services/chat-router'

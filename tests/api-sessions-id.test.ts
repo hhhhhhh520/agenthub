@@ -93,6 +93,20 @@ describe('GET /api/sessions/[id]', () => {
     })
   })
 
+  it('系统审批记录不从 session 详情返回给聊天 UI', async () => {
+    const session = { id: 's1', members: [], tasks: [], messages: [] }
+    mockFindUnique.mockResolvedValueOnce(session)
+    const res = await GET(makeReq('GET'), params)
+    expect(res.status).toBe(200)
+    expect(mockFindUnique).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        messages: expect.objectContaining({
+          where: { role: { not: 'system' } },
+        }),
+      }),
+    }))
+  })
+
   it('P4 T5: findUnique omit decisionTrace（内部 analytics 不外泄客户端,剥离由 prisma 查询层执行）', async () => {
     const session = {
       id: 's1', title: 't',

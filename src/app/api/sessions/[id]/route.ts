@@ -25,7 +25,8 @@ export async function GET(
         },
       },
       tasks: true,
-      messages: { orderBy: { createdAt: 'asc' } },
+      // [PLAN_APPROVED] 等内部审批记录只供服务端 gate 使用，不回给聊天 UI。
+      messages: { where: { role: { not: 'system' } }, orderBy: { createdAt: 'asc' } },
     },
   })
   if (!session) {

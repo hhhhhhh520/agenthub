@@ -45,9 +45,84 @@ export function buildPlanId(taskIds: string[]): string {
 }
 
 const PLAN_MARKER_PREFIX = '计划编号：plan-'
+const PLAN_APPROVAL_PREFIX = '[PLAN_APPROVED]plan-'
+
+/** 只有这些明确肯定文本能生成结构化批准记录；拒绝/澄清/修改不会命中。 */
+const PLAN_APPROVAL_TEXTS = new Set([
+  '执行',
+  '确认执行',
+  '确认',
+  '同意',
+  '同意执行',
+  '批准',
+  '开始执行',
+  '按计划执行',
+  '可以执行',
+  '继续执行',
+  '没问题',
+  '好的',
+  '可以',
+  'ok',
+  'okay',
+  'approve',
+  'approved',
+])
 
 function formatPlanMessage(planSummary: string, planId: string): string {
-  return `${planSummary}\n\n> ${PLAN_MARKER_PREFIX}${planId}`
+  return `${planSummary}\n\n回复「确认执行」批准该计划。\n\n> ${PLAN_MARKER_PREFIX}${planId}`
+}
+
+/** 结构化确认只认明确肯定短语；否定/修改/提问即使包含“执行”也不能当批准。 */
+export function isExplicitPlanApproval(message: string): boolean {
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .replace(/[\s，。！？!?、；;：:,.]/g, '')
+  return PLAN_APPROVAL_TEXTS.has(normalized)
+}
+
+function findApprovalRecordIndex(messages: PlanMessageLike[], planId: string): number {
+  const marker = `${PLAN_APPROVAL_PREFIX}${planId}`
+  let found = -1
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.role === 'system' && m.rawContent === marker) found = i
+  }
+  return found
+}
+
+function findLastUserIndex(messages: PlanMessageLike[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return i
+  }
+  return -1
+}
+
+/**
+ * 用户明确批准当前计划时，落一条绑定 plan ID 的结构化记录。
+ * 不放宽 gate：记录写失败/未写时 ensureExecutableState 仍会拒绝执行。
+ */
+export async function recordPlanApproval(sessionId: string, message: string): Promise<boolean> {
+  if (!isExplicitPlanApproval(message)) return false
+  const [tasks, messages] = await Promise.all([
+    prisma.task.findMany({ where: { sessionId }, select: { id: true } }),
+    prisma.message.findMany({
+      where: { sessionId },
+      orderBy: { createdAt: 'asc' },
+      select: { role: true, agentId: true, rawContent: true },
+    }),
+  ])
+  if (tasks.length === 0) return false
+  const planId = buildPlanId(tasks.map(t => t.id))
+  const planIndex = findPlanMessageIndex(messages, planId)
+  if (planIndex < 0) return false
+  const approvalIndex = findApprovalRecordIndex(messages, planId)
+  const latestUserIndex = findLastUserIndex(messages)
+  if (approvalIndex > planIndex && approvalIndex >= latestUserIndex) return true
+  await prisma.message.create({
+    data: { role: 'system', rawContent: `${PLAN_APPROVAL_PREFIX}${planId}`, sessionId },
+  })
+  return true
 }
 
 interface PlanMessageLike {
@@ -439,16 +514,46 @@ export async function handleArchitectPlan(
     return false
   }
 
-  // P2-04: 计划 ID 是当前任务集（含自动 verify）的稳定指纹。查询失败时退回本批任务 ID，
-  // 恢复侧会因任务集不匹配而拒绝自动执行并重新呈现，属于 fail-closed。
-  let planTaskIds = scheduledTasks.map(t => t.id)
+  // P2-04 F6: 计划展示、plan ID、恢复/实际执行必须覆盖同一任务集。
+  // 旧逻辑用 session 全任务算 ID，却只展示本轮 scheduledTasks，旧 pending/blocked 任务会被“顺带批准”。
+  // 查询失败时退回本批任务；此时恢复侧按全任务重算会匹配失败，fail-closed 到重呈计划。
+  let planTasks: RecoveryTask[] = scheduledTasks.map(t => ({
+    id: t.id,
+    description: t.description,
+    assignedAgentId: agents.find(a => a.name === t.assignedAgent)?.id ?? null,
+    dependencies: JSON.stringify(t.dependencies),
+    declaredFiles: JSON.stringify(t.declaredFiles),
+    outputSchema: t.outputSchema ?? null,
+  }))
   try {
-    const allTasks = await prisma.task.findMany({ where: { sessionId }, select: { id: true } })
-    if (Array.isArray(allTasks) && allTasks.length > 0) planTaskIds = allTasks.map(t => t.id)
+    const allTasks = await prisma.task.findMany({
+      where: { sessionId },
+      select: { id: true, description: true, assignedAgentId: true, dependencies: true, declaredFiles: true, outputSchema: true },
+    })
+    if (Array.isArray(allTasks) && allTasks.length > 0) planTasks = allTasks
   } catch (err) {
-    console.warn('[alignment] 计算计划 ID 失败，使用本批任务 ID 兜底:', err instanceof Error ? err.message : err)
+    console.warn('[alignment] 读取完整任务集失败，使用本批任务兜底:', err instanceof Error ? err.message : err)
   }
-  const planId = buildPlanId(planTaskIds)
+
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return false
+  }
+
+  const planId = buildPlanId(planTasks.map(t => t.id))
+  let planSummary: string
+  try {
+    planSummary = formatArchitectPlan(topologicalSort(planTasks.map(t => toScheduledTask(t, agents))), agents)
+  } catch (err) {
+    const msg = `计划任务依赖异常，未进入执行：${err instanceof Error ? err.message : String(err)}`
+    try {
+      await prisma.message.create({ data: { role: 'orchestrator', rawContent: msg, sessionId } })
+    } catch {
+      // 提示落库失败不掩盖原始错误；至少保证 SSE 可见。
+    }
+    sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
+    return false
+  }
 
   // P2 待办④: phase 在"任务全建"之后推进(0 任务/拆解失败/任务创建中途抛错都不留 align_arch 空转;
   // 声明审查 Q2: 先写 phase 后建任务会在 task.create 中途抛错时留"phase 已推进但任务不全"窗口)
@@ -466,9 +571,12 @@ export async function handleArchitectPlan(
     sendEvent({ agentId: 'orchestrator', type: 'error', content: msg })
     return false
   }
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return false
+  }
   sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
 
-  const planSummary = formatArchitectPlan(scheduledTasks, agents)
   await prisma.message.create({ data: { role: 'agent', rawContent: formatPlanMessage(planSummary, planId), sessionId, agentId: '架构师' } })
   sendEvent({ agentId: '架构师', type: 'done', content: planSummary })
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
@@ -620,12 +728,18 @@ export async function ensureExecutableState(
   // 且之后有用户消息（用户确认/执行指令）。缺失时返回 needsPlan，由 transitionToExecution
   // 重新展示计划并等待确认，绝不自动执行未呈现或未获用户回应的计划。
   const planId = buildPlanId((taskRows ?? []).map(t => t.id))
-  const planIndex = findPlanMessageIndex(messages ?? [], planId)
+  const messageRows = messages ?? []
+  const planIndex = findPlanMessageIndex(messageRows, planId)
   if (planIndex < 0) {
     return { ok: false, needsPlan: true, reason: '计划尚未呈现给用户，拒绝自动执行' }
   }
-  if (!(messages ?? []).slice(planIndex + 1).some(m => m.role === 'user')) {
+  const latestUserIndex = findLastUserIndex(messageRows)
+  if (latestUserIndex <= planIndex) {
     return { ok: false, needsPlan: true, reason: '计划尚未获得用户确认，拒绝自动执行' }
+  }
+  const approvalIndex = findApprovalRecordIndex(messageRows, planId)
+  if (approvalIndex < 0 || approvalIndex <= planIndex || approvalIndex < latestUserIndex) {
+    return { ok: false, needsPlan: true, reason: '计划尚未获得用户明确批准，拒绝自动执行' }
   }
 
   if (state === 'align_pm') {
@@ -656,6 +770,10 @@ async function presentPlanForConfirmation(
   sendEvent: SendEvent,
   existingTasks: RecoveryTask[],
 ) {
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   if (existingTasks.length === 0) {
     sendEvent({ agentId: 'orchestrator', type: 'error', content: '没有可展示的任务计划，无法恢复执行' })
     return
@@ -667,6 +785,10 @@ async function presentPlanForConfirmation(
   })
   if (!session) {
     sendEvent({ agentId: 'orchestrator', type: 'error', content: '会话不存在，无法恢复执行' })
+    return
+  }
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
     return
   }
 
@@ -685,6 +807,10 @@ async function presentPlanForConfirmation(
       })
       return
     }
+    if (isSessionCancelled(sessionId)) {
+      sendStopped(sendEvent)
+      return
+    }
     sendEvent({ agentId: 'orchestrator', type: 'phase_transition', content: 'alignment' })
   }
 
@@ -694,6 +820,10 @@ async function presentPlanForConfirmation(
     orderBy: { createdAt: 'asc' },
     select: { role: true, agentId: true, rawContent: true },
   })
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   if (findPlanMessageIndex(messages, planId) < 0) {
     let scheduledTasks: ScheduledTask[]
     try {
@@ -706,6 +836,10 @@ async function presentPlanForConfirmation(
       })
       return
     }
+    if (isSessionCancelled(sessionId)) {
+      sendStopped(sendEvent)
+      return
+    }
     const planSummary = formatArchitectPlan(scheduledTasks, agents)
     await prisma.message.create({
       data: { role: 'agent', rawContent: formatPlanMessage(planSummary, planId), sessionId, agentId: '架构师' },
@@ -715,6 +849,10 @@ async function presentPlanForConfirmation(
     sendEvent({ agentId: 'orchestrator', type: 'text', content: '计划已生成，请先确认计划后再执行。' })
   }
 
+  if (isSessionCancelled(sessionId)) {
+    sendStopped(sendEvent)
+    return
+  }
   sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'architect_plan' })
 }
 
@@ -750,6 +888,10 @@ export async function transitionToExecution(
     // phase 写失败）。先沿合法边恢复到 exec，避免直接 execute 被转移表 fail-closed 拒绝后
     // 仍继续 handleExecution（phase 与执行脱节、allDone→done 也写不进去）。
     const ensured = await ensureExecutableState(sessionId, { recordExecuteTrace: opts?.recordExecuteTrace })
+    if (isSessionCancelled(sessionId)) {
+      sendStopped(sendEvent)
+      return
+    }
     if (!ensured.ok) {
       if (ensured.needsPlan) {
         await presentPlanForConfirmation(sessionId, agents, sendEvent, existingTasks)

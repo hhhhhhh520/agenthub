@@ -10,8 +10,10 @@ interface HistoryMessage {
 }
 
 export function buildContextFromHistory(history: HistoryMessage[]): string {
-  const pinned = history.filter(m => m.isPinned)
-  const normal = history.filter(m => !m.isPinned)
+  // system 是内部审批/状态记录，不进入模型对话上下文，也不显示在聊天 UI。
+  const visible = history.filter(m => m.role !== 'system')
+  const pinned = visible.filter(m => m.isPinned)
+  const normal = visible.filter(m => !m.isPinned)
 
   const format = (m: HistoryMessage) => {
     const role = m.role === 'user' ? 'User' : m.agentId || 'Agent'

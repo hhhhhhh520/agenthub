@@ -3,7 +3,7 @@ import { getOrchestratorDecision, executeSingleAgent, getOrchestratorAgent } fro
 import { reasonToString } from '@/lib/orchestrator/reason'
 import { buildContextFromHistory } from './context-builder'
 import { reviewResult, delegateToAgent, runMultiAgentDiscussion } from './review'
-import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution, isCodeTask } from './alignment'
+import { handlePMConfirm, handleArchitectPlan, handleAgentQA, transitionToExecution, isCodeTask, recordPlanApproval } from './alignment'
 import type { SendEvent } from './review'
 import type { TaskAttachment, AgentConfig } from '@/lib/adapter/types'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
@@ -200,6 +200,13 @@ export async function handleOrchestratorDecision(
   // 转移合法性校验（纠正 + 业务守卫之后）：P5 OFF 时用 override（bypass 恒 ok，表外保持当前态不 escalate，
   // 旁路 action 不转 phase 走原 handler）；ON 时走原 applyTransition 语义，真非法 -> escalate（不静默，学 CrewAI 反面）
   const transition = applyTransitionWithOverride(state, decision.action, experimentOff)
+  // P2-04 F3: 任务已提交但 phase 停在 align_pm 时，真实 POST 的 execute 会被
+  // applyTransition 判非法，恢复 helper 永远到不了。仅当已有任务时给受约束的恢复入口：
+  // 仍走 transitionToExecution → ensureExecutableState，缺计划/未批准只会重呈计划，不会自动执行。
+  const alignPmExecuteRecovery = !transition.ok
+    && state === 'align_pm'
+    && decision.action === 'execute'
+    && (await prisma.task.count({ where: { sessionId } })) > 0
   // P3 §5.6: 决策输入记进 trace——决策已定（提议/纠正/校验/实际转移全就位），
   // 先落库再派发 handler。Temporal 精神：长操作（执行/讨论）前决策已持久化，重试/恢复可复用同一转移。
   // P5: OFF 表外条目打 experiment-off 标记（inTable:false → applied:false），供 oracle 区分预期实验条件 vs 漂移。
@@ -213,12 +220,16 @@ export async function handleOrchestratorDecision(
     corrections,
     validation: transition.ok
       ? { passed: true, validator: offBypass ? 'experiment-off' : 'applyTransition' }
-      : { passed: false, validator: 'applyTransition', reason: transition.reason },
+      : alignPmExecuteRecovery
+        ? { passed: true, validator: 'align_pm_recovery' }
+        : { passed: false, validator: 'applyTransition', reason: transition.reason },
     actualTransition: transition.ok
       ? offInTable
         ? { from: state, to: transition.nextState, action: decision.action, applied: true, escalated: false }
         : { from: state, to: state, action: decision.action, applied: false, escalated: false }
-      : { from: state, to: state, action: decision.action, applied: false, escalated: true },
+      : alignPmExecuteRecovery
+        ? { from: state, to: state, action: decision.action, applied: false, escalated: false }
+        : { from: state, to: state, action: decision.action, applied: false, escalated: true },
   }
   // 审查整改(攻击者⚠️3.2): 决策点 append 失败(null: DB 异常/乐观锁重试超限)时,后续 handler 的
   // transitionPhase 不得抑制——否则该次实际 phase 写入无任何 trace,击穿"每个 phase 写入都入 trace"不变量。
@@ -228,7 +239,7 @@ export async function handleOrchestratorDecision(
   // （回归 P4「每个实际 phase 写入都入 trace」）。ON 模式 decisionApplied 恒 true（!ok 直接 return escalate），行为不变。
   const decisionApplied = traceEntry.actualTransition.applied
 
-  if (!transition.ok) {
+  if (!transition.ok && !alignPmExecuteRecovery) {
     sendEvent({ agentId: 'orchestrator', type: 'text', content: `[需人工介入] 当前状态「${state}」下不允许「${decision.action}」。${transition.reason}。请调整指令或手动引导下一步。` })
     sendEvent({ agentId: 'orchestrator', type: 'awaiting_user_input', content: 'escalate' })
     // JSON.stringify 转义 \n，防 LLM 注入的 action/reason 伪造日志行（CRLF 日志注入）
@@ -271,6 +282,9 @@ export async function handleOrchestratorDecision(
       await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline, { recordTrace: !(decisionRecorded && decisionApplied) })
       break
     case 'execute':
+      // P2-04 F2: 只有明确肯定文本才落结构化批准记录；记录绑定当前 plan ID。
+      // 拒绝/澄清/修改不会生成记录，ensureExecutableState 的 gate 会拒绝执行并重呈计划。
+      await recordPlanApproval(sessionId, message)
       // P4 T1: recordExecuteTrace 传 !(decisionRecorded && decisionApplied)——决策点已记同一条转移(applied:true)则抑制,no-op 或 append 失败则不抑制兜底补记
       await transitionToExecution(sessionId, agents, sendEvent, message, orchSessionId, globalDeadline, { recordExecuteTrace: !(decisionRecorded && decisionApplied) })
       break

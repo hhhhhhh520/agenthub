@@ -48,8 +48,23 @@ vi.mock('@/lib/services/execution', () => ({
   handleExecution: mocks.mockHandleExecution,
 }))
 
-import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans, buildPlanId } from '@/lib/services/alignment'
+import { transitionToExecution, handleArchitectPlan, ensureExecutableState, isCodeTask, buildVerifyDescription, countConsecutiveReplans, buildPlanId, isExplicitPlanApproval, recordPlanApproval } from '@/lib/services/alignment'
 import { TimeoutError } from '@/lib/orchestrator/timeout'
+import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => { resolve = r })
+  return { promise, resolve }
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('waitUntil timeout')
+    await new Promise(r => setTimeout(r, 5))
+  }
+}
 
 // 交互式事务 mock：把 tx.task.* 映射到同一组 task mock，既有断言无需改。
 mocks.mockTransaction.mockImplementation(async (fn: (tx: any) => Promise<any>) => fn({
@@ -302,6 +317,7 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
       rawContent: `plan summary\n\n> 计划编号：plan-${buildPlanId(taskIds)}`,
     },
     { role: 'user', rawContent: '确认执行' },
+    { role: 'system', rawContent: `[PLAN_APPROVED]plan-${buildPlanId(taskIds)}` },
   ]
 
   beforeEach(() => {
@@ -397,6 +413,86 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
     expect(phaseWrites).toHaveLength(0)
   })
 
+  it('F2: 计划后有普通用户消息但没有结构化批准：拒绝执行', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockMessageFindMany.mockResolvedValue([
+      ...planMessages().slice(0, 2),
+      { role: 'user', rawContent: '我看看再说' },
+    ])
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toMatchObject({ ok: false, needsPlan: true })
+    expect(mocks.mockSessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))).toHaveLength(0)
+  })
+
+  it('F2: 明确拒绝文本即使包含“执行”也不能当作批准', async () => {
+    expect(isExplicitPlanApproval('确认执行')).toBe(true)
+    expect(isExplicitPlanApproval('执行！')).toBe(true)
+    expect(isExplicitPlanApproval('不同意，先不要执行，我要修改方案')).toBe(false)
+    expect(isExplicitPlanApproval('修改方案后再执行')).toBe(false)
+    expect(isExplicitPlanApproval('继续')).toBe(false)
+  })
+
+  it('F2: 旧批准之后又有拒绝消息：旧批准失效', async () => {
+    setupState('alignment', 'architect_plan')
+    mocks.mockMessageFindMany.mockResolvedValue([
+      ...planMessages(),
+      { role: 'user', rawContent: '不同意，先不要执行' },
+    ])
+
+    const result = await ensureExecutableState('sess1')
+
+    expect(result).toMatchObject({ ok: false, needsPlan: true })
+    expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+  })
+
+  it('R2: ensure 等待期间取消，needsPlan 分支不再重呈计划', async () => {
+    setupState('alignment', 'pm_confirm')
+    const gate = deferred<void>()
+    mocks.mockMessageFindMany.mockImplementation(async () => {
+      await gate.promise
+      return [{ role: 'user', rawContent: '做个网站' }]
+    })
+    try {
+      const pending = transitionToExecution('sess1', agents, mocks.mockSendEvent, '继续执行')
+      await waitUntil(() => mocks.mockMessageFindMany.mock.calls.length > 0)
+      requestSessionCancel('sess1')
+      gate.resolve()
+      await pending
+
+      expect(mocks.mockMessageCreate).not.toHaveBeenCalled()
+      expect(mocks.mockSessionUpdateMany.mock.calls
+        .map(c => c[0]?.data)
+        .filter(d => d && Object.hasOwn(d, 'phase'))).toHaveLength(0)
+      expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'done', content: '执行已停止' }),
+      )
+    } finally {
+      clearSessionCancel('sess1')
+    }
+  })
+
+  it('F2: recordPlanApproval 只为明确批准写入绑定 plan ID 的记录', async () => {
+    mocks.mockTaskFindMany.mockResolvedValue([{ id: 't1' }])
+    mocks.mockMessageFindMany.mockResolvedValue(planMessages().slice(0, 2))
+    mocks.mockMessageCreate.mockResolvedValue({})
+
+    await expect(recordPlanApproval('sess1', '不同意，先不要执行')).resolves.toBe(false)
+    expect(mocks.mockMessageCreate).not.toHaveBeenCalled()
+
+    await expect(recordPlanApproval('sess1', '确认执行')).resolves.toBe(true)
+    expect(mocks.mockMessageCreate).toHaveBeenCalledWith({
+      data: {
+        role: 'system',
+        rawContent: `[PLAN_APPROVED]plan-${buildPlanId(['t1'])}`,
+        sessionId: 'sess1',
+      },
+    })
+  })
+
   it('P2-04: 计划 ID 与当前任务集不匹配：拒绝执行', async () => {
     setupState('alignment', 'architect_plan')
     mocks.mockMessageFindMany.mockResolvedValue(planMessages(['other-task']))
@@ -427,6 +523,35 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
       .map(c => c[0]?.data)
       .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
     expect(planMessage?.rawContent).toContain(`plan-${buildPlanId(['task-a', 'task-b'])}`)
+  })
+
+  it('F6: 旧任务与新任务的展示集、plan ID 一致', async () => {
+    setupState('alignment', 'pm_confirm')
+    mocks.mockMessageFindMany.mockResolvedValue([{ role: 'user', rawContent: '做个网站' }])
+    mocks.mockTaskFindMany.mockResolvedValue([
+      { id: 'old-task', description: '旧任务', assignedAgentId: 'a1', dependencies: '[]', declaredFiles: '[]', outputSchema: null },
+      { id: 'task-a', description: '任务 A', assignedAgentId: 'a1', dependencies: '[]', declaredFiles: '[]', outputSchema: null },
+      { id: 'task-b', description: '任务 B', assignedAgentId: 'a1', dependencies: '[]', declaredFiles: '[]', outputSchema: null },
+    ])
+    mocks.mockDecomposeTasks.mockResolvedValue([
+      { id: 'task-a', description: '任务 A', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+      { id: 'task-b', description: '任务 B', assignedAgent: '前端工程师', dependencies: [], declaredFiles: [], batch: 0 },
+    ])
+    mocks.mockTaskCreate.mockResolvedValue({})
+    const { formatArchitectPlan } = await import('@/lib/orchestrator')
+    const formatMock = vi.mocked(formatArchitectPlan)
+    formatMock.mockClear()
+
+    const result = await handleArchitectPlan('做个网站', 'sess1', agents, mocks.mockSendEvent)
+
+    expect(result).toBe(true)
+    const planMessage = mocks.mockMessageCreate.mock.calls
+      .map(c => c[0]?.data)
+      .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
+    expect(planMessage?.rawContent).toContain(`plan-${buildPlanId(['old-task', 'task-a', 'task-b'])}`)
+    expect(formatMock).toHaveBeenCalledTimes(1)
+    const displayed = formatMock.mock.calls[0][0] as Array<{ id: string }>
+    expect(displayed.map(t => t.id).sort()).toEqual(['old-task', 'task-a', 'task-b'])
   })
 
   it('P2-04: 计划已呈现但无用户确认：不重复建计划，等待确认且不执行', async () => {

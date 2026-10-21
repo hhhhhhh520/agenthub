@@ -8,7 +8,8 @@ export async function GET(
 ) {
   const { id } = await params
   const messages = await prisma.message.findMany({
-    where: { sessionId: id },
+    // 内部审批记录（system）不回给聊天 UI；服务端 gate 直接查 DB，不依赖此接口。
+    where: { sessionId: id, role: { not: 'system' } },
     orderBy: { createdAt: 'asc' },
     include: {
       replyTo: { select: { id: true, rawContent: true, role: true } },

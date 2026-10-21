@@ -122,6 +122,17 @@ describe('buildContextFromHistory', () => {
     expect(result).not.toContain('[DISCUSSION_SUMMARY]')
     expect(result).toContain('前端工程师（第1轮）：建议用 React')
   })
+
+  it('filters internal system approval records out of model context', () => {
+    const history = [
+      { role: 'user', rawContent: '确认执行', isPinned: false },
+      { role: 'system', rawContent: '[PLAN_APPROVED]plan-abc', isPinned: false },
+      { role: 'agent', agentId: '架构师', rawContent: 'plan summary', isPinned: false },
+    ]
+    const result = buildContextFromHistory(history)
+    expect(result).not.toContain('[PLAN_APPROVED]')
+    expect(result).toContain('plan summary')
+  })
 })
 
 describe('buildDiscussionSummary', () => {

@@ -84,6 +84,7 @@ vi.mock('@/lib/orchestrator', () => ({
 }))
 
 import { POST } from '@/app/api/sessions/[id]/chat/route'
+import { buildPlanId } from '@/lib/services/alignment'
 
 const params = { params: Promise.resolve({ id: 's1' }) }
 const session = {
@@ -162,5 +163,86 @@ describe('chat recovery route — P2-04 未获批计划不得自动执行', () =
       .map(c => c[0]?.data)
       .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
     expect(planMessage?.rawContent).toContain('计划编号：plan-')
+  })
+
+  it('F2: 明确确认执行写入结构化批准记录并放行', async () => {
+    const planId = buildPlanId(['t1'])
+    const rows: Array<{ role: string; agentId?: string | null; rawContent: string }> = [
+      { role: 'user', rawContent: '做一个功能', agentId: null },
+      { role: 'agent', agentId: '架构师', rawContent: `plan summary\n\n> 计划编号：plan-${planId}` },
+    ]
+    mocks.messageFindMany.mockImplementation(async () => [...rows])
+    mocks.messageCreate.mockImplementation(async ({ data }: { data: { role: string; agentId?: string | null; rawContent: string } }) => {
+      rows.push({ role: data.role, agentId: data.agentId ?? null, rawContent: data.rawContent })
+      return { id: 'm1' }
+    })
+
+    const request = new Request('http://localhost/api/sessions/s1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: '确认执行' }),
+    })
+    const res = await POST(request, params)
+    await res.text()
+
+    expect(mocks.handleExecution).toHaveBeenCalledTimes(1)
+    expect(rows.some(r => r.role === 'system' && r.rawContent === `[PLAN_APPROVED]plan-${planId}`)).toBe(true)
+  })
+
+  it('F2: 计划后的明确拒绝不能当作批准，不启动执行', async () => {
+    const refusal = '不同意，先不要执行，我要修改方案'
+    const planId = buildPlanId(['t1'])
+    mocks.messageFindMany.mockResolvedValue([
+      { role: 'user', rawContent: '做一个功能' },
+      { role: 'agent', agentId: '架构师', rawContent: `plan summary\n\n> 计划编号：plan-${planId}` },
+      { role: 'user', rawContent: refusal },
+    ])
+    mocks.getOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'execute', message: '', reason: '模型误提执行' },
+      sessionId: 'orch',
+    })
+
+    const request = new Request('http://localhost/api/sessions/s1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: refusal }),
+    })
+    const res = await POST(request, params)
+    await res.text()
+
+    expect(mocks.handleExecution).not.toHaveBeenCalled()
+    expect(mocks.messageCreate.mock.calls.some(([arg]) =>
+      arg?.data?.role === 'system' && String(arg.data.rawContent).startsWith('[PLAN_APPROVED]')
+    )).toBe(false)
+  })
+
+  it('F3: 任务已提交、phase 停在 align_pm，真实 POST 能重呈计划', async () => {
+    mocks.sessionFindUnique.mockResolvedValue({ ...session, phaseStep: 'pm_confirm' })
+    mocks.messageFindMany.mockResolvedValue([{ role: 'user', rawContent: '执行' }])
+
+    const res = await POST(makeReq(), params)
+    await res.text()
+
+    expect(res.status).toBe(200)
+    expect(mocks.handleExecution).not.toHaveBeenCalled()
+    const planMessage = mocks.messageCreate.mock.calls
+      .map(c => c[0]?.data)
+      .find(d => d?.agentId === '架构师' && typeof d?.rawContent === 'string')
+    expect(planMessage?.rawContent).toContain('计划编号：plan-')
+  })
+
+  it('F3: align_pm + 无任务仍按非法 execute 拒绝，不进入恢复入口', async () => {
+    mocks.sessionFindUnique.mockResolvedValue({ ...session, phaseStep: 'pm_confirm' })
+    mocks.taskCount.mockResolvedValue(0)
+    mocks.taskFindMany.mockResolvedValue([])
+
+    const res = await POST(makeReq(), params)
+    await res.text()
+
+    expect(mocks.handleExecution).not.toHaveBeenCalled()
+    expect(mocks.messageCreate.mock.calls.some(([arg]) => arg?.data?.agentId === '架构师')).toBe(false)
+    expect(mocks.sessionUpdateMany.mock.calls
+      .map(c => c[0]?.data)
+      .filter(d => d && Object.hasOwn(d, 'phase'))).toHaveLength(0)
   })
 })
