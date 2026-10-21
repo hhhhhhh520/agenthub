@@ -469,6 +469,33 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
     expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
   })
 
+  it('F9: 已批准计划在查询期间取消，不写 alignment/execution phase', async () => {
+    setupState('alignment', 'architect_plan')
+    const gate = deferred<void>()
+    mocks.mockMessageFindMany.mockImplementation(async () => {
+      await gate.promise
+      return planMessages()
+    })
+    try {
+      const pending = transitionToExecution('sess1', agents, mocks.mockSendEvent, '确认执行')
+      await waitUntil(() => mocks.mockMessageFindMany.mock.calls.length > 0)
+      requestSessionCancel('sess1')
+      gate.resolve()
+      await pending
+
+      expect(mocks.mockHandleExecution).not.toHaveBeenCalled()
+      const phaseWrites = mocks.mockSessionUpdateMany.mock.calls
+        .map(c => c[0]?.data)
+        .filter(d => d && Object.hasOwn(d, 'phase'))
+      expect(phaseWrites).toHaveLength(0)
+      expect(mocks.mockSendEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'done', content: '执行已停止' }),
+      )
+    } finally {
+      clearSessionCancel('sess1')
+    }
+  })
+
   it('R2: ensure 等待期间取消，needsPlan 分支不再重呈计划', async () => {
     setupState('alignment', 'pm_confirm')
     const gate = deferred<void>()

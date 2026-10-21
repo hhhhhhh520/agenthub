@@ -744,6 +744,9 @@ export async function ensureExecutableState(
     return { ok: false, needsPlan: true, reason: '计划尚未获得用户明确批准，拒绝自动执行' }
   }
 
+  // F9: 查询计划/批准记录期间可能已被 stop/delete；任何 phase 写入前必须复查。
+  if (isSessionCancelled(sessionId)) return { ok: false, reason: '会话已取消' }
+
   if (state === 'done') {
     // 计划已展示且已明确批准：done 恢复为调用方合法 execute，不额外写 phase。
     return { ok: true, atExec: false }
@@ -754,6 +757,8 @@ export async function ensureExecutableState(
     if (!decompose.ok) {
       return { ok: false, reason: `恢复 align_decompose 失败：${decompose.reason ?? '未知错误'}` }
     }
+    // F9: align_pm → align_decompose 期间取消，不再写 execute。
+    if (isSessionCancelled(sessionId)) return { ok: false, reason: '会话已取消' }
   }
 
   if (state === 'align_pm' || state === 'align_arch' || state === 'align_qa') {
