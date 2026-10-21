@@ -137,6 +137,33 @@ describe('ProcessRegistry — 会话取消与真实退出', () => {
     expect(result.unconfirmed).toHaveLength(1)
   })
 
+  it('P2-08: 树确认失败后二次取消仍保留 unconfirmed，不因父进程退出丢失状态', async () => {
+    taskkillExitCode = 1
+    processRegistry.getOrCreate('tree-retention', CONFIG('s1', '/tmp/tree-retention'))
+    const p = targetProcs[0]
+    setTimeout(() => p.emit('exit', 0), 5)
+
+    const first = await processRegistry.cancelByOwnerSession('s1', { graceMs: 50, forceMs: 50 })
+    expect(first.total).toBe(1)
+    expect(first.exited).toBe(0)
+    expect(first.unconfirmed).toHaveLength(1)
+
+    // idle 清扫也不能把“已取消但树未确认”的 entry 当成普通死进程删掉。
+    processRegistry.cleanupIdle()
+
+    // 父进程已退出，exit handler 不能把未确认树状态一起删掉；第二次 stop/DELETE
+    // 必须仍看到同一未确认目标，否则会误判已停止并放行清除取消标记/删库。
+    const second = await processRegistry.cancelByOwnerSession('s1', { graceMs: 50, forceMs: 50 })
+    expect(second.total).toBe(1)
+    expect(second.exited).toBe(0)
+    expect(second.unconfirmed).toHaveLength(1)
+
+    // 后续真正拿到 taskkill 成功回执后才能删除 entry 并恢复 confirmed。
+    taskkillExitCode = 0
+    const recovered = await processRegistry.cancelByOwnerSession('s1', { graceMs: 50, forceMs: 50 })
+    expect(recovered).toMatchObject({ total: 1, exited: 1, unconfirmed: [] })
+  })
+
   it('强制后仍不退出 → unconfirmed，registry 保留 entry，不假报成功', async () => {
     processRegistry.getOrCreate('stuck-key', CONFIG('s1', '/tmp/stuck'))
 

@@ -43,6 +43,9 @@ interface ProcessEntry {
   promptAsArg: boolean         // prompt 已作为 CLI 位置参数，不要写 stdin
   ownerSessionId: string | null // chat session 归属（delete/stop 按此取消进程）
   cancelled: boolean            // 已被会话取消：禁止重试/重建，只允许终止
+  // P2-08: 父进程已退出但 taskkill /T 未确认进程树退出。entry 必须保留到后续
+  // 确认成功；父进程 exit 或重复取消都不能把它当作“已确认退出”。
+  terminationUnconfirmed: boolean
   // 权限缓存：同会话内已批准/拒绝的操作自动放行/拒绝，避免重复审批
   // key: "toolName:JSON.stringify(toolInput)", value: true=allow, false=deny
   // 上限 100 条，超过时删除最早的条目
@@ -431,6 +434,7 @@ class ProcessRegistry {
       promptAsArg: config.promptAsArg || false,
       ownerSessionId: config.chatSessionId || null,
       cancelled: false,
+      terminationUnconfirmed: false,
     }
 
     proc.on('exit', () => {
@@ -441,7 +445,9 @@ class ProcessRegistry {
       // idle 自然退出（例如空闲进程自行结束）则可以直接清理。
       const preserveManaged = !entry.cancelled && (entry.state === 'working' || entry.busy)
       this.cleanupEntry(entry, preserveManaged)
-      if (this.registry.get(key) === entry) {
+      // 取消中的 entry 由 terminateEntry 决定何时删除：父进程 exit 不等于进程树
+      // 已确认退出，提前删 registry 会让第二次 stop/DELETE 丢失 unconfirmed 状态。
+      if (this.registry.get(key) === entry && !entry.cancelled) {
         this.registry.delete(key)
       }
     })
@@ -1407,6 +1413,15 @@ class ProcessRegistry {
     entry.cancelled = true
 
     if (!entry.alive || entry.process.exitCode !== null) {
+      // 已知未确认过：父进程已死也不能直接放行，必须重新尝试树确认。
+      if (entry.terminationUnconfirmed) {
+        const treeConfirmed = await this.signalProcessTreeAndConfirm(entry, true, forceMs)
+        if (!treeConfirmed) {
+          console.warn(`[ProcessRegistry ${key}] terminateEntry: tree still unconfirmed after parent exit`)
+          return false
+        }
+        entry.terminationUnconfirmed = false
+      }
       this.cleanupEntry(entry)
       if (this.registry.get(key) === entry) this.registry.delete(key)
       return true
@@ -1428,12 +1443,18 @@ class ProcessRegistry {
     }
 
     if (exited && treeConfirmed) {
+      entry.terminationUnconfirmed = false
       this.cleanupEntry(entry)
       if (this.registry.get(key) === entry) this.registry.delete(key)
       return true
     }
 
-    console.warn(`[ProcessRegistry ${key}] terminateEntry: process still alive after ${graceMs + forceMs}ms`)
+    // 保留 entry：父进程退出只证明直接进程结束，不能证明 taskkill /T 的树已退出。
+    entry.terminationUnconfirmed = true
+    console.warn(
+      `[ProcessRegistry ${key}] terminateEntry: unconfirmed after ${graceMs + forceMs}ms ` +
+      `(parentExited=${exited}, treeConfirmed=${treeConfirmed})`,
+    )
     return false
   }
 
@@ -1537,6 +1558,9 @@ class ProcessRegistry {
   cleanupIdle(): void {
     const now = Date.now()
     for (const [key, entry] of this.registry) {
+      // 取消中的 entry 由 terminateEntry 收尾；未确认树必须保留，idle 清扫不能
+      // 把 unconfirmed 状态当普通死进程删掉。
+      if (entry.cancelled || entry.terminationUnconfirmed) continue
       if (!entry.alive || entry.process.exitCode !== null) {
         this.killEntryIfCurrent(key, entry)
         continue
