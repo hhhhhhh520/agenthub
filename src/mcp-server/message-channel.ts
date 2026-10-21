@@ -13,6 +13,7 @@
  */
 
 export const CHANNEL_ROLES = ['user', 'orchestrator', 'agent'] as const
+export const CHANNEL_PAGE_SIZE = 50
 
 /** 构造 read_messages 的 prisma where。since 行为与旧实现一致（不校验非法时间串）。 */
 export function buildChannelWhere(sessionId: string, since?: string): Record<string, unknown> {
@@ -21,4 +22,13 @@ export function buildChannelWhere(sessionId: string, since?: string): Record<str
     where.createdAt = { gt: new Date(since) }
   }
   return where
+}
+
+/** 长会话只取最新一页；handler 在输出前 reverse 回时间正序。 */
+export function buildChannelQuery(sessionId: string, since?: string) {
+  return {
+    where: buildChannelWhere(sessionId, since),
+    orderBy: { createdAt: 'desc' as const },
+    take: CHANNEL_PAGE_SIZE,
+  }
 }

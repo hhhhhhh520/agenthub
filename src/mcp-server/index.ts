@@ -21,7 +21,7 @@ const REAL_WORK_DIR = realpathSync(WORK_DIR)
 
 import { isPathSafe as _isPathSafe } from '../lib/path-safety'
 import { listProjectFiles } from '../lib/list-dir'
-import { buildChannelWhere } from './message-channel'
+import { buildChannelQuery } from './message-channel'
 
 function isPathSafe(filePath: string): boolean {
   return _isPathSafe(filePath, WORK_DIR)
@@ -121,12 +121,8 @@ server.tool(
       return { content: [{ type: 'text', text: '错误：未设置 SESSION_ID' }] }
     }
     try {
-      const where = buildChannelWhere(SESSION_ID, since)
-      const messages = await prisma.message.findMany({
-        where,
-        orderBy: { createdAt: 'asc' },
-        take: 50,
-      })
+      const messages = await prisma.message.findMany(buildChannelQuery(SESSION_ID, since))
+      messages.reverse()
       const lines = messages.map(m =>
         `[${m.createdAt.toISOString()}] ${m.agentId}: ${m.rawContent.slice(0, 500)}`
       )

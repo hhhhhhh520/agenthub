@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { buildChannelWhere, CHANNEL_ROLES } from '@/mcp-server/message-channel'
+import { buildChannelQuery, buildChannelWhere, CHANNEL_ROLES, CHANNEL_PAGE_SIZE } from '@/mcp-server/message-channel'
 
 // ── ISSUE-028 T3：read_messages 频道过滤条件 ──
 //
@@ -34,15 +34,32 @@ describe('buildChannelWhere', () => {
   })
 })
 
+describe('buildChannelQuery', () => {
+  it('长会话取最新 50 条：desc + take 50，而不是最旧 50 条', () => {
+    expect(buildChannelQuery('s1')).toEqual({
+      where: buildChannelWhere('s1'),
+      orderBy: { createdAt: 'desc' },
+      take: CHANNEL_PAGE_SIZE,
+    })
+    expect(CHANNEL_PAGE_SIZE).toBe(50)
+  })
+
+  it('since 传入时 where 仍走 buildChannelWhere', () => {
+    const query = buildChannelQuery('s1', '2026-09-30T00:00:00Z')
+    expect(query.where).toEqual(buildChannelWhere('s1', '2026-09-30T00:00:00Z'))
+  })
+})
+
 // ── 接线守卫（源码断言式，沿用 claude-code-env-wiring 模式）──
 // 变异（把 index.ts 的 handler 改回内联 role:'agent' 过滤）必然红。
 const MCP_SRC = readFileSync(resolve(__dirname, '../src/mcp-server/index.ts'), 'utf-8')
 const CHANNEL_SRC = readFileSync(resolve(__dirname, '../src/mcp-server/message-channel.ts'), 'utf-8')
 
 describe('ISSUE-028 接线守卫：read_messages → buildChannelWhere', () => {
-  it('mcp-server/index.ts 的 read_messages 走 buildChannelWhere(SESSION_ID, since)', () => {
+  it('mcp-server/index.ts 的 read_messages 走 buildChannelQuery(SESSION_ID, since)', () => {
     expect(MCP_SRC).toContain("from './message-channel'")
-    expect(MCP_SRC).toContain('buildChannelWhere(SESSION_ID, since)')
+    expect(MCP_SRC).toContain('buildChannelQuery(SESSION_ID, since)')
+    expect(MCP_SRC).toContain('messages.reverse()')
     // 旧的单角色内联 where 构造必须消失（回归即红）；
     // 注意 post_message 创建消息用 role:'agent' 是合法生产代码，不可一刀切禁字符串
     expect(MCP_SRC).not.toMatch(/const where[^=]*=\s*\{\s*sessionId:\s*SESSION_ID,\s*role:\s*'agent'/)
