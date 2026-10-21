@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v50（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 二次闭环）+ P3 #6/#8/#19 闭环；剩旧 P3 25 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v51（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #6/#8/#19 闭环；剩旧 P3 25 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -57,6 +57,7 @@
 | v48 | 2026-10-21 | **P2-12 per-session 共享写链闭环（commit 1de1fbc）**。根因：seq 计数器已按 session 共享，但每个 logger 仍有独立 writeChain；A 的 1、2 未落完时 B 的 3 可先落库，形成 1、3、2。SSE cursor 到 3 后 2 永远不补发。修复：writeChain 放入 SessionSeqState，所有 logger 按 seq 串行入队；flush 只等待调用时快照，超时仍保留 poisoned 状态。新增实际落库顺序与 SSE 补发 id 2 回归；变异验证恢复 per-logger 写链后两条测试精确红。全量 127 files / 1469 passed / 3 skipped。**P1/P2 全闭环；旧 P3 #19 同步闭环，剩 27 项**。 |
 | v49 | 2026-10-21 | **P3 #6 permission requestId 归属校验闭环（commit 2339123）**。根因：permission route 只查 session 存在，respondPermissionByRequestId 只按 requestId 反查 entry；知道其他会话 requestId 时可跨会话批准/拒绝工具请求并提前消费映射。修复：方法增加 expectedOwnerSessionId，比较 entry.ownerSessionId 后才删除映射/唤醒 pending；错误 session 返回 false 且不消费；route 传入当前 sessionId。新增跨会话拒绝与正确会话仍可响应回归；变异验证移除归属检查后测试精确红。全量 127 files / 1470 passed / 3 skipped。**P3 #6/#19 闭环，剩 26 项**。 |
 | v50 | 2026-10-21 | **P3 #8 files symlink 路径逃逸闭环（commit b24a6d7）**。根因：isPathSafe 对不存在目标只做 resolve+startsWith，父目录 symlink 可把 accept 新文件写到 workspace 外；download 只用 join+readFile，workspace 内文件 symlink 可读取外部文件。修复：isPathSafe 向上找最近存在祖先并 realpath，悬空 symlink fail-closed；accept 在 mkdir 后 writeFile 前复查；download 读取前 realpath 校验。新增父目录/悬空 symlink、accept 写入与 mkdir 后复查、download 读取回归；父目录、download、post-mkdir 三次变异均精确红。全量 127 files / 1477 passed / 3 skipped。**P3 #6/#8/#19 闭环，剩 25 项**。 |
+| v51 | 2026-10-21 | **Round 6 三项补齐**：P2-08 并发取消/容量驱逐（`f873181`）、P2-11 owner 初始化发布窗口（`4092e99`）、P3 #8 固定 session 根 junction（`6e7ea3a`）。新增 terminationInFlight 共享、容量驱逐保护未确认记录、无 marker 24h 发布宽限期、owner 写失败 fail-fast、isPathRootSafe 固定根锚定。审计 Round 6 的 tree/sweep/path fixtures 全部转绿；变异验证各路径精确红。全量 129 files / 1486 passed / 3 skipped。**P1/P2 全闭环；P3 #6/#8/#19 闭环，剩 25 项**。 |
 
 
 ---
@@ -260,7 +261,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1477 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1486 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
