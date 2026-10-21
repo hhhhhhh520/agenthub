@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `1fd420e`（P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `1fd420e` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `cec556f`（P2-13 超时先结算 + P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `cec556f` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02 已闭环；P1-03 核心隔离与正常 F4 已闭环，但 Round 5 永久失败清理重开；P2-01..10、P2-13 中除 P2-11/12/13 外保持验收；P2-08 经 `1fd420e` 二次闭环。**当前下一项是 P2-13，其次 P1-03、P2-11、P2-12，再旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v44
+> 历史说明: P1-01/02 已闭环；P1-03 核心隔离与正常 F4 已闭环，但 Round 5 永久失败清理重开；P2-01..10 保持验收；P2-08/P2-13 经 Round 5 二次闭环，P2-11/12 重开。**当前下一项是 P1-03，其次 P2-11、P2-12，再旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v45
 
 ## 1. 当前状态
 
@@ -45,10 +45,11 @@
 | `f889819` | OpenCode XDG 目录写 owner PID；sweep 保留其他实例存活目录 |
 | `61f5b0d` | per-session seq 分配器；写入失败不复用；SSE 轮询 in-flight 护栏 |
 | `1fd420e` | 未确认进程树状态保留；二次 stop/DELETE 仍返回 unconfirmed |
+| `cec556f` | 超时先 reject 再启动清理；同步 next(done) 不能吞 TimeoutError |
 
 回归基线（2026-10-21）：
 
-- `npx vitest run`：126 files / **1463 passed / 3 skipped**
+- `npx vitest run`：126 files / **1464 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -143,6 +144,7 @@
 - ⚠️ P1-03 OpenCode 权限文件按会话隔离（commit `ae39e00` + `d6ef4a0`）：核心隔离与正常 F4 达标；Round 5 认证等永久失败在 exit→stdout.close 顺序下仍遗留 md/XDG，重开；
 - ✅ P2-05 Claude MDS 隔离（commit `a24ca60`）：所有 spawn 关闭项目 CLAUDE.md 自动发现；
 - ✅ P2-01 timeout iterator 收尾（commit `ff53430` + `3fac531`）：return 有界；超时先胜出，onTimeout 清理不阻塞 TimeoutError；
+- ✅ P2-13 同步超时前缀（commit `cec556f`）：先 reject TimeoutError 再启动清理，同步 next(done) 不能抢先；
 - ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；
 - ✅ P2-03 stop/delete deleting 屏障（commit `31c5946` + `95e0755`）：单 DELETE 达标；并发 DELETE 第二个直接 409，不破坏首个删除者标记；
 - ✅ P2-09 Agent 创建取消安全（commit `a73f2d7`）：入口/LLM 后/事务内复查取消；Agent+成员+消息原子提交；

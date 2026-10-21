@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`1fd420e`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`126 files / 1463 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`cec556f`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`126 files / 1464 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P1-03 异常终态、P2-11、P2-12、P2-13 重新打开，P3 #19 随之重开。剩余 P1-03 异常终态、P2-11/12/13 与旧 P3。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态、P2-11、P2-12 仍重开，P3 #19 随之重开。剩余 P1-03 异常终态、P2-11/12 与旧 P3。
 
 ---
 
@@ -301,11 +301,9 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 **最小修法：** 把写链也放进 per-session 状态，跨 logger 按 seq 串行入库；flush 超时后新 logger 仍使用同一写链；保留流/锁时间上限，不改 Prisma schema。旧 #19 重新打开。
 **位置：** `src/lib/services/event-log.ts`、`src/app/api/sessions/[id]/events/route.ts`
 
-### 🔴 P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError（Round 5 重新打开）
+### ✅ P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError
 
-**原修复：** commit `3fac531` 已修“onTimeout 清理 await 期间 next(done) 完成”的异步变体：超时先 reject，清理后台化。
-**Round 5 R5-02：** timer 回调仍先同步执行 `runCleanupBounded(onTimeout)`；若 `onTimeout` 同步 resolve 正在等待的 `next(done)`，next 微任务先入队，随后才 reject，race 被 next 赢走。复现中操作 resolve 而非 reject `TimeoutError`。
-**最小修法：** 先不可逆地确定超时结果（reject）再启动任何清理回调；不能只去掉 await；保留 iterator.return 的有界收尾。
+**状态：** ✅ 已闭环（commit `3fac531` + `cec556f`，2026-10-20/21）。`3fac531` 修异步变体；Round 5 R5-02 发现 timer 回调先同步执行 `runCleanupBounded(onTimeout)` 再 reject，若 `onTimeout` 同步 resolve 正在等待的 `next(done)`，next 微任务先入队赢得 race。`cec556f` 改为先 reject `TimeoutError`，再启动有界清理；清理错误仍只 warn。新增同步 resolve next 回归；变异验证恢复清理先行后测试精确红。
 **位置：** `src/lib/orchestrator/timeout.ts:73`、`:89`
 
 ---
@@ -390,7 +388,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 11. ~~P2-08 进程树退出确认~~（`9201e30` + `1fd420e` 已闭环）
 12. ~~P2-09 Agent 创建取消~~（`a73f2d7` 已闭环）
 13. ~~P2-10 OpenCode 私聊只读提示~~（`a45921a` 已闭环）
-14. **P2-13 同步清理前缀吞 TimeoutError**（Round 5 重开）
+14. ~~P2-13 同步清理前缀吞 TimeoutError~~（`cec556f` 已闭环）
 15. **P1-03 永久失败 managed 资源最终清理**（Round 5 重开）
 16. **P2-11 send/retry 生命周期资源引用**（Round 5 重开）
 17. **P2-12 per-session 写队列 + 旧 #19**（Round 5 重开）
@@ -416,7 +414,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `126 files / 1463 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `126 files / 1464 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -443,7 +441,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 5 复核修正：P2-08 已用 `1fd420e` 重新闭环；P1-03 异常终态、P2-11、P2-12、P2-13 重新打开；旧 P3 #19 随之重开。
-- 当前剩余：P1-03 永久失败清理、P2-13 同步超时前缀、P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态、P2-11、P2-12 仍重开；旧 P3 #19 随之重开。
+- 当前剩余：P1-03 永久失败清理、P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

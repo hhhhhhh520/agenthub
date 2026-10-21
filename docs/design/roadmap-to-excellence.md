@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v44（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 核心闭环 + P2-01..13 中 P2-08 经 Round 5 二次闭环；P1-03 异常终态、P2-11/12/13 重开） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v45（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 核心闭环 + P2-08/P2-13 经 Round 5 二次闭环；P1-03 异常终态、P2-11/12 重开） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -51,6 +51,7 @@
 | v42 | 2026-10-20 | **P2-11 清扫 owner 护栏闭环（commit f889819）**。根因：sweep active 集合只有 DB Agent 行与本进程 ProcessRegistry，其他 AgentHub 实例正在使用的会话级 XDG 目录不可见，会被当孤儿删除。修复：OpenCode 创建 XDG 目录时写 .agenthub-owner.json（pid/updatedAt）；sweep 对非 active 目录检查 owner PID，其他实例存活则保留，owner 为本进程或已退出才清理。新增其他实例存活保留、死 owner 清理、owner 文件写入回归；变异验证删除 owner 检查后测试精确红。全量 124 files / 1458 passed / 3 skipped。**下一批**：P2-12、旧 P3。 |
 | v43 | 2026-10-20 | **P2-12 事件 seq / SSE 轮询护栏闭环（commit 61f5b0d）**。根因：event-log 每个 logger 各自从 DB max 起算 seq，同 session 并发 logger 会分配相同 seq，唯一约束失败后被 catch 吞掉导致事件丢失；SSE setInterval 无 in-flight 护栏，慢查询超过 pollMs 时会与下一轮重叠。修复：新增进程内 per-session seq 分配器，并发 createEventLogger 共享一次 DB max 初始化与计数器；写入失败保留 poisoned 状态并显式告警，避免复用已流式发出的 seq；SSE 增加 polling guard，查询完成后检查 closed/abort 再发送。新增并发 seq、初始化降级、失败后不复用、慢查询不重叠回归；变异验证分别精确红。全量 126 files / 1462 passed / 3 skipped。**下一批**：旧 P3（跨实例 seq 原子性仍是残余）。 |
 | v44 | 2026-10-21 | **Round 5 复核：P2-08 二次闭环（commit 1fd420e）；P1-03/P2-11/P2-12/P2-13 重开**。P2-08 根因：父进程 exit 时 registry entry 被无条件删除，taskkill /T 未确认的 unconfirmed 状态丢失；修复：cancelled entry 保留 registry、terminationUnconfirmed 持续到确认成功、cleanupIdle 跳过取消中/未确认 entry。Round 5 另行确认：P1-03 永久失败 managed 清理、P2-11 send/retry 资源引用、P2-12 跨 logger 写队列顺序、P2-13 同步清理前缀吞 TimeoutError 仍未闭环。全量 126 files / 1463 passed / 3 skipped。**下一批**：P2-13 → P1-03 → P2-11 → P2-12。 |
+| v45 | 2026-10-21 | **P2-13 同步超时前缀闭环（commit cec556f）**。根因：timer 回调先同步执行 runCleanupBounded(onTimeout)，再 reject TimeoutError；清理回调同步 resolve 正在等待的 next(done) 时，next 微任务先入队赢得 race。修复：先 reject 超时结果，再启动有界清理；清理错误仍只 warn。新增同步 resolve next 回归；变异验证恢复清理先行后测试精确红。全量 126 files / 1464 passed / 3 skipped。**下一批**：P1-03 → P2-11 → P2-12。 |
 
 
 ---
@@ -254,7 +255,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1463 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1464 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
