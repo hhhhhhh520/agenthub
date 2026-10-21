@@ -19,6 +19,9 @@ interface ProcessEntry {
   // OpenCode 生成的会话级资源：进程退出/会话取消时清理，避免权限文件跨会话残留。
   managedAgentFile: string | null
   managedConfigDir: string | null
+  // exit 发生在 send 仍持锁时，managed 资源先保留给内部 retry / 本次 send 收尾；
+  // send 正常完成后由 killEntryIfCurrent 补做最终删除。
+  managedCleanupPending: boolean
 
   workDir: string
   permissionMode: string
@@ -415,6 +418,7 @@ class ProcessRegistry {
       mcpConfig: config.mcpConfig || null,
       managedAgentFile: config.managedAgentFile || null,
       managedConfigDir: config.managedConfigDir || null,
+      managedCleanupPending: false,
       workDir,
       permissionMode: config.permissionMode || 'default',
       pendingPermissions: new Map(),
@@ -549,7 +553,16 @@ class ProcessRegistry {
    * 这是预期行为不是 bug。
    */
   private cleanupEntry(entry: ProcessEntry, preserveManaged = false): void {
-    if (entry.cleanedUp) return
+    if (entry.cleanedUp) {
+      // exit handler 先以 preserveManaged 完成进程级清理；send 正常结束后的
+      // 第二次 cleanup 必须仍能补删当时保留的 managed 资源。
+      if (!preserveManaged && entry.managedCleanupPending) {
+        entry.managedCleanupPending = false
+        this.cleanupManagedPath(entry, entry.managedAgentFile, false)
+        this.cleanupManagedPath(entry, entry.managedConfigDir, true)
+      }
+      return
+    }
     entry.cleanedUp = true
 
     entry.alive = false
@@ -577,7 +590,17 @@ class ProcessRegistry {
     if (!preserveManaged) {
       this.cleanupManagedPath(entry, entry.managedAgentFile, false)
       this.cleanupManagedPath(entry, entry.managedConfigDir, true)
+      entry.managedCleanupPending = false
+    } else {
+      entry.managedCleanupPending = Boolean(entry.managedAgentFile || entry.managedConfigDir)
     }
+  }
+
+  private finalizeManagedCleanup(entry: ProcessEntry): void {
+    if (!entry.managedCleanupPending) return
+    entry.managedCleanupPending = false
+    this.cleanupManagedPath(entry, entry.managedAgentFile, false)
+    this.cleanupManagedPath(entry, entry.managedConfigDir, true)
   }
 
   private cleanupManagedPath(entry: ProcessEntry, path: string | null, recursive: boolean): void {
@@ -596,8 +619,10 @@ class ProcessRegistry {
   /** sweep 用：当前存活进程仍持有的 OpenCode XDG 目录（会话级目录不能被当孤儿删）。 */
   getActiveManagedConfigDirs(): string[] {
     return [...this.registry.values()]
-      .filter(e => e.alive && !e.cleanedUp && e.managedConfigDir)
+      // pending 表示进程已 exit、send 尚未收尾；配置仍可能被 retry 重用，不能当孤儿删。
+      .filter(e => (e.alive && !e.cleanedUp) || e.managedCleanupPending)
       .map(e => e.managedConfigDir!)
+      .filter((p): p is string => Boolean(p))
   }
 
   async *send(key: string, fullPrompt: string, config?: SpawnConfig, imageAttachments?: Array<{ mimeType: string; data: string }>): AsyncIterable<StreamChunk> {
@@ -659,6 +684,9 @@ class ProcessRegistry {
           yield* this.readRound(effectiveKey, entry, fullPrompt, imageAttachments)
         }
 
+        // exit 可能先于 stdout.close：exit handler 为 retry 保留了 managed 资源并删除了
+        // registry entry，成功收尾时用当前 entry 引用补做最终删除。
+        this.finalizeManagedCleanup(entry)
         // 一次性进程清理（ndjson 格式，进程已自然退出）
         if (entry.format === 'ndjson') {
           this.killEntryIfCurrent(effectiveKey, entry)

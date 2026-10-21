@@ -474,6 +474,32 @@ describe('ProcessRegistry — extended coverage', () => {
       expect(rmSync).toHaveBeenCalledWith(sharedConfig, { recursive: true, force: true })
     })
 
+    it('P1-03 F4: 正常 NDJSON 完成时 exit 先于 stdout.close，仍清理 managed 路径', async () => {
+      vi.useRealTimers()
+      const { unlinkSync, rmSync } = await import('fs')
+      const config = {
+        workDir: '/dir',
+        command: 'opencode',
+        args: ['run'],
+        format: 'ndjson' as const,
+        managedAgentFile: '/agents/exit-before-close.md',
+        managedConfigDir: '/cfg/exit-before-close',
+      }
+      processRegistry.getOrCreate('exit-before-close', config)
+      setTimeout(() => {
+        fakeProc.stdout.write(Buffer.from(JSON.stringify({ type: 'text', part: { text: 'done' } }) + '\n'))
+        fakeProc.exitCode = 0
+        fakeProc.emit('exit', 0)
+        fakeProc.stdout.emit('close')
+      }, 10)
+
+      const chunks = await collect(processRegistry.send('exit-before-close', 'test', config))
+
+      expect(chunks.some(c => c.type === 'status' && c.content === 'completed')).toBe(true)
+      expect(unlinkSync).toHaveBeenCalledWith('/agents/exit-before-close.md')
+      expect(rmSync).toHaveBeenCalledWith('/cfg/exit-before-close', { recursive: true, force: true })
+    })
+
     it('P1-03: 进程自然退出也清理会话级 agent 文件与 XDG 目录', async () => {
       const { unlinkSync, rmSync } = await import('fs')
       processRegistry.getOrCreate('natural-exit', {
