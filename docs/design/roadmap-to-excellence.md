@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v38（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2-01/02/03/04/05/06/07/13 闭环；剩 P2-08/09、P2-10/11/12） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v39（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2-01/02/03/04/05/06/07/08/13 闭环；剩 P2-09、P2-10/11/12） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -45,6 +45,7 @@
 | v36 | 2026-10-20 | **F10 Q&A 批准保存闭环（commit 0412a39）**。根因：recordPlanApproval 只在 execute 分支调用；用户明确确认执行但模型路由到 align_qa 时不保存批准，QA 无问题后 transitionToExecution 仍要求再次确认。修复：align_qa 分支也记录明确批准；后续 user 消息仍会使旧批准失效。新增真实 route + handleAgentQA 无问题直接执行回归；变异验证移除 align_qa 记录后测试精确红。全量 123 files / 1449 passed / 3 skipped。**最新复核项全部闭环**。**下一批**：P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
 | v37 | 2026-10-20 | **F4 OpenCode managed 资源最终清理闭环（commit d6ef4a0）**。根因：exit 发生在 send 仍 busy/working 时，exit handler 为 retry 保留 managed 资源并删除 registry entry；随后 stdout.close 正常完成，killEntryIfCurrent 因 entry 不在 registry 直接返回，md/XDG 失去最终清理者。修复：cleanupEntry 在 preserveManaged 时记录 managedCleanupPending；send 成功收尾用当前 entry 引用执行 finalizeManagedCleanup，再走 killEntryIfCurrent。新增 exit 先于 stdout.close 的正常 NDJSON 回归；变异验证移除 finalize 后测试精确红。全量 123 files / 1450 passed / 3 skipped。**下一批**：P2-13 R1、P2-08/09、P2-10/11/12。 |
 | v38 | 2026-10-20 | **P2-13 R1 超时优先级闭环（commit 3fac531）**。根因：timer 回调先 await onTimeout 再 reject；清理期间底层 next(done) 先完成时 Promise.race 正常返回，吞掉 TimeoutError。修复：超时触发后只启动有界 onTimeout 后台清理并立即 reject TimeoutError；iterator.return 仍在 finally 有界收尾。新增 onTimeout 清理期间 next 完成回归；变异验证恢复 await cleanup 后测试精确红。全量 123 files / 1451 passed / 3 skipped。**下一批**：P2-08/09、P2-10/11/12。 |
+| v39 | 2026-10-20 | **P2-08 Windows 进程树确认闭环（commit 9201e30）**。根因：Windows 终止只等待直接 ChildProcess exit；taskkill /T 启动后 unref，不能证明后代退出，父进程退出即可误报 confirmed。修复：terminateEntry 并发等待直接 exit 与 taskkill /T 子进程退出码；treeConfirmed 必须为 true，非 0/超时/error 走 force 或返回 unconfirmed。新增父进程已退出但 taskkill 树确认失败回归；变异验证移除 treeConfirmed 条件后测试精确红。全量 123 files / 1452 passed / 3 skipped。**下一批**：P2-09、P2-10/11/12、旧 P3。 |
 
 
 ---
@@ -248,7 +249,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1451 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1452 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
