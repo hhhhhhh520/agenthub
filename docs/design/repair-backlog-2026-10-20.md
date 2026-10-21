@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`61f5b0d`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`126 files / 1462 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`1fd420e`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`126 files / 1463 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 由 `3fac531` 补齐；P2-08 由 `9201e30` 补齐；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 补齐；P2-12 由 `61f5b0d` 补齐；剩余旧 36 项 P3。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P1-03 异常终态、P2-11、P2-12、P2-13 重新打开，P3 #19 随之重开。剩余 P1-03 异常终态、P2-11/12/13 与旧 P3。
 
 ---
 
@@ -62,7 +62,7 @@
 
 ---
 
-## 2. P1（P1-01/02/03 已闭环）
+## 2. P1（P1-01/02 已闭环；P1-03 正常 F4 已闭环，异常终态重开）
 
 ### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
@@ -150,9 +150,10 @@ return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 
 ---
 
-### ✅ P1-03 OpenCode 不同会话覆盖同一权限文件（F4 已闭环）
+### ⚠️ P1-03 OpenCode 不同会话覆盖同一权限文件（核心隔离与正常 F4 已闭环；异常终态待补）
 
-**状态：** 核心隔离 ✅ 已修（commit `ae39e00`）；Round 2 F4 由 `d6ef4a0` 闭环：exit 先于 stdout.close 时 cleanupEntry 记录 managedCleanupPending，send 正常收尾用当前 entry 引用补做 md/XDG 最终删除。P2-05 已由 `a24ca60` 修复。
+**状态：** 核心隔离 ✅ 已修（commit `ae39e00`）；Round 2 F4 正常成功收尾由 `d6ef4a0` 闭环：exit 先于 stdout.close 时 cleanupEntry 记录 managedCleanupPending，send 正常收尾用当前 entry 引用补做 md/XDG 最终删除。P2-05 已由 `a24ca60` 修复。
+**Round 5 R5-03：** 认证等永久失败在 `exit → stdout.close` 顺序下仍遗留 md/XDG；永久失败分支用 registry 重新查 entry，exit handler 已删除时拿不到原始 entry。该项重新打开，见 `review-round5-error-cleanup.test.ts`。
 **旧编号：** 原 36 项 #13（原“未修”，现已闭环）；审查报告 P1 #4
 **位置：**
 - `src/lib/adapter/opencode-adapter.ts:149` `ensureAgentConfig`
@@ -274,8 +275,8 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 
 ### ✅ P2-08 Windows 进程树退出确认不足
 
-**状态：** ✅ 已闭环（commit `9201e30`，2026-10-20）。`terminateEntry` 并发等待直接进程 exit 与 `taskkill /T` 子进程退出码；只有 `treeConfirmed` 为 true 才报 confirmed。`taskkill` 非 0、超时或 error 会走 force，最终仍无法确认则返回 `unconfirmed`。新增“父进程已退出但 taskkill 树确认失败”回归；变异验证移除 `treeConfirmed` 条件后测试精确红。
-**位置：** `src/lib/adapter/process-registry.ts:1298`
+**状态：** ✅ 已闭环（commit `9201e30` + `1fd420e`，2026-10-20/21）。`terminateEntry` 并发等待直接进程 exit 与 `taskkill /T` 子进程退出码；只有 `treeConfirmed` 为 true 才报 confirmed。Round 5 补齐未确认状态保留：cancelled entry 的 exit handler 不再删除 registry；`terminationUnconfirmed` 保留到后续树确认成功；`cleanupIdle` 跳过取消中/未确认 entry。新增二次取消、idle 清扫与后续确认恢复回归；变异验证分别恢复无条件删除、移除 idle 保护后测试精确红。
+**位置：** `src/lib/adapter/process-registry.ts:1400`、`:1558`
 
 ### ✅ P2-09 Agent 创建取消窗口
 
@@ -287,20 +288,25 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 **状态：** ✅ 已闭环（commit `a45921a`，2026-10-20）。新增 `OpencodeReadOnlyHint`，私聊 ChatFab 在 `selectedAgent.platform === 'opencode'` 时显示“默认只读，写操作需 `/permission auto`”提示；Claude/未选择不渲染。新增 server-render 组件回归；变异验证移除平台门禁后测试精确红。
 **位置：** `src/components/chat-fab.tsx`、`src/components/opencode-readonly-hint.tsx`
 
-### ✅ P2-11 配置清扫 owner/实例/运行引用护栏
+### 🔴 P2-11 配置清扫 owner/实例/运行引用护栏（Round 5 重新打开）
 
-**状态：** ✅ 已闭环（commit `f889819`，2026-10-20）。OpenCode 创建 XDG 目录时写 `.agenthub-owner.json`（pid/updatedAt）；sweep 对非 active 目录检查 owner PID：其他实例存活则保留，owner 为本进程或已退出才清理。新增其他实例存活保留、死 owner 清理、owner 文件写入回归；变异验证删除 owner 检查后测试精确红。
-**位置：** `src/lib/services/claude-cfg-maintenance.ts`、`src/lib/adapter/opencode-adapter.ts`
+**原修复：** commit `f889819` 已覆盖“另一实例 PID 存活”场景：OpenCode 创建 XDG 目录时写 `.agenthub-owner.json`；sweep 对其他存活 owner 保留。
+**Round 5 R5-04：** 不需要多实例。working 进程异常退出后，send 进入 retry backoff；exit handler 保留 XDG 但删除 registry entry，`getActiveManagedConfigDirs()` 漏掉该目录；owner 为本进程时 `isOtherInstanceOwnerAlive()` 判为可清理，正常 `GET /api/agents` sweep 会删掉待复用目录。另：mkdir → marker 发布窗口、marker 写失败被吞仍是无保护窗口。
+**位置：** `src/lib/services/claude-cfg-maintenance.ts`、`src/lib/adapter/process-registry.ts`、`src/lib/adapter/opencode-adapter.ts`
 
-### ✅ P2-12 事件 seq 不可变 + 单 logger + SSE 轮询重叠
+### 🔴 P2-12 事件 seq 不可变 + 单 logger + SSE 轮询重叠（Round 5 重新打开 / 旧 #19）
 
-**状态：** ✅ 已闭环（commit `61f5b0d`，2026-10-20）。新增进程内 per-session seq 分配器：并发 `createEventLogger` 共享一次 DB max 初始化和同一个计数器；写入失败保留 poisoned 状态并显式告警，避免复用已流式发出的 seq；SSE 轮询增加 `polling` in-flight 守卫，查询完成后检查 closed/abort 再发送。新增并发 seq、初始化降级、失败后不复用、慢查询不重叠回归；变异验证分别精确红。跨实例 seq 原子性仍是残余（本项只保证同进程单实例；未改 schema）。
+**原修复：** commit `61f5b0d` 已实现 per-session seq 分配器与 SSE 轮询 in-flight 守卫；并发 logger 不再分配相同 seq。
+**Round 5 R5-05：** 只共享了 seq 计数器，没有共享写队列。每个 logger 仍有独立 `writeChain`；A 的 1、2 未落完时 B 拿到 3 并独立落库，可形成 `1、3、2`。SSE 读到 1、3 后 cursor=3，2 后续成功落库也不会补发。已有测试先 `seq.sort()` 再断言，只覆盖唯一性，未覆盖提交顺序。
+**最小修法：** 把写链也放进 per-session 状态，跨 logger 按 seq 串行入库；flush 超时后新 logger 仍使用同一写链；保留流/锁时间上限，不改 Prisma schema。旧 #19 重新打开。
 **位置：** `src/lib/services/event-log.ts`、`src/app/api/sessions/[id]/events/route.ts`
 
-### ✅ P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError（R1）
+### 🔴 P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError（Round 5 重新打开）
 
-**状态：** ✅ 已闭环（commit `3fac531`，2026-10-20）。定时器触发后先 reject `TimeoutError`；`onTimeout` 只启动有界后台清理（catch 日志），不再 await。新增“onTimeout 清理期间 next(done) 完成”回归；变异验证恢复 await cleanup 后测试精确红。
-**位置：** `src/lib/orchestrator/timeout.ts:73`、`:99`
+**原修复：** commit `3fac531` 已修“onTimeout 清理 await 期间 next(done) 完成”的异步变体：超时先 reject，清理后台化。
+**Round 5 R5-02：** timer 回调仍先同步执行 `runCleanupBounded(onTimeout)`；若 `onTimeout` 同步 resolve 正在等待的 `next(done)`，next 微任务先入队，随后才 reject，race 被 next 赢走。复现中操作 resolve 而非 reject `TimeoutError`。
+**最小修法：** 先不可逆地确定超时结果（reject）再启动任何清理回调；不能只去掉 await；保留 iterator.return 的有界收尾。
+**位置：** `src/lib/orchestrator/timeout.ts:73`、`:89`
 
 ---
 
@@ -325,7 +331,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 16 | 未修 | `redo/route.ts:83,95` | `transitionPhase` 后才 `trim()`；非字符串 → 500。先校验类型再推进 |
 | 17 | 未修 | `sessions/route.ts:26,49` | 先 `session.create` 再校验 private agentIds；失败留空会话。先校验/事务 |
 | 18 | 未修 | `messages/[messageId]/route.ts:23` | Pin 数量 `count` 后 `update`；并发可超 10。用事务/短锁/条件写 |
-| 19 | ✅ | `event-log.ts`、events route | 已由 P2-12 `61f5b0d` 覆盖：同进程 seq 共享分配、写入失败告警、SSE 轮询 in-flight；跨实例 seq 仍非 DB 原子 |
+| 19 | 部分 | `event-log.ts`、events route | P2-12 `61f5b0d` 已修 in-flight 与同进程 seq 唯一；Round 5 发现写链仍独立，`1、3、2` 落库会跨过 2，重开 |
 | 21 | 未修 | `use-chat.ts:43` | 切 session 不清 messages/pending/loading，不 abort 旧 fetch；只有 seq gate/EventSource 重置 |
 | 22 | 未修 | `projects/[id]/page.tsx:94` | 只处理 done；无 permission_request 批准入口 |
 | 23 | 未修 | `attachment-input.tsx:44,68` | 闭包 `attachments` 覆盖；并发上传互相覆盖；上传未完成发送仍带占位 ID |
@@ -381,12 +387,14 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 8. ~~F10 Q&A 分支保存明确批准~~（`0412a39` 已闭环）
 9. ~~P1-03 F4：OpenCode managed 资源最终清理~~（`d6ef4a0` 已闭环）
 10. ~~P2-13 R1：onTimeout 与 next 的超时优先级~~（`3fac531` 已闭环）
-11. ~~P2-08 进程树退出确认~~（`9201e30` 已闭环）
+11. ~~P2-08 进程树退出确认~~（`9201e30` + `1fd420e` 已闭环）
 12. ~~P2-09 Agent 创建取消~~（`a73f2d7` 已闭环）
 13. ~~P2-10 OpenCode 私聊只读提示~~（`a45921a` 已闭环）
-14. ~~P2-11 配置清扫 owner 护栏~~（`f889819` 已闭环）
-15. ~~P2-12 事件 seq/单 logger/SSE 轮询~~（`61f5b0d` 已闭环）
-16. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+14. **P2-13 同步清理前缀吞 TimeoutError**（Round 5 重开）
+15. **P1-03 永久失败 managed 资源最终清理**（Round 5 重开）
+16. **P2-11 send/retry 生命周期资源引用**（Round 5 重开）
+17. **P2-12 per-session 写队列 + 旧 #19**（Round 5 重开）
+18. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -408,7 +416,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `126 files / 1462 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `126 files / 1463 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -425,6 +433,7 @@ npx eslint <changed-files>
 
 - Round 2 报告：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549-7321-a5a8-9a46eeb05ea4\agenthub-repair-quality-review-round2.md`
 - Round 2 复现：同目录 `review-round2-nested-env.test.ts`（F1，已由 `61c7218` 修复）、`review-round2-plan.test.ts`（F2/F3）、`review-round2-managed-exit.test.ts`（F4）、`review-round2-delete.test.ts`（F5）、`review-round2-timeout-race.test.ts`（R1）
+- Round 5 报告（2026-10-21）：同目录 `agenthub-repair-quality-review-round5.md`；复现 `review-round5-tree-retention.test.ts`（P2-08，已由 `1fd420e` 修复）、`review-round5-timeout-sync.test.ts`（P2-13）、`review-round5-error-cleanup.test.ts`（P1-03）、`review-round5-sweep-owner.test.ts`（P2-11）、`review-round5-event-order.test.ts`（P2-12/#19）
 - 初轮报告：同目录 `agenthub-repair-quality-review.md`；6 条独立复现 `review-quality-repros.test.ts`；B2 CAS 摘要 `review-cas-repro.test.ts`（已由 `be969e0` 修复）
 
 使用方式：复制到仓库 `tests/` 的**唯一新文件**，用现有 Vitest alias 运行；不要覆盖原有测试。复现预期失败，直到对应缺口被修复。
@@ -434,7 +443,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- 最新复核项已全部闭环：F4/F7/F8/F9/F10/F11；P2-13 R1、P2-08、P2-09、P2-10、P2-11、P2-12 也已闭环。
-- P2 全部闭环；剩余项转为：**旧 36 项 P3**。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 5 复核修正：P2-08 已用 `1fd420e` 重新闭环；P1-03 异常终态、P2-11、P2-12、P2-13 重新打开；旧 P3 #19 随之重开。
+- 当前剩余：P1-03 永久失败清理、P2-13 同步超时前缀、P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

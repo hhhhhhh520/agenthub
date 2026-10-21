@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `61f5b0d`（事件 seq/SSE 轮询护栏 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `61f5b0d` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `1fd420e`（P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `1fd420e` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02/03 已闭环；P2-01/02/03/04/05/06/07/08/09/10/11/12/13 已闭环。**P2 全部闭环，当前下一批是旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v43
+> 历史说明: P1-01/02 已闭环；P1-03 核心隔离与正常 F4 已闭环，但 Round 5 永久失败清理重开；P2-01..10、P2-13 中除 P2-11/12/13 外保持验收；P2-08 经 `1fd420e` 二次闭环。**当前下一项是 P2-13，其次 P1-03、P2-11、P2-12，再旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v44
 
 ## 1. 当前状态
 
@@ -44,10 +44,11 @@
 | `a45921a` | 私聊 ChatFab 显示 OpenCode 默认只读提示与切换说明 |
 | `f889819` | OpenCode XDG 目录写 owner PID；sweep 保留其他实例存活目录 |
 | `61f5b0d` | per-session seq 分配器；写入失败不复用；SSE 轮询 in-flight 护栏 |
+| `1fd420e` | 未确认进程树状态保留；二次 stop/DELETE 仍返回 unconfirmed |
 
-回归基线（2026-10-20）：
+回归基线（2026-10-21）：
 
-- `npx vitest run`：126 files / **1462 passed / 3 skipped**
+- `npx vitest run`：126 files / **1463 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -139,18 +140,19 @@
   `docs/design/permission-cli-probe-2026-10-20.md`）；
 - ✅ 审计内容证据（commit `0dd751a`/`ce2703b`/`61c7218`/`4a7efec`）：已脏同一路径再次修改、忽略 `.env`（含嵌套目录与 `.ENV` 大小写）、删除均按内容 hash 判定；
 - ✅ P1-02 主批次工具白名单（commit `a5e6991`）：批次与单 Agent 共用解析口径；
-- ✅ P1-03 OpenCode 权限文件按会话隔离（commit `ae39e00` + `d6ef4a0`）：核心隔离达标；F4 正常 exit→stdout.close 顺序下 managed md/XDG 最终清理已闭环；
+- ⚠️ P1-03 OpenCode 权限文件按会话隔离（commit `ae39e00` + `d6ef4a0`）：核心隔离与正常 F4 达标；Round 5 认证等永久失败在 exit→stdout.close 顺序下仍遗留 md/XDG，重开；
 - ✅ P2-05 Claude MDS 隔离（commit `a24ca60`）：所有 spawn 关闭项目 CLAUDE.md 自动发现；
 - ✅ P2-01 timeout iterator 收尾（commit `ff53430` + `3fac531`）：return 有界；超时先胜出，onTimeout 清理不阻塞 TimeoutError；
 - ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；
 - ✅ P2-03 stop/delete deleting 屏障（commit `31c5946` + `95e0755`）：单 DELETE 达标；并发 DELETE 第二个直接 409，不破坏首个删除者标记；
 - ✅ P2-09 Agent 创建取消安全（commit `a73f2d7`）：入口/LLM 后/事务内复查取消；Agent+成员+消息原子提交；
 - ✅ P2-10 OpenCode 私聊只读提示（commit `a45921a`）：ChatFab 按 platform 显示只读提示与 `/permission auto` 切换说明；
-- ✅ P2-11 配置清扫 owner 护栏（commit `f889819`）：XDG 目录写 owner PID；sweep 保留其他实例存活目录；
-- ✅ P2-12 事件 seq / SSE 轮询护栏（commit `61f5b0d`）：per-session 分配器共享 DB max 与计数器；写入失败保留状态并告警；SSE 慢查询不重叠；
+- ⚠️ P2-11 配置清扫 owner 护栏（commit `f889819`）：其他实例存活 owner 已保护；Round 5 发现同进程 send/retry 目录会被 sweep 删除，重开；
+- ⚠️ P2-12 事件 seq / SSE 轮询护栏（commit `61f5b0d`）：seq 唯一与 SSE in-flight 已修；Round 5 发现跨 logger 写链仍可 `1、3、2` 落库漏补发，重开；
 - ✅ P2-04 恢复执行计划审批关联（commit `6292cdd` + `351cdbe` + `52d66c9` + `3bb12ad` + `1af2112` + `0412a39`）：结构化批准绑定 plan ID、align_pm 真实恢复、全任务集一致、done 恢复审批、问句不算批准、恢复写入前取消复查、Q&A 批准保存均已完成；下一项 P1-03 F4；
 - ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；
 - ✅ P2-07 拿锁后重读会话快照（commit `d2fb158`）：排队请求使用锁内最新 phase/phaseStep/decisionTrace/permissionMode/projectDir/type；重读 null 回 404；下一项 F11 `.ENV`；
+- ✅ P2-08 进程树 unconfirmed 状态保留（commit `9201e30` + `1fd420e`）：父进程 exit 或重复取消都不丢未确认树状态；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；
 - ✅ 事件 seq / 单分配器 / SSE 轮询 in-flight（commit `61f5b0d`）；
 - ✅ OpenCode 配置目录 `opencodeCfgDirName` 清扫前缀 bug 修复（commit `ca020b8`）；
