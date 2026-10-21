@@ -3,8 +3,8 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v48：CI 门禁、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、嵌套 `.env` 敏感分类、拿锁后快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批、`.ENV` 大小写、问句不算批准、恢复写入前取消复查、Q&A 批准保存、managed 资源最终清理、超时优先、Windows 进程树确认、取消安全 Agent 创建、私聊只读提示、清扫 owner 护栏、事件 seq/SSE 轮询、未确认进程树状态保留、超时先结算、终态 managed 清理、本进程 retry owner 保护、per-session 共享写链；阶段一/阶段二已收口）
-- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前未闭环清单**（P1/P2 全闭环；P3 #19 已闭环；剩旧 P3 27 项）
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v49：CI 门禁、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、嵌套 `.env` 敏感分类、拿锁后快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批、`.ENV` 大小写、问句不算批准、恢复写入前取消复查、Q&A 批准保存、managed 资源最终清理、超时优先、Windows 进程树确认、取消安全 Agent 创建、私聊只读提示、清扫 owner 护栏、事件 seq/SSE 轮询、未确认进程树状态保留、超时先结算、终态 managed 清理、本进程 retry owner 保护、per-session 共享写链、permission 归属校验；阶段一/阶段二已收口）
+- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前未闭环清单**（P1/P2 全闭环；P3 #6/#19 已闭环；剩旧 P3 26 项）
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
 - [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
