@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db'
 import { cleanupAttachmentFiles } from '@/lib/attachment-cleanup'
 import { cleanupShadowGit } from '@/lib/services/shadow-git'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
-import { markSessionDeleting, clearSessionDeleting } from '@/lib/session-lifecycle'
+import { markSessionDeleting, clearSessionDeleting, isSessionDeleting } from '@/lib/session-lifecycle'
 import { waitForSessionUnlock } from '@/lib/session-lock'
 
 export async function GET(
@@ -99,6 +99,11 @@ export async function DELETE(
   // 删除 = 标记 deleting → 取消 → 阻止重建 → 杀并等待真实退出 → 等业务 finally → 再删数据。
   // 任一步未确认都返回 409/500，不删 DB，避免“进程还在写、记录已消失”。
   // deleting 必须在取消前建立，并保持到 DB 删除完成；失败路径由 finally 清理以便重试。
+  // F5: 同一 session 的并发 DELETE 只允许第一个持有 deleting。第二个若继续走并失败，
+  // 其 finally 会清掉第一个的公共标记，随后 stop 会误清取消标记并放行新执行。
+  if (isSessionDeleting(id)) {
+    return NextResponse.json({ error: '会话正在删除中，请稍后重试' }, { status: 409 })
+  }
   markSessionDeleting(id)
   try {
     requestSessionCancel(id)

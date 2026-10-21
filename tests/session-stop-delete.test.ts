@@ -116,6 +116,34 @@ describe('DELETE /api/sessions/[id] — 取消 → 退出 → 锁释放 → 删�
     expect(isSessionDeleting('s1')).toBe(false)
   })
 
+  it('P2-03 F5: 并发 DELETE 只允许第一个持有 deleting，第二个拒绝且不破坏屏障', async () => {
+    const gate = deferred<void>()
+    mocks.attachmentFindMany.mockImplementationOnce(async () => {
+      await gate.promise
+      return []
+    })
+
+    const first = DELETE(req(), params)
+    await waitUntil(() => mocks.attachmentFindMany.mock.calls.length > 0)
+    expect(isSessionDeleting('s1')).toBe(true)
+
+    const second = await DELETE(req(), params)
+    expect(second.status).toBe(409)
+    expect(await second.json()).toMatchObject({ error: expect.stringContaining('删除') })
+    expect(isSessionDeleting('s1')).toBe(true)
+
+    // 第二个 DELETE 不能清掉第一个的屏障；stop 仍须保留取消标记。
+    const stopRes = await stopPOST(new Request('http://localhost', { method: 'POST' }), params)
+    expect(stopRes.status).toBe(202)
+    expect(await stopRes.json()).toMatchObject({ stopped: false, deleting: true })
+    expect(mocks.clearSessionCancel).not.toHaveBeenCalled()
+
+    gate.resolve()
+    const firstRes = await first
+    expect(firstRes.status).toBe(200)
+    expect(isSessionDeleting('s1')).toBe(false)
+  })
+
   it('P2-03: deleting 保持到 DB 删除完成', async () => {
     const gate = deferred<void>()
     mocks.sessionDelete.mockImplementationOnce(async () => {
