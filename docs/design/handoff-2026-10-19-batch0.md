@@ -3,7 +3,7 @@
 > 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `f889819`（清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `f889819` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
 > 历史说明: P1-01/02/03 已闭环；P2-01/02/03/04/05/06/07/08/09/10/11/13 已闭环。**当前下一项是 P2-12，其次旧 P3**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v42
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 接续提示、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v42
 
 ## 1. 当前状态
 
