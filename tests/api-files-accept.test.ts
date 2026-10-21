@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 
 // Mock fs/promises
-const { mockReadFile, mockWriteFile, mockMkdir, mockFindUnique } = vi.hoisted(() => ({
+const { mockReadFile, mockWriteFile, mockMkdir, mockFindUnique, mockRealpathSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockWriteFile: vi.fn(),
   mockMkdir: vi.fn(),
   mockFindUnique: vi.fn(),
+  mockRealpathSync: vi.fn(),
 }))
 
 vi.mock('fs/promises', () => ({
@@ -13,6 +16,11 @@ vi.mock('fs/promises', () => ({
   writeFile: mockWriteFile,
   mkdir: mockMkdir,
 }))
+
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof fs>('fs')
+  return { ...actual, realpathSync: mockRealpathSync }
+})
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -40,6 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockMkdir.mockResolvedValue(undefined)
   mockWriteFile.mockResolvedValue(undefined)
+  mockRealpathSync.mockImplementation((p: fs.PathLike) => String(p))
   // 默认：session 存在
   mockFindUnique.mockResolvedValue({ id: VALID_SESSION_ID, projectDir: '' })
 })
@@ -146,6 +155,46 @@ describe('POST /api/sessions/[id]/files/accept', () => {
   it('returns 400 when filePath resolves to base dir itself (.)', async () => {
     const res = await POST(makeReq({ filePath: '.', content: 'hello' }), params())
     expect(res.status).toBe(400)
+  })
+
+  it('returns 400 and does not write through a parent symlink escaping workspace', async () => {
+    const baseDir = path.join(process.cwd(), 'workspaces', VALID_SESSION_ID)
+    const link = path.join(baseDir, 'link')
+    const target = path.join(link, 'new.txt')
+    mockRealpathSync.mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === target) throw new Error('ENOENT')
+      if (s === link) return path.resolve(baseDir, '..', 'outside')
+      return s
+    })
+    mockReadFile.mockReset()
+    mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
+
+    const res = await POST(makeReq({ filePath: 'link/new.txt', content: 'hello' }), params())
+    expect(res.status).toBe(400)
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the parent after mkdir and rejects a symlink introduced in between', async () => {
+    const baseDir = path.join(process.cwd(), 'workspaces', VALID_SESSION_ID)
+    const link = path.join(baseDir, 'link')
+    const target = path.join(link, 'new.txt')
+    let linkRealpathCalls = 0
+    mockRealpathSync.mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === target) throw new Error('ENOENT')
+      if (s === link) {
+        linkRealpathCalls++
+        return linkRealpathCalls === 1 ? link : path.resolve(baseDir, '..', 'outside')
+      }
+      return s
+    })
+    mockReadFile.mockReset()
+    mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
+
+    const res = await POST(makeReq({ filePath: 'link/new.txt', content: 'hello' }), params())
+    expect(res.status).toBe(400)
+    expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
   // ─── #4 修复：敏感路径列表加固（前缀匹配 + 扩展 + 大小写不敏感） ───

@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 
-// Mock realpathSync to control symlink behavior
+// Mock realpathSync/lstatSync to control symlink behavior
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof fs>('fs')
-  return { ...actual, realpathSync: vi.fn(actual.realpathSync) }
+  return {
+    ...actual,
+    realpathSync: vi.fn(actual.realpathSync),
+    lstatSync: vi.fn(actual.lstatSync),
+  }
 })
 
 import { isPathSafe } from '@/lib/path-safety'
@@ -15,6 +19,9 @@ const WORK_DIR = path.resolve('/home/user/project')
 describe('isPathSafe', () => {
   beforeEach(() => {
     vi.mocked(fs.realpathSync).mockImplementation((p: fs.PathLike) => String(p))
+    vi.mocked(fs.lstatSync).mockImplementation(() => {
+      throw new Error('ENOENT')
+    })
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -93,6 +100,53 @@ describe('isPathSafe', () => {
       return path.join(WORK_DIR, 'real-file.ts')
     })
     expect(isPathSafe('safe-link', WORK_DIR)).toBe(true)
+  })
+
+  it('拒绝不存在目标文件但父目录 symlink 指向 workDir 外部', () => {
+    const link = path.join(WORK_DIR, 'link')
+    const target = path.join(link, 'new.txt')
+    vi.mocked(fs.realpathSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === target) throw new Error('ENOENT')
+      if (s === link) return path.resolve(WORK_DIR, '..', '..', 'outside')
+      return s
+    })
+    expect(isPathSafe('link/new.txt', WORK_DIR)).toBe(false)
+  })
+
+  it('允许不存在目标文件但父目录真实路径在 workDir 内', () => {
+    const parent = path.join(WORK_DIR, 'newdir')
+    const target = path.join(parent, 'file.txt')
+    vi.mocked(fs.realpathSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === target || s === parent) throw new Error('ENOENT')
+      return s
+    })
+    expect(isPathSafe('newdir/file.txt', WORK_DIR)).toBe(true)
+  })
+
+  it('拒绝悬空 symlink（无法证明指向）', () => {
+    const target = path.join(WORK_DIR, 'dangling.txt')
+    vi.mocked(fs.lstatSync).mockImplementation((p: fs.PathLike) => {
+      if (String(p) === target) {
+        return { isSymbolicLink: () => true } as unknown as fs.Stats
+      }
+      throw new Error('ENOENT')
+    })
+    vi.mocked(fs.realpathSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === target) throw new Error('ENOENT')
+      return s
+    })
+    expect(isPathSafe('dangling.txt', WORK_DIR)).toBe(false)
+  })
+
+  it('workDir 不存在时保留 resolve fallback', () => {
+    vi.mocked(fs.realpathSync).mockImplementation(() => {
+      throw new Error('ENOENT')
+    })
+    expect(isPathSafe('newdir/file.ts', WORK_DIR)).toBe(true)
+    expect(isPathSafe('../outside', WORK_DIR)).toBe(false)
   })
 
   // ── workDir 含特殊字符 ──

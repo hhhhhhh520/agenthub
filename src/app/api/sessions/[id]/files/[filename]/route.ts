@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { isPathSafe } from '@/lib/path-safety'
 import { prisma } from '@/lib/db'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -32,7 +33,14 @@ export async function GET(
     return NextResponse.json({ error: 'Session not found' }, { status: 404 })
   }
 
-  const filePath = join(process.cwd(), 'workspaces', sessionId, filename)
+  const baseDir = join(process.cwd(), 'workspaces', sessionId)
+  // #8: filename 是单段，但文件本身可能是指向 workspace 外的 symlink。
+  // 读取前必须 realpath 校验，不能只依赖 join + 单段检查。
+  if (!isPathSafe(filename, baseDir)) {
+    return NextResponse.json({ error: 'Invalid file path' }, { status: 400 })
+  }
+
+  const filePath = join(baseDir, filename)
 
   try {
     const content = await readFile(filePath)

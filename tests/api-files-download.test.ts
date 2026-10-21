@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 
-const { mockReadFile, mockFindUnique } = vi.hoisted(() => ({
+const { mockReadFile, mockFindUnique, mockRealpathSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockFindUnique: vi.fn(),
+  mockRealpathSync: vi.fn(),
 }))
 
 vi.mock('fs/promises', () => ({ readFile: mockReadFile }))
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof fs>('fs')
+  return { ...actual, realpathSync: mockRealpathSync }
+})
 vi.mock('@/lib/db', () => ({ prisma: { session: { findUnique: mockFindUnique } } }))
 
 import { GET } from '@/app/api/sessions/[id]/files/[filename]/route'
@@ -24,6 +31,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockFindUnique.mockResolvedValue({ id: VALID_SESSION_ID })
   mockReadFile.mockResolvedValue(Buffer.from('hello'))
+  mockRealpathSync.mockImplementation((p: fs.PathLike) => String(p))
 })
 
 describe('GET /api/sessions/[id]/files/[filename]', () => {
@@ -64,5 +72,19 @@ describe('GET /api/sessions/[id]/files/[filename]', () => {
     mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
     const res = await GET(makeReq(), params())
     expect(res.status).toBe(404)
+  })
+
+  it('returns 400 and does not read a file symlink escaping workspace', async () => {
+    const baseDir = path.join(process.cwd(), 'workspaces', VALID_SESSION_ID)
+    const file = path.join(baseDir, 'escape.txt')
+    mockRealpathSync.mockImplementation((p: fs.PathLike) => {
+      const s = String(p)
+      if (s === file) return path.resolve(baseDir, '..', 'outside.txt')
+      return s
+    })
+
+    const res = await GET(makeReq(VALID_SESSION_ID, 'escape.txt'), params(VALID_SESSION_ID, 'escape.txt'))
+    expect(res.status).toBe(400)
+    expect(mockReadFile).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,43 @@
-import { resolve, sep } from 'path'
-import { realpathSync } from 'fs'
+import { dirname, resolve, sep } from 'path'
+import { lstatSync, realpathSync } from 'fs'
+
+function isWithin(candidate: string, base: string): boolean {
+  return candidate === base || candidate.startsWith(base + sep)
+}
+
+/**
+ * 返回 target 最近存在祖先的真实路径。
+ *
+ * 目标文件通常尚不存在（例如 accept 新文件），此时 realpathSync 会 ENOENT。
+ * 只检查 resolve+startsWith 无法发现父目录是 symlink；向上找到最近存在的
+ * 祖先并 realpath，才能证明新文件的落点仍在 workDir 内。
+ */
+function nearestExistingRealPath(target: string): string | null {
+  let current = target
+
+  while (true) {
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        try {
+          return realpathSync(current)
+        } catch {
+          // 悬空 symlink 无法证明指向，按不安全处理。
+          return null
+        }
+      }
+    } catch {
+      // 当前层级不存在（或不可读）；继续交给 realpath/父目录处理。
+    }
+
+    try {
+      return realpathSync(current)
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return null
+      current = parent
+    }
+  }
+}
 
 /**
  * 检查文件路径是否在项目目录内（防止路径遍历攻击）
@@ -7,26 +45,20 @@ import { realpathSync } from 'fs'
  */
 export function isPathSafe(filePath: string, workDir: string): boolean {
   const resolvedWorkDir = resolve(workDir)
-  let realWorkDir: string
+  let realWorkDir: string | null = null
   try {
     realWorkDir = realpathSync(resolvedWorkDir)
   } catch {
-    realWorkDir = resolvedWorkDir
+    // workDir 尚不存在时，下方没有可跟随的 symlink；保留词法 fallback。
   }
 
-  try {
-    const realPath = realpathSync(resolve(resolvedWorkDir, filePath))
-    return realPath === realWorkDir || realPath.startsWith(realWorkDir + sep)
-  } catch {
-    // realpathSync throws if file doesn't exist; resolve+startsWith correctly handles
-    // .. (e.g. `../etc/passwd` resolves outside workDir → rejected) but cannot detect
-    // symlinks in the path. Symlink-based bypass requires an attacker (typically an
-    // agent) to have already created a symlink inside workDir pointing outside —
-    // agent-augmented attack, not direct external attack. Tightening this requires
-    // realpathSync on dirname(resolved) to verify the parent dir is inside workDir.
-    const resolved = resolve(resolvedWorkDir, filePath)
-    return resolved === resolvedWorkDir || resolved.startsWith(resolvedWorkDir + sep)
+  const target = resolve(resolvedWorkDir, filePath)
+  if (realWorkDir === null) {
+    return isWithin(target, resolvedWorkDir)
   }
+
+  const realTarget = nearestExistingRealPath(target)
+  return realTarget !== null && isWithin(realTarget, realWorkDir)
 }
 
 /**

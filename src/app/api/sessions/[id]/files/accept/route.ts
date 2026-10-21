@@ -101,6 +101,11 @@ export async function POST(
 
   try {
     await mkdir(dirname(fullPath), { recursive: true })
+    // mkdir 后复查：如果父目录在检查后被替换为 symlink，或创建过程跟随了
+    // symlink，必须在 writeFile 前拒绝，避免写到 workspace 外。
+    if (!isPathSafe(normalizedPath, baseDir)) {
+      return NextResponse.json({ error: 'Invalid file path' }, { status: 400 })
+    }
     await writeFile(fullPath, content, 'utf-8')
     return NextResponse.json({ success: true, path: fullPath })
   } catch {
