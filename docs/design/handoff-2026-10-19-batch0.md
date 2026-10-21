@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4a7efec`（`.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `4a7efec` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `3bb12ad`（问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `3bb12ad` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02 已闭环；P1-03 核心隔离完成但 F4 未闭环；P2-03 F5 已闭环；P2-04 F2/F3/F6/R2/F7 已闭环，但 F8/F9/F10 未闭环；P2-06/P2-07 已闭环。**当前下一项是 F8 问句批准，其次 F9/F10**，见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v33
+> 历史说明: P1-01/02 已闭环；P1-03 核心隔离完成但 F4 未闭环；P2-03 F5 已闭环；P2-04 F2/F3/F6/R2/F7/F8 已闭环，但 F9/F10 未闭环；P2-06/P2-07 已闭环。**当前下一项是 F9 取消窗口，其次 F10**，见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v34
 
 ## 1. 当前状态
 
@@ -34,6 +34,7 @@
 | `351cdbe` | 计划批准绑定 plan ID；align_pm 真实恢复；全任务展示集一致；取消复查 |
 | `52d66c9` | done 恢复必须先过计划展示/明确批准 gate；缺计划重呈 |
 | `4a7efec` | `.ENV` / `.Env.Local` 与 `.env` 一样判敏感 |
+| `3bb12ad` | 问句（`执行？`）不再算计划批准 |
 
 回归基线（2026-10-20）：
 
@@ -134,7 +135,7 @@
 - ✅ P2-01 timeout iterator 收尾（commit `ff53430`）：return 有界，挂起/抛错不覆盖超时；R1 的 onTimeout/next 竞争另行登记；
 - ✅ P2-02 regenerate 取消安全（commit `74bda96`）：传 chatSessionId/workDir，取消后不写回、不发成功 done；
 - ✅ P2-03 stop/delete deleting 屏障（commit `31c5946` + `95e0755`）：单 DELETE 达标；并发 DELETE 第二个直接 409，不破坏首个删除者标记；
-- ⚠️ P2-04 恢复执行计划审批关联（commit `6292cdd` + `351cdbe` + `52d66c9`）：结构化批准绑定 plan ID、align_pm 真实恢复、全任务集一致、done 恢复审批已完成；F8 问句批准、F9 取消窗口、F10 Q&A 批准保存仍未闭环；
+- ⚠️ P2-04 恢复执行计划审批关联（commit `6292cdd` + `351cdbe` + `52d66c9` + `3bb12ad`）：结构化批准绑定 plan ID、align_pm 真实恢复、全任务集一致、done 恢复审批、问句不算批准已完成；F9 取消窗口、F10 Q&A 批准保存仍未闭环；
 - ✅ P2-06 SSE body cancel 安全（commit `7520866`）：safeEnqueue + cancel 清超时；客户端断开只停推流，后台执行与锁释放不变；
 - ✅ P2-07 拿锁后重读会话快照（commit `d2fb158`）：排队请求使用锁内最新 phase/phaseStep/decisionTrace/permissionMode/projectDir/type；重读 null 回 404；下一项 F11 `.ENV`；
 - `GET /api/sessions/[id]/runtime` 恢复仍有效的权限请求；

@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v33（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2 + done 恢复审批 + F11 `.ENV`；F8/F9/F10 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v34（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2 + done 恢复审批 + F11 `.ENV` + F8 问句；F9/F10 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -40,6 +40,7 @@
 | v31 | 2026-10-20 | **P2-03 F5 + P2-04 F2/F3/F6/R2 闭环（commit 95e0755 / 351cdbe）**。F5：并发 DELETE 第二个直接 409，不再清首个删除者标记。F2：只有明确肯定文本写 system 批准记录 `[PLAN_APPROVED]plan-<id>`；拒绝/澄清/旧批准失效；记录不进 UI/模型上下文。F3：align_pm + 已有任务的真实 POST 走受约束恢复入口，缺计划只重呈，无任务仍拒绝。F6：plan ID、展示摘要、恢复/执行统一使用全任务集。R2：ensure 后与重呈阶段/消息副作用前补取消复查。变异验证逐项精确红；全量 123 files / 1444 passed / 3 skipped。**下一批**：P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
 | v32 | 2026-10-20 | **done 恢复审批闭环（commit 52d66c9）**。根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok，done + 已提交任务 + 未展示计划时，模型误提 execute 仍会执行。修复：idle 保持合法早退；done 先过 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归，变异验证恢复 `idle||done` 早退后 2 条测试精确红；全量 123 files / 1446 passed / 3 skipped。**最新复核未闭环**：F11 `.ENV` 大小写、F8 问句批准、F9 恢复 phase 写入前取消窗口、F10 Q&A 分支保存明确批准。 |
 | v33 | 2026-10-20 | **F11 `.ENV` 大小写闭环（commit 4a7efec）**。根因：`.env` 敏感模式大小写敏感；Windows 上 `.ENV` 与 `.env` 是同一文件，但 `.ENV` 被审计判为普通越界。修复：任意层级 `.env` 模式加 `i` 标志；补 `.ENV`/`.Env.Local` 与 `pickSensitive` 回归；变异验证移除 `i` 后测试精确红。全量 123 files / 1447 passed / 3 skipped。**下一批**：F8 问句批准、F9 恢复取消窗口、F10 Q&A 批准保存；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
+| v34 | 2026-10-20 | **F8 问句批准闭环（commit 3bb12ad）**。根因：`isExplicitPlanApproval` 的 normalize 删除全角/ASCII 问号，`执行？` 变成 `执行` 并命中批准集合。修复：保留问号，问句不再命中；感叹号/句号等语气标点仍忽略。新增 `执行？`/`确认执行?` 拒绝与 `执行！` 通过回归；变异验证恢复问号剥离后测试精确红。全量 123 files / 1447 passed / 3 skipped。**下一批**：F9 恢复取消窗口、F10 Q&A 批准保存；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
 
 
 ---
