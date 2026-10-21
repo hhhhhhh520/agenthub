@@ -3,8 +3,8 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v58：CI 门禁/coverage、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、结果发布门禁、MCP 最新消息分页、v2 migration 回填、P5 路径隔离、parser CRLF/行号/metadata；阶段一/阶段二已收口）
-- [修复待办总表](design/repair-backlog-2026-10-20.md) — **P3 可执行项全部闭环**；仅 #3（API 无认证）为已接受风险
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v59：CI 门禁/coverage、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、MCP 最新消息分页、v2 migration 回填、P5 路径隔离、parser CRLF/行号/metadata；Round 7 三项补修待复核）
+- [修复待办总表](design/repair-backlog-2026-10-20.md) — **review**：P3 27 项均已修复；Round 7 重开 #14/#21/#24 已补修，待独立复核；仅 #3 为已接受风险
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
 - [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
@@ -19,7 +19,8 @@
 - [安全/API 六项完成记录](design/handoff-2026-10-21-api-validation.md) — #5/#14/#15/#16/#17/#18（`b4fa42a`）；#3 保持已接受风险
 - [P3 #21–#27 交互完成记录](design/handoff-2026-10-21-ui-fixes.md) — 会话复位、权限入口、附件并发、setup/provider、Dialog 可达性、poller 刷新（`6198d62`）
 - [P3 #28 MCP DATABASE_URL 完成记录](design/handoff-2026-10-21-p3-28.md) — 主进程 DATABASE_URL 透传与相对路径绝对化（`2a71253`）
-- [P3 #29–#36 完成记录](design/handoff-2026-10-21-p3-29-36.md) — **P3 收尾入口**：最新消息分页、seed exitCode、v2 migration 回填、P5 路径隔离、CI coverage、文档核对、parser 三缺陷
+- [P3 #29–#36 完成记录](design/handoff-2026-10-21-p3-29-36.md) — P3 收尾批次：最新消息分页、seed exitCode、v2 migration 回填、P5 路径隔离、CI coverage、文档核对、parser 三缺陷
+- [Round 7 复核补修记录](design/handoff-2026-10-21-round7.md) — **当前待复核入口**：#21 旧会话异步状态、#24 手动草稿连接测试、#14 实际请求体上限
 - [P3 剩余 7 项一次性修复交接](design/handoff-2026-10-21-remaining.md) — 历史任务说明（已完成，保留根因与验收口径）
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 

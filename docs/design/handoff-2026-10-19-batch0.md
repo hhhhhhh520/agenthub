@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `da28bae`（P3 #29–#36 收尾：最新消息分页、seed exitCode、v2 migration 回填、P5 路径隔离、CI coverage、文档核对、parser CRLF/行号/metadata）；文档：本次收尾提交
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `0a6aacd`（Round 7 补修 #21 异步会话状态、#24 手动草稿连接测试、#14 实际请求体上限）；文档：本次收尾提交
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02/03 已闭环；P2-01..13 已闭环；P2-08/P2-11/P2-12/P2-13 经 Round 5 + Round 6 补齐。**P1/P2 全闭环；P3 可执行项全部闭环，仅 #3（API 无认证）为已接受风险**，无下一项；完成记录见 `docs/design/handoff-2026-10-21-p3-29-36.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P3 #8/#12/#21–#27/#28 完成记录、P3 #29–#36 完成记录、`docs/design/repair-backlog-2026-10-20.md`、`docs/design/roadmap-to-excellence.md` v58
+> 历史说明: P1-01/02/03 已闭环；P2-01..13 已闭环；P2-08/P2-11/P2-12/P2-13 经 Round 5 + Round 6 补齐。**P1/P2 全闭环；P3 27 项均已修复，Round 7 重开 #14/#21/#24 已补修，待独立复核；仅 #3（API 无认证）为已接受风险**。完成记录见 `handoff-2026-10-21-p3-29-36.md` 与 `handoff-2026-10-21-round7.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P3 #8/#12/#21–#27/#28 完成记录、P3 #29–#36 完成记录、Round 7 补修记录、`docs/design/repair-backlog-2026-10-20.md`、`docs/design/roadmap-to-excellence.md` v59
 
 ## 1. 当前状态
 
@@ -66,10 +66,13 @@
 | `5504b60` | #31 v2 migration 回填 rawContent/updatedAt，非空库可迁移 |
 | `fdc963a` | #32 P5 路径派生 + P5_* env + harness metrics 临时目录隔离 |
 | `da28bae` | #33 CI test job 改 npm test，coverage 阈值生效 |
+| `8c2b4c3` | Round 7 #21 旧会话加载/收尾不再覆盖新会话状态 |
+| `84056cd` | Round 7 #24 手动配置草稿真实连接测试 |
+| `0a6aacd` | Round 7 #14 按实际读取字节限制请求体 |
 
 回归基线（2026-10-21）：
 
-- `npx vitest run`：142 files / **1547 passed / 3 skipped**
+- `npx vitest run`：144 files / **1561 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（3 条既有 warning 不阻塞）
 - 工作区干净，未 push

@@ -309,11 +309,15 @@
 | P3 #33：CI 跑 coverage（commit da28bae） | 根因：CI 裸 `vitest run` 绕过阈值。修复：改 `npm test`，新增 workflow 守卫；本地 coverage 全绿。变异回裸 vitest 精确红。 | 2026-10-21 |
 | P3 #34：README/roadmap/CLAUDE 文档核对（本次文档提交） | 统一 33 路由、1547 测试、CI coverage、E2E 命令与 skip 条件、Node 20.19+ 口径；修正 CLAUDE 端点数与 roadmap 当前事实表。 | 2026-10-21 |
 
+| Round 7 / #21：旧会话异步回调（commit 8c2b4c3） | 根因：loadMessages 无取消/世代校验，迟到 A 响应覆盖 B；send finally 无条件清 loading/abortRef，旧请求清新请求状态。修复：独立 load abort + RequestEpoch；事件/节流核 sessionId；finally 只允许当前 controller 收尾。真实浏览器两场景通过；全量 144 files / 1561 passed / 3 skipped | 2026-10-21 |
+| Round 7 / #24：手动草稿连接测试（commit 84056cd） | 根因：向导测试按钮只发无 body POST，后端只 detectCLIPlatform()。修复：发送 apiKey/model/baseUrl；后端有草稿时走 AI SDK 最小生成，无草稿回退 CLI；不落库、错误脱敏。本地回环 OpenAI HTTP 回归通过 | 2026-10-21 |
+| Round 7 / #14：实际请求体上限（commit 0a6aacd） | 根因：上限只信 Content-Length，随后 formData 全量解析。修复：readFormDataWithLimit 按实际读取字节计数，超限 cancel 源流并 413；保留文件校验/回滚/事务。无长度头 54MB 路由回归通过 | 2026-10-21 |
+
 ### ⏳ 进行中
 
 | 任务 | 状态 |
 |------|------|
-| （无——P3 可执行项全部闭环；仅 #3 API 无认证为已接受风险） | — |
+| Round 7 三项补修（#21/#24/#14） | 实现与本地/浏览器回归通过；**待独立复核**，复核前不写“0 项待修” |
 
 ### 📋 待办（2026-09-20 更新）
 

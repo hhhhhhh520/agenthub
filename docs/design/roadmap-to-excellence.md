@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v58（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 全部可执行项闭环（仅 #3 已接受风险）） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v59（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 全部修复（Round 7 重开 #14/#21/#24，已补修待复核；仅 #3 已接受风险）） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -65,6 +65,7 @@
 | v56 | 2026-10-21 | **P3 #21–#27 交互闭环（commit 6198d62）**：会话切换复位、项目页权限入口、附件并发合并、setup res.ok/测试顺序、provider 导入 await、Dialog aria/焦点与移动侧栏、task-poller 描述/依赖刷新。新增纯函数与源码接线回归；四项变异精确红。全量 138 files / 1532 passed / 3 skipped。**P3 已闭环 19 项，剩 9 项（#3 已接受风险）**。 |
 | v57 | 2026-10-21 | **P3 #28 MCP DATABASE_URL 闭环（commit 2a71253）**：优先使用主进程 DATABASE_URL；相对 file URL 以主进程 cwd 解析绝对路径；非 file 原样传递。新增四类回归，恢复硬编码后环境变量用例精确红。全量 138 files / 1535 passed / 3 skipped。**P3 已闭环 20 项，剩 8 项（#3 已接受风险）**。 |
 | v58 | 2026-10-21 | **P3 #29/#30/#31/#32/#33/#34/#36 一次性闭环**：#29 最新 50 条+反序；#30 seed 失败 exitCode；#31 v2 migration rawContent/updatedAt 回填；#32 P5 路径派生与 metrics 临时目录；#33 CI 跑 coverage；#34 README/roadmap/CLAUDE 计数与 E2E 口径；#36 CRLF/真实行号/metadata `=`。逐项回归+变异；全量 **142 files / 1547 passed / 3 skipped**，build ✓，改动文件 eslint 0 error。**P3 可执行项全部闭环，仅 #3 已接受风险**。 |
+| v59 | 2026-10-21 | **Round 7 复核重开 #21/#24/#14（待复核）**：#21 旧会话加载响应/旧 finally 覆盖新会话（`8c2b4c3`，真实浏览器两场景通过）；#24 手动草稿未参与连接测试（`84056cd`，本地回环 OpenAI 生成通过）；#14 请求体只信 Content-Length（`0a6aacd`，无长度头 54MB 路由 413）。全量 **144 files / 1561 passed / 3 skipped**，build ✓，改动文件 eslint 0 error。**不再声称 0 项待修，等待独立复核**。 |
 
 
 ---
@@ -85,7 +86,7 @@
 
 | 判据 | Codeg 的样子 | AgentHub 现状 | 差距性质 |
 |---|---|---|---|
-| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml` 实测全绿（PR#1：lint-gate 40s + test 2m29s；vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫；test job 跑 windows-latest——测试套件是 Windows 平台假设，目标运行平台）；1547 单测（2026-10-21）+ 13 个 Playwright UI 冒烟用例（API contract E2E 需密钥，默认 skip）；`npx eslint .` 当前 **48 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
+| **质量门禁** | CI：clippy `-D warnings`、快照测试、架构守卫、453 前端测试 | ✅ 2026-09-21 起 `.github/workflows/ci.yml` 实测全绿（PR#1：lint-gate 40s + test 2m29s；vitest 全量 + build + 改动文件 lint 门禁 + phase 架构守卫；test job 跑 windows-latest——测试套件是 Windows 平台假设，目标运行平台）；1561 单测（2026-10-21）+ 13 个 Playwright UI 冒烟用例（API contract E2E 需密钥，默认 skip）；`npx eslint .` 当前 **48 errors / 83 warnings**（tests/ no-explicit-any 放宽 + execution.ts / process-registry.ts 清零后，experiments/p5 集中 39 个） | 有测试有门禁；lint 存量收敛中（§9#4） |
 | **可靠性工程** | run_seq 世代号 CAS 贯穿状态迁移；崩溃恢复；残留清理 | SSE 无自动重连 / 无 Last-Event-ID（已核实）；thinking/tool_use/tool_result/permission_request 四类事件**只流式不落库**（已核实）；锁并发窗口为 ISSUE-022 已解决后的预期行为（非缺陷） | 关键路径缺恢复语义 |
 | **安全底线** | 两条凭据通道（HTTP Bearer + WS protocol）+ 空 token fail-closed | 33 个路由零认证（**已拍板维持缓期：只在本机运行**，§8#1）；spawn 与 shadow-git 注入面已守卫（2026-09-20，§2.2 第 1/4 项）；`list_files`/`attachments` 路径校验已收口（§2.2 第 2 项） | 注入面已收敛 |
 | **工程卫生** | 文档外置但同步；每版 release notes | 根目录 5 个遗留文件为 **git 已跟踪**（hello.py / index.html / script.js / styles.css / test_api.py）；无 CHANGELOG、无 release tag（`package.json` 版本 0.1.0 已有）；v2 决策文档标题写"12 项"实含 22 条（计数自相矛盾）；`CLAUDE.md` 端点数为过时数字（16 → 实为 33，2026-10-21） | 已知欠账（遗留文件 + 两处计数 2026-09-20 已清，余项待办） |
@@ -268,7 +269,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1547 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1561 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
