@@ -34,11 +34,6 @@ export async function POST(
     return Response.json({ error: '会话正在停止或删除，请稍后重试' }, { status: 409 })
   }
 
-  const permissionMode = session.permissionMode as 'default' | 'auto'
-  const workDir = session.projectDir && session.projectDir.trim()
-    ? session.projectDir.trim()
-    : process.cwd()
-
   // 锁放在廉价校验之后拿：400/404 早退路径不再持有锁（此前漏释放会导致该会话后续请求每次都等满 60s）。
   // 等锁超时 fail-closed 回 429：绝不与上一持有者并发写 phase（phase 写入竞态根因）。
   let releaseLock: () => void
@@ -58,10 +53,22 @@ export async function POST(
   // 后续只由 stream.start 的 finally 释放（客户端 abort 不代表后台执行结束）。
   let lockHandedOff = false
   try {
+    // P2-07: 等锁期间上一持有者可能已修改 phase/permissionMode/projectDir。
+    // 拿锁前读取只用于早退校验；拿到锁后必须以 DB 最新值为准，不能用排队前的快照。
+    const currentSession = await prisma.session.findUnique({ where: { id: sessionId } })
+    if (!currentSession) {
+      return new Response('Session not found', { status: 404 })
+    }
+
     // 等锁期间可能已被 stop/delete 标记；拿到锁后再检查一次，避免取消后启动新执行。
     if (isSessionCancelled(sessionId) || isSessionDeleting(sessionId)) {
       return Response.json({ error: '会话正在停止或删除，请稍后重试' }, { status: 409 })
     }
+
+    const permissionMode = currentSession.permissionMode as 'default' | 'auto'
+    const workDir = currentSession.projectDir && currentSession.projectDir.trim()
+      ? currentSession.projectDir.trim()
+      : process.cwd()
 
     // /permission command
     if (message.trim().startsWith('/permission')) {
@@ -203,7 +210,7 @@ export async function POST(
             } else {
               await handleDirectAgentChat(agent, message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
             }
-          } else if (session.type === 'private' && existingAgents.length > 0) {
+          } else if (currentSession.type === 'private' && existingAgents.length > 0) {
             try {
               await handleDirectAgentChat(existingAgents[0], message, sessionId, sendEvent, workDir, permissionMode, msgAttachments)
             } catch (err) {
@@ -215,7 +222,7 @@ export async function POST(
             if (isCreateIntent) {
               await handleCreateAgent(message, sessionId, sendEvent)
             } else {
-              await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, { phase: session.phase, phaseStep: session.phaseStep, decisionTrace: session.decisionTrace }, msgAttachments, workDir, permissionMode, globalDeadline)
+              await handleOrchestratorDecision(message, sessionId, existingAgents, sendEvent, { phase: currentSession.phase, phaseStep: currentSession.phaseStep, decisionTrace: currentSession.decisionTrace }, msgAttachments, workDir, permissionMode, globalDeadline)
             }
           }
         } catch (error) {

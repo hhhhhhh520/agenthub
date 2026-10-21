@@ -288,6 +288,115 @@ describe('chat route — 统一锁释放', () => {
     expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
   })
 
+  it('P2-07: 等锁期间权限/工作目录变化，拿锁后使用新快照', async () => {
+    const initialSession = { ...session, projectDir: '/old' }
+    const freshSession = { ...session, projectDir: '/new', permissionMode: 'auto' }
+    let reads = 0
+    mocks.sessionFindUnique.mockImplementation(async () => {
+      reads += 1
+      return reads === 1 ? initialSession : freshSession
+    })
+    let resolveLock!: (release: () => void) => void
+    mocks.acquireSessionLock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveLock = resolve
+    }))
+
+    const pending = POST(makeReq({ message: 'hi' }), params)
+    await waitUntil(() => mocks.acquireSessionLock.mock.calls.length > 0)
+    resolveLock(mocks.releaseLock)
+
+    const res = await pending
+    await res.text()
+
+    expect(mocks.sessionFindUnique).toHaveBeenCalledTimes(2)
+    expect(mocks.handleOrchestratorDecision).toHaveBeenCalledTimes(1)
+    const call = mocks.handleOrchestratorDecision.mock.calls[0]
+    expect(call[6]).toBe('/new')
+    expect(call[7]).toBe('auto')
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('P2-07: 等锁期间 phase/decisionTrace 变化，拿锁后传给 orchestrator 的是新值', async () => {
+    const initialSession = { ...session, phase: 'idle', phaseStep: '', decisionTrace: '[]' }
+    const freshSession = {
+      ...session,
+      phase: 'alignment',
+      phaseStep: 'pm_confirm',
+      decisionTrace: '[{"step":"pm"}]',
+    }
+    let reads = 0
+    mocks.sessionFindUnique.mockImplementation(async () => {
+      reads += 1
+      return reads === 1 ? initialSession : freshSession
+    })
+    let resolveLock!: (release: () => void) => void
+    mocks.acquireSessionLock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveLock = resolve
+    }))
+
+    const pending = POST(makeReq({ message: 'hi' }), params)
+    await waitUntil(() => mocks.acquireSessionLock.mock.calls.length > 0)
+    resolveLock(mocks.releaseLock)
+
+    const res = await pending
+    await res.text()
+
+    expect(mocks.sessionFindUnique).toHaveBeenCalledTimes(2)
+    expect(mocks.handleOrchestratorDecision).toHaveBeenCalledTimes(1)
+    const call = mocks.handleOrchestratorDecision.mock.calls[0]
+    expect(call[4]).toEqual({
+      phase: 'alignment',
+      phaseStep: 'pm_confirm',
+      decisionTrace: '[{"step":"pm"}]',
+    })
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('P2-07: 等锁期间会话被删除，拿锁后 404 且释放锁', async () => {
+    let reads = 0
+    mocks.sessionFindUnique.mockImplementation(async () => {
+      reads += 1
+      return reads === 1 ? session : null
+    })
+    let resolveLock!: (release: () => void) => void
+    mocks.acquireSessionLock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveLock = resolve
+    }))
+
+    const pending = POST(makeReq({ message: 'hi' }), params)
+    await waitUntil(() => mocks.acquireSessionLock.mock.calls.length > 0)
+    resolveLock(mocks.releaseLock)
+
+    const res = await pending
+    await res.text()
+
+    expect(res.status).toBe(404)
+    expect(mocks.sessionFindUnique).toHaveBeenCalledTimes(2)
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+    expect(mocks.handleOrchestratorDecision).not.toHaveBeenCalled()
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
+  it('P2-07: 等锁期间被 stop 取消，重读后仍拒绝且不写消息', async () => {
+    let resolveLock!: (release: () => void) => void
+    mocks.acquireSessionLock.mockReturnValueOnce(new Promise((resolve) => {
+      resolveLock = resolve
+    }))
+
+    const pending = POST(makeReq({ message: 'hi' }), params)
+    await waitUntil(() => mocks.acquireSessionLock.mock.calls.length > 0)
+    requestSessionCancel('s1')
+    resolveLock(mocks.releaseLock)
+
+    const res = await pending
+    await res.text()
+
+    expect(res.status).toBe(409)
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+    expect(mocks.handleOrchestratorDecision).not.toHaveBeenCalled()
+    expect(mocks.releaseLock).toHaveBeenCalledTimes(1)
+  })
+
   it('P2-06: 客户端取消 body 后继续发事件不抛错、不中断后台，锁仍由 finally 释放', async () => {
     const gate = deferred<void>()
     const handlerDone = deferred<void>()
