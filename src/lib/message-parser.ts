@@ -24,16 +24,14 @@ export function parseMessage(rawContent: string): ParsedMessage {
   const codeBlocks: CodeBlock[] = []
   const artifacts: Artifact[] = []
   let remaining = rawContent
-  let lineOffset = 0
 
-  // Extract code blocks: ```lang\ncode\n```
-  remaining = remaining.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang, code) => {
+  // Extract code blocks: ```lang\ncode\n``` (also CRLF)
+  remaining = remaining.replace(/```(\w*)\r?\n([\s\S]*?)```/g, (_match, lang, code, offset) => {
     codeBlocks.push({
       language: lang || 'text',
       code: code.trimEnd(),
-      lineStart: lineOffset,
+      lineStart: rawContent.slice(0, offset).split('\n').length,
     })
-    lineOffset++
     return `\n__CODE_BLOCK_${codeBlocks.length - 1}__\n`
   })
 
@@ -43,7 +41,10 @@ export function parseMessage(rawContent: string): ParsedMessage {
     (_match, type, metaStr, content) => {
       const meta: Record<string, string> = {}
       metaStr.trim().split(/\s+/).forEach((pair: string) => {
-        const [k, v] = pair.split('=')
+        const separator = pair.indexOf('=')
+        if (separator <= 0) return
+        const k = pair.slice(0, separator)
+        const v = pair.slice(separator + 1)
         if (k && v) meta[k] = v
       })
       artifacts.push({ type, content: content.trim(), meta })

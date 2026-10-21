@@ -115,4 +115,39 @@ Link text
     expect(result.artifacts[0].meta.href).toBe('https://example.com')
     expect(result.artifacts[0].meta.title).toBe('Example')
   })
+
+  it('should parse code fences with CRLF line endings', () => {
+    const input = 'Here is code:\r\n```typescript\r\nconst x = 1\r\n```\r\nEnd.'
+    const result = parseMessage(input)
+
+    expect(result.codeBlocks).toHaveLength(1)
+    expect(result.codeBlocks[0].language).toBe('typescript')
+    expect(result.codeBlocks[0].code).toBe('const x = 1')
+    expect(result.text).toContain('Here is code:')
+    expect(result.text).toContain('End.')
+  })
+
+  it('should report the real 1-based start line of each code fence', () => {
+    const input = [
+      'before',
+      '```js',
+      'const a = 1',
+      '```',
+      'middle',
+      '```py',
+      'print(1)',
+      '```',
+    ].join('\n')
+    const result = parseMessage(input)
+
+    expect(result.codeBlocks.map(b => b.lineStart)).toEqual([2, 6])
+  })
+
+  it('should keep equals signs inside artifact metadata values', () => {
+    const input = '<!-- artifact:link href=https://example.com/?a=b title=A=B -->x<!-- /artifact -->'
+    const result = parseMessage(input)
+
+    expect(result.artifacts[0].meta.href).toBe('https://example.com/?a=b')
+    expect(result.artifacts[0].meta.title).toBe('A=B')
+  })
 })
