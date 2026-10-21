@@ -11,13 +11,17 @@
  * （src/instrumentation.ts）——仅挂 UI 加载会让出清与 UI 访问脱钩（生命周期审查 🟡1.1）。
  */
 import { tmpdir } from 'node:os'
-import { readdirSync, readFileSync, rmSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { prisma } from '@/lib/db'
 import { sweepAgentClaudeConfigDirs, claudeConfigDir } from '@/lib/adapter/claude-code-env'
 import { opencodeCfgDirName, OPENCODE_OWNER_FILE } from '@/lib/adapter/opencode-adapter'
 import { processRegistry } from '@/lib/adapter/process-registry'
 import { getOrchestratorAgent } from '@/lib/orchestrator'
+
+// P2-11 Round 6: Adapter 先 mkdir 再发布 owner。无 marker 的新目录不能立刻
+// 当历史孤儿删除；给初始化留出宽限期，超过后才按历史目录清理。
+const OPENCODE_OWNER_PUBLISH_GRACE_MS = 24 * 60 * 60 * 1000
 
 export async function sweepWithCurrentConfigs(): Promise<string[]> {
   const cfgRows = await prisma.agent.findMany({ select: { id: true, baseUrl: true, apiKey: true, model: true } })
@@ -46,8 +50,9 @@ function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[], activeManagedDirs:
       if (active.has(e.name)) continue
       // P2-11: owner PID 存活时（包括本进程）不能删。本进程 send 可能正处在
       // exit→retry backoff，registry 已删 entry 但 XDG 仍会被下一轮复用。
-      // 无 marker 的历史 agent-only 目录仍按旧规则清理；有 marker 但损坏/不可读
-      // 不能作为“已证明无人使用”的证据，先保留。
+      // 无 marker 的新目录可能是另一实例刚 mkdir、尚未发布 owner；只有超过
+      // 发布宽限期的历史目录才可清理。有 marker 但损坏/不可读不能作为
+      // “已证明无人使用”的证据，先保留。
       if (mustPreserveOwnerDirectory(e.name)) continue
       rmSync(join(tmpdir(), e.name), { recursive: true })
       out.push(e.name)
@@ -61,8 +66,17 @@ function mustPreserveOwnerDirectory(dirName: string): boolean {
   try {
     raw = readFileSync(join(tmpdir(), dirName, OPENCODE_OWNER_FILE), 'utf-8')
   } catch (err) {
-    // 没有 owner marker：兼容历史 agent-only 目录，仍按旧规则允许清理。
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false
+    // 没有 owner marker：可能是历史 agent-only 目录，也可能是另一实例刚
+    // mkdir、owner 尚未发布的新目录。新目录必须保留；只有超过宽限期的
+    // 无 marker 目录才允许按历史孤儿清理。
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      try {
+        const stat = statSync(join(tmpdir(), dirName))
+        return Date.now() - stat.mtimeMs <= OPENCODE_OWNER_PUBLISH_GRACE_MS
+      } catch {
+        return true
+      }
+    }
     // 文件存在但读不了：不能证明 owner 已死，宁可不删。
     return true
   }

@@ -301,8 +301,12 @@ export class OpenCodeAdapter implements AgentAdapter {
         JSON.stringify({ pid: process.pid, updatedAt: Date.now() }),
         { encoding: 'utf-8', mode: 0o600 },
       )
-    } catch {
-      // owner 标记写失败不阻塞 CLI；sweep 侧会按无 owner/死 owner 处理。
+    } catch (err) {
+      // 不能带着“无 owner 保护”的目录继续 spawn；否则另一个实例的 sweep
+      // 可能把它当孤儿删除。写失败直接 fail-fast，由调用方显式失败。
+      throw new Error(
+        `[OpenCodeAdapter] Failed to publish owner marker: ${(err as Error).message}`,
+      )
     }
 
     // 读取全局配置（providers 等）并合并

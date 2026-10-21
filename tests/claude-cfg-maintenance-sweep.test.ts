@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // sweepOrphanOpencodeXdgDirs 扫描 tmpdir；测试必须把 tmpdir 指到隔离目录，
@@ -73,6 +73,9 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     mkdirSync(activeWithoutSentinelDir, { recursive: true })
     mkdirSync(orphanDir, { recursive: true })
     writeFileSync(join(orphanDir, 'opencode.json'), '{}')
+    // 历史无 owner 目录：超过发布宽限期后才允许清理。
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000)
+    utimesSync(orphanDir, old, old)
     mkdirSync(unrelatedDir, { recursive: true })
 
     h.findMany.mockResolvedValue([
@@ -87,6 +90,16 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     expect(existsSync(orphanDir)).toBe(false)
     expect(existsSync(unrelatedDir)).toBe(true)
     expect(removed).toEqual(['agenthub-oc-orphan-123'])
+  })
+
+  it('P2-11 Round 6: 新目录 owner 尚未发布时保留，不能当历史孤儿抢删', async () => {
+    const initDir = join(h.root, 'agenthub-oc-unpublished-init')
+    mkdirSync(join(initDir, 'opencode'), { recursive: true })
+
+    const removed = await sweepWithCurrentConfigs()
+
+    expect(existsSync(initDir)).toBe(true)
+    expect(removed).not.toContain('agenthub-oc-unpublished-init')
   })
 
   it('P2-11: 其他实例 owner 进程仍存活时保留目录', async () => {
@@ -151,6 +164,9 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     const orphanSessionDir = join(h.root, 'agenthub-oc-session-orphan')
     mkdirSync(activeSessionDir, { recursive: true })
     mkdirSync(orphanSessionDir, { recursive: true })
+    // 无 owner 的历史目录必须超过发布宽限期才可清理。
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000)
+    utimesSync(orphanSessionDir, old, old)
     h.activeManagedDirs = [activeSessionDir]
 
     const removed = await sweepWithCurrentConfigs()
