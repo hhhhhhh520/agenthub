@@ -75,8 +75,10 @@ export async function* withTimeout<T>(
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             timedOut = true
-            // R1: 超时必须先于 next 的迟到结果胜出。onTimeout 只启动有界清理，
-            // 不能 await 它——否则清理期间 next(done) 会先完成并吞掉 TimeoutError。
+            // R1/Round 5: 先不可逆地结算超时，再启动清理。清理回调的同步前缀
+            // 也可能 resolve 正在等待的 next(done)；若先跑清理，它的微任务会
+            // 排在 reject 之前赢得 race，把 TimeoutError 吞掉。
+            reject(new TimeoutError(timeoutMs, 'withTimeout'))
             if (options?.onTimeout) {
               void runCleanupBounded(
                 options.onTimeout,
@@ -86,7 +88,6 @@ export async function* withTimeout<T>(
                 console.warn('[withTimeout] onTimeout cleanup failed:', err instanceof Error ? err.message : err)
               })
             }
-            reject(new TimeoutError(timeoutMs, 'withTimeout'))
           }, remaining)
         }),
       ])

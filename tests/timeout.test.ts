@@ -102,6 +102,25 @@ describe('withTimeout — 有界清理', () => {
     expect(onTimeout).toHaveBeenCalledTimes(1)
   }, 2000)
 
+  it('Round 5: onTimeout 同步 resolve next(done) 时仍必须抛 TimeoutError', async () => {
+    let resolveNext!: (value: IteratorResult<number>) => void
+    const source = {
+      [Symbol.asyncIterator]() { return this },
+      next: () => new Promise<IteratorResult<number>>((resolve) => { resolveNext = resolve }),
+      return: async () => ({ done: true as const, value: undefined }),
+    }
+    const onTimeout = vi.fn(() => {
+      resolveNext({ done: true, value: undefined })
+      return Promise.resolve()
+    })
+
+    // 清理回调的同步前缀不能先让 next 赢得 race；超时结果必须先确定。
+    await expect(
+      drain(withTimeout(source, 20, { onTimeout, cleanupTimeoutMs: 100 })),
+    ).rejects.toBeInstanceOf(TimeoutError)
+    expect(onTimeout).toHaveBeenCalledTimes(1)
+  })
+
   it('正常完成不触发 onTimeout', async () => {
     const onTimeout = vi.fn(async () => {})
     const source = {
