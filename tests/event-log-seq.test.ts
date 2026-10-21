@@ -80,6 +80,36 @@ describe('createEventLogger — 单 session seq 分配器（P2-12）', () => {
     consoleSpy.mockRestore()
   })
 
+  it('Round 5: flush 超时后新 logger 共用写链，实际落库顺序必须是 1、2、3', async () => {
+    const rows: number[] = []
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    mockCreate.mockImplementation(async ({ data }: { data: { seq: number } }) => {
+      rows.push(data.seq)
+      if (data.seq === 1) await firstGate
+      return {}
+    })
+
+    const first = await createEventLogger('s-order')
+    first.sendEvent({ agentId: 'a1', type: 'thinking', content: 'one' })
+    first.sendEvent({ agentId: 'a1', type: 'tool_use', content: 'two' })
+    await first.flush({ timeoutMs: 5 })
+
+    const second = await createEventLogger('s-order')
+    second.sendEvent({ agentId: 'a1', type: 'thinking', content: 'three' })
+
+    // B 的 3 不能插到 A 的 2 前面；共享写链应阻塞在 1 的 gate 上。
+    await new Promise(resolve => setTimeout(resolve, 10))
+    try {
+      expect(rows).toEqual([1])
+    } finally {
+      releaseFirst()
+    }
+
+    await Promise.all([first.flush(), second.flush()])
+    expect(rows).toEqual([1, 2, 3])
+  })
+
   it('DB max 初始化失败时并发 logger 也只降级一次，后续 seq 不重复', async () => {
     mockFindFirst.mockRejectedValue(new Error('db down'))
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})

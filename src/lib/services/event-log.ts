@@ -9,8 +9,8 @@ import { prisma } from '@/lib/db'
  * - 持久化与推流解耦：sendEvent 同步签名不变（全仓调用方零改动），内部把
  *   持久化排入异步串行队列；streamClosed 后仍落库、只是不推流——这是
  *   刷新后按 seq 补发的前提。
- * - 写入时序：seq 由进程内 per-session 分配器同步分配，多 logger 共享同一
- *   起点与计数器；实际落库异步进行，调用方在流关闭前 flush() 排空。
+ * - 写入时序：seq 与写链都由进程内 per-session 状态共享；多 logger 按 seq
+ *   串行落库。实际落库异步进行，调用方在流关闭前 flush() 排空。
  * - 只持久化四类过程事件 + permission_cancel：text/error 等成品已由
  *   Message 表承载（ISSUE-011 F1 失败原因也落 Message），重放不重复。
  * - 容量封顶对齐 decisionTrace 模式（防无界增长，roadmap §9#5）。
@@ -40,6 +40,8 @@ interface SessionSeqState {
   init: Promise<void>
   /** 当前持有该 session 分配器的 logger 数；最后一个 flush 后释放。 */
   refs: number
+  /** 所有 logger 共用的按 seq 串行写链；flush 只等待调用时的快照。 */
+  writeChain: Promise<void>
   /** 初始化降级或写入失败后保留状态，避免复用已经流式发出的 seq。 */
   poisoned: boolean
 }
@@ -70,7 +72,13 @@ function acquireSeqState(sessionId: string): SessionSeqState {
 
   let resolveInit!: () => void
   const init = new Promise<void>((resolve) => { resolveInit = resolve })
-  const state: SessionSeqState = { currentSeq: 0, init, refs: 1, poisoned: false }
+  const state: SessionSeqState = {
+    currentSeq: 0,
+    init,
+    refs: 1,
+    writeChain: Promise.resolve(),
+    poisoned: false,
+  }
   // 先入 Map 再启动查询：并发 createEventLogger 在首个 await 前拿到同一个 state。
   sessionSeqStates.set(sessionId, state)
   void loadInitialSeq(sessionId, state).finally(resolveInit)
@@ -122,13 +130,11 @@ export async function createEventLogger(
   await seqState.init
   let released = false
 
-  // 异步串行写队列：链式 promise 保证写入按 seq 顺序落库；单条失败不击穿
+  // 异步串行写队列：写链属于 per-session 状态，所有 logger 共享；否则 B 的 3
+  // 可能先于 A 的 2 落库，SSE cursor 推到 3 后 2 永远补不回来。单条失败不击穿
   // 执行主流程，但必须留告警并保留 seq 状态，不能静默复用已发出的 seq。
-  let writeChain: Promise<void> = Promise.resolve()
-  let writeError: unknown = null
-
   const enqueueWrite = (event: SequencedEvent) => {
-    writeChain = writeChain.then(async () => {
+    seqState.writeChain = seqState.writeChain.then(async () => {
       // 容量封顶：每条写入后 trim（seq 索引命中，删除 0~1 行，开销可忽略），
       // 保留最近 MAX_EVENTS_PER_SESSION 条；每 session 首次触顶 warn 一次。
       if (event.seq > MAX_EVENTS_PER_SESSION) {
@@ -151,7 +157,6 @@ export async function createEventLogger(
         },
       })
     }).catch(err => {
-      writeError = err
       seqState.poisoned = true
       console.warn(`[event-log] 事件落库失败（事件未持久化，继续后续写入）seq=${event.seq}:`, err instanceof Error ? err.message : err)
     })
@@ -172,11 +177,13 @@ export async function createEventLogger(
     },
     async flush(opts) {
       const timeoutMs = opts?.timeoutMs ?? FLUSH_TIMEOUT_MS
+      // 只等待调用时的快照；后续 logger 新入队的事件由它们自己的 flush 负责。
+      const tail = seqState.writeChain
       let timer: ReturnType<typeof setTimeout> | undefined
       let timedOut = false
       try {
         await Promise.race([
-          writeChain,
+          tail,
           new Promise<void>((resolve) => {
             timer = setTimeout(() => {
               timedOut = true
@@ -187,14 +194,12 @@ export async function createEventLogger(
         ])
       } finally {
         if (timer) clearTimeout(timer)
-        if (timedOut || writeError !== null) seqState.poisoned = true
+        if (timedOut || seqState.poisoned) seqState.poisoned = true
         if (!released) {
           released = true
           releaseSeqState(sessionId, seqState)
         }
       }
-      // writeError 仅为调试留痕（每条失败已在 catch 里 warn），flush 恒 resolve
-      void writeError
     },
   }
 }
