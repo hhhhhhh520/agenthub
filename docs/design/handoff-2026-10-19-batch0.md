@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `9931fa8`（P3 #9 SVG 下载 + P3 #8 固定根 junction + P2-11 owner 发布窗口 + P2-08 并发/容量 + P3 #6 permission 归属校验 + P2-12 per-session 共享写链 + P2-11 本进程 retry owner 保护 + P1-03 终态 managed 清理 + P2-13 超时先结算 + P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `9931fa8` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4e869a9`（P3 #10 临时配置清理 + P3 #9 SVG 下载 + P3 #8 固定根 junction + P2-11 owner 发布窗口 + P2-08 并发/容量 + P3 #6 permission 归属校验 + P2-12 per-session 共享写链 + P2-11 本进程 retry owner 保护 + P1-03 终态 managed 清理 + P2-13 超时先结算 + P2-08 未确认树状态保留 + 事件 seq/SSE 轮询 + 清扫 owner 护栏 + 私聊只读提示 + 取消安全 Agent 创建 + Windows 进程树确认 + 超时先胜出 + OpenCode managed 资源最终清理 + Q&A 批准保存 + 恢复取消复查 + 问句不算批准 + `.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `4e869a9` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01/02/03 已闭环；P2-01..13 已闭环；P2-08/P2-11/P2-12/P2-13 经 Round 5 + Round 6 补齐。**P1/P2 全闭环；P3 #6/#8/#9/#19 已闭环，当前剩余旧 P3 24 项**，下一项 **P3 #10**，见 `docs/design/repair-backlog-2026-10-20.md`。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、P3 #8 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v52
+> 历史说明: P1-01/02/03 已闭环；P2-01..13 已闭环；P2-08/P2-11/P2-12/P2-13 经 Round 5 + Round 6 补齐。**P1/P2 全闭环；P3 #6/#8/#9/#10/#19 已闭环，当前剩余旧 P3 23 项**，下一项 **P3 #12**，见 `docs/design/repair-backlog-2026-10-20.md`。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、P2-12 完成记录、P3 #8 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v53
 
 ## 1. 当前状态
 
@@ -55,10 +55,11 @@
 | `4092e99` | OpenCode owner 发布宽限期；owner 写失败 fail-fast |
 | `6e7ea3a` | files 固定 workspace 根拒绝 junction；accept/download 入口与 mkdir 后复查 |
 | `9931fa8` | SVG 下载强制 attachment + nosniff/sandbox；普通图片仍 inline |
+| `4e869a9` | MCP 临时文件 0o600 + spawn 失败清理；OpenCode owner/send 失败清理 |
 
 回归基线（2026-10-21）：
 
-- `npx vitest run`：130 files / **1488 passed / 3 skipped**
+- `npx vitest run`：131 files / **1490 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净

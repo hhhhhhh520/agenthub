@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v52（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #6/#8/#9/#19 闭环；剩旧 P3 24 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v53（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 + Round 6 补齐）+ P3 #6/#8/#9/#10/#19 闭环；剩旧 P3 23 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -59,6 +59,7 @@
 | v50 | 2026-10-21 | **P3 #8 files symlink 路径逃逸闭环（commit b24a6d7）**。根因：isPathSafe 对不存在目标只做 resolve+startsWith，父目录 symlink 可把 accept 新文件写到 workspace 外；download 只用 join+readFile，workspace 内文件 symlink 可读取外部文件。修复：isPathSafe 向上找最近存在祖先并 realpath，悬空 symlink fail-closed；accept 在 mkdir 后 writeFile 前复查；download 读取前 realpath 校验。新增父目录/悬空 symlink、accept 写入与 mkdir 后复查、download 读取回归；父目录、download、post-mkdir 三次变异均精确红。全量 127 files / 1477 passed / 3 skipped。**P3 #6/#8/#19 闭环，剩 25 项**。 |
 | v51 | 2026-10-21 | **Round 6 三项补齐**：P2-08 并发取消/容量驱逐（`f873181`）、P2-11 owner 初始化发布窗口（`4092e99`）、P3 #8 固定 session 根 junction（`6e7ea3a`）。新增 terminationInFlight 共享、容量驱逐保护未确认记录、无 marker 24h 发布宽限期、owner 写失败 fail-fast、isPathRootSafe 固定根锚定。审计 Round 6 的 tree/sweep/path fixtures 全部转绿；变异验证各路径精确红。全量 129 files / 1486 passed / 3 skipped。**P1/P2 全闭环；P3 #6/#8/#19 闭环，剩 25 项**。 |
 | v52 | 2026-10-21 | **P3 #9 attachments SVG inline 闭环（commit 9931fa8）**。根因：上传白名单允许 `image/svg+xml`，下载路由把所有 `image/*` 设为 inline 且无 nosniff；含 script 的 SVG 可同源执行。修复：规范化 MIME，SVG 强制 `Content-Disposition: attachment`，加 `X-Content-Type-Options: nosniff` 与 CSP `sandbox`；普通图片仍 inline。新增 SVG/PNG 回归；改回 inline 后测试精确红。全量 130 files / 1488 passed / 3 skipped。**P3 #6/#8/#9/#19 闭环，剩 24 项**。 |
+| v53 | 2026-10-21 | **P3 #10 临时配置清理闭环（commit 4e869a9）**。MCP 临时文件 0o600，写入/spawn 失败立即 unlink；OpenCode owner 写失败删除新建目录；send 在 registry 建 entry 前失败时清理 XDG 与 agent 文件。Windows ACL 仍依赖 `%TEMP%`/profile ACL（§5 已接受残余）。新增三条回归；去掉对应清理分别精确红。全量 131 files / 1490 passed / 3 skipped。**P3 #6/#8/#9/#10/#19 闭环，剩 23 项**。 |
 
 
 ---
@@ -262,7 +263,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1488 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1490 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
