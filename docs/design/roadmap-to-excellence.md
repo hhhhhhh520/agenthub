@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v34（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2 + done 恢复审批 + F11 `.ENV` + F8 问句；F9/F10 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v35（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2/F7/F8/F9 + F11 `.ENV`；F10 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -41,6 +41,7 @@
 | v32 | 2026-10-20 | **done 恢复审批闭环（commit 52d66c9）**。根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok，done + 已提交任务 + 未展示计划时，模型误提 execute 仍会执行。修复：idle 保持合法早退；done 先过 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归，变异验证恢复 `idle||done` 早退后 2 条测试精确红；全量 123 files / 1446 passed / 3 skipped。**最新复核未闭环**：F11 `.ENV` 大小写、F8 问句批准、F9 恢复 phase 写入前取消窗口、F10 Q&A 分支保存明确批准。 |
 | v33 | 2026-10-20 | **F11 `.ENV` 大小写闭环（commit 4a7efec）**。根因：`.env` 敏感模式大小写敏感；Windows 上 `.ENV` 与 `.env` 是同一文件，但 `.ENV` 被审计判为普通越界。修复：任意层级 `.env` 模式加 `i` 标志；补 `.ENV`/`.Env.Local` 与 `pickSensitive` 回归；变异验证移除 `i` 后测试精确红。全量 123 files / 1447 passed / 3 skipped。**下一批**：F8 问句批准、F9 恢复取消窗口、F10 Q&A 批准保存；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
 | v34 | 2026-10-20 | **F8 问句批准闭环（commit 3bb12ad）**。根因：`isExplicitPlanApproval` 的 normalize 删除全角/ASCII 问号，`执行？` 变成 `执行` 并命中批准集合。修复：保留问号，问句不再命中；感叹号/句号等语气标点仍忽略。新增 `执行？`/`确认执行?` 拒绝与 `执行！` 通过回归；变异验证恢复问号剥离后测试精确红。全量 123 files / 1447 passed / 3 skipped。**下一批**：F9 恢复取消窗口、F10 Q&A 批准保存；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
+| v35 | 2026-10-20 | **F9 恢复取消窗口闭环（commit 1af2112）**。根因：已批准恢复在查询计划/批准记录后直接写 align_decompose/execute，取消发生在查询期间时 phase 已推进，调用方之后才发现停止。修复：approval gate 后、align_pm→align_decompose 后各加取消复查；取消后不再写 execute。新增 approved plan + 查询期间取消、断言零 phase 写入回归；变异验证移除 gate 后复查后测试精确红。全量 123 files / 1448 passed / 3 skipped。**下一批**：F10 Q&A 批准保存；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
 
 
 ---
@@ -244,7 +245,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1447 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1448 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

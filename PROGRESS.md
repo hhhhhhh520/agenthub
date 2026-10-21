@@ -280,6 +280,7 @@
 | done 恢复必须先过计划审批（commit 52d66c9） | 根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok；done + 已提交任务 + 未展示计划时，模型误提 execute 仍进入执行器。修复：idle 保持合法早退；done 先走 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归；变异验证恢复 `idle||done` 早退后 2 条测试精确红。全量 123 files / 1446 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | `.ENV` 大小写敏感分类（commit 4a7efec） | 根因：`.env` 敏感模式大小写敏感；Windows 上 `.ENV` 与 `.env` 是同一文件，但 `.ENV` 被审计判为普通越界。修复：任意层级 `.env` 模式加 `i` 标志；补 `.ENV`/`.Env.Local` 与 `pickSensitive` 回归；变异验证移除 `i` 后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 问句不再算计划批准（commit 3bb12ad） | 根因：`isExplicitPlanApproval` 的 normalize 删除全角/ASCII 问号，`执行？` 变成 `执行` 并命中批准集合。修复：保留问号，问句不再命中；感叹号/句号等语气标点仍忽略。新增 `执行？`/`确认执行?` 拒绝与 `执行！` 通过回归；变异验证恢复问号剥离后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| 恢复 phase 写入前复查取消（commit 1af2112） | 根因：已批准恢复在查询计划/批准记录后直接写 align_decompose/execute，取消发生在查询期间时 phase 已推进，调用方之后才发现停止。修复：approval gate 后、align_pm→align_decompose 后各加取消复查；取消后不再写 execute。新增 approved plan + 查询期间取消、断言零 phase 写入回归；变异验证移除 gate 后复查后测试精确红。全量 123 files / 1448 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 
 ### ⏳ 进行中
 
