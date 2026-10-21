@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`d2fb158`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`122 files / 1430 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`351cdbe`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`123 files / 1444 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06 保留完成记录；P2-07 已由 `d2fb158` 补齐；P2-03/P2-04/P1-03 的 Round 2 补项见 §2.1；旧 36 项中已修/部分修的映射见 §4。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐，P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐；P1-03 F4 与 P2-13 R1 仍未闭环（见 §2.1）；旧 36 项中已修/部分修的映射见 §4。
 
 ---
 
@@ -45,6 +45,8 @@
 | `7520866` | SSE body cancel 安全 | safeEnqueue 捕获推流异常；ReadableStream cancel 置关闭标记并清超时；后台执行与锁释放不变 |
 | `61c7218` | 嵌套 `.env` 敏感分类 | 任意目录层级 `.env`/`.env.*` 命中敏感规则；真实影 Git 审计返回 violation |
 | `d2fb158` | 拿锁后重读会话快照 | 排队请求使用锁内最新 phase/phaseStep/decisionTrace/permissionMode/projectDir/type；重读 null 回 404 |
+| `95e0755` | 并发 DELETE 所有权 | 已 deleting 时第二个 DELETE 直接 409，不 mark、不在 finally 清首个删除者的标记 |
+| `351cdbe` | 计划批准绑定 plan ID | 明确肯定文本写 system 审批记录；拒绝/澄清失效；align_pm 真实恢复；全任务展示集一致；取消复查 |
 | `ec756f0` | 文档同步 | 本清单、PROGRESS、roadmap v19、handoff |
 
 **额外已确认但不要误改：**
@@ -194,15 +196,15 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | ID | 严重度 | 状态 | 位置 | 未闭环问题 |
 |---|---|---|---|---|
 | F1 | P1 | ✅ 已闭环 `61c7218` | `sensitive-paths.ts:27` | 嵌套 `secrets/.env` 未判敏感，审计 pass；已补任意层级 `.env`/`.env.*` |
-| F2 | P2 | 🔴 未闭环 | `alignment.ts:627`、`chat-router.ts:273` | 任意后续 user 消息都被当作计划确认；明确拒绝/澄清/撤回仍可能放行。需要结构化批准记录绑定 plan ID |
-| F3 | P2 | 🔴 未闭环 | `alignment.ts:458`、`:752`、`chat-router.ts:231` | 任务已提交、phase 停在 `align_pm` 时，真实 POST 先被 `align_pm + execute` 非法转移拒绝，重展示 helper 不可达 |
+| F2 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts:627`、`chat-router.ts:273` | 明确肯定文本写 system 批准记录并绑定 plan ID；拒绝/澄清/旧批准失效；gate 要求记录在计划后、所有 user 之后 |
+| F3 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts:458`、`:752`、`chat-router.ts:231` | align_pm + 已有任务的真实 POST 走受约束恢复入口；缺计划/未批准只重呈，无任务仍拒绝 |
 | F4 | P2 | 🔴 未闭环 | `process-registry.ts:438`、`:552`、`:1390` | 正常 exit→stdout.close 顺序下，OpenCode 生成的 md/XDG 最终清理丢失 |
-| F5 | P2 | 🔴 未闭环 | `session-lifecycle.ts:12`、`sessions/[id]/route.ts:143`、`stop/route.ts:36` | 并发 DELETE 共用无 owner 的 Set；D2 失败会清掉 D1 的 deleting 标记，stop 随后清取消并返回 200 |
-| F6 | P2 | 🔴 未闭环 | `alignment.ts:444`、`:471`、`:737` | plan ID 覆盖整个 session 任务集，但展示摘要只包含本轮 scheduledTasks；旧 pending/blocked 任务未展示却被确认 |
+| F5 | P2 | ✅ 已闭环 `95e0755` | `session-lifecycle.ts:12`、`sessions/[id]/route.ts:143`、`stop/route.ts:36` | 并发 DELETE 共用无 owner 的 Set；已改为第二个 DELETE 直接 409，首个删除者独占 finally |
+| F6 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts:444`、`:471`、`:737` | plan ID、展示摘要、恢复/执行统一使用 session 全任务集；旧 pending/blocked 任务也展示 |
 | R1 | P2 | 🔴 未闭环 | `timeout.ts:73`、`:99` | `onTimeout` 清理期间底层 `next` 先完成时，可能吞掉 `TimeoutError`；与已修的 `iterator.return` 有界性独立 |
-| R2 | P2 | 🔴 未闭环 | `alignment.ts` needsPlan 分支 | 进入 `presentPlanForConfirmation` 前缺少取消复查；展示 helper 在 phase/消息副作用前也缺少取消检查 |
+| R2 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts` needsPlan 分支 | ensure 等待后、重呈 helper 的 phase/消息副作用前均补取消复查 |
 
-> F2/F3/F6/R2 都属于 P2-04 的审批与恢复边界；F5 属于 P2-03 的并发所有权；F4 属于 P1-03 的资源生命周期；R1 单列，不能据此否定 `iterator.return` 已修复。
+> F4 属于 P1-03 的资源生命周期；R1 单列，不能据此否定 `iterator.return` 已修复。P2-03/P2-04 的 Round 2 补项均已闭环。
 
 ---
 
@@ -231,13 +233,20 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 - 与 stop/delete 的进程归属测试联动。
 **测试：** regenerate 期间 stop → `ownerSessionId` 能命中；取消后不得更新消息/发 done。
 
-### ⚠️ P2-03 stop 与 DELETE 的取消屏障竞态（单 DELETE 已闭环；F5 并发未闭环）
+### ✅ P2-03 stop 与 DELETE 的取消屏障竞态（F5 已闭环）
 
-**状态：** 单 DELETE 场景 ✅ 已修（commit `31c5946`，2026-10-20）：`session-lifecycle` 的 deleting 标记覆盖取消 → 杀进程 → 等锁 → 清附件/影子 git → 删库全程；DELETE 失败路径 finally 清标记，stop 不为 deleting 会话清取消，chat 拿锁前后均拒绝。**Round 2 F5 发现并发 DELETE 仍可互相清除无 owner 的 deleting 标记**，见 §2.1；P2-03 不能整体标 ✅。详情见 `docs/design/handoff-2026-10-20-p2-03.md`。
+**状态：** 单 DELETE 由 `31c5946` 修复；Round 2 F5 由 `95e0755` 闭环：同一 session 已有 deleting 时第二个 DELETE 直接 409，不 mark、不进入 finally，因此不会清掉首个删除者的标记；stop 在首个删除完成前仍返回 202 并保留取消。详情见 `docs/design/handoff-2026-10-20-p2-03.md`。
 
-### ⚠️ P2-04 执行恢复没有“同一获批计划”关联（F2/F3/F6/R2 未闭环）
+### ✅ P2-04 执行恢复没有“同一获批计划”关联（F2/F3/F6/R2 已闭环）
 
-**状态：** 基础机制已落地（commit `6292cdd`，2026-10-20）：计划消息写入任务集 plan ID；`ensureExecutableState` 在 align_pm/align_arch/align_qa 恢复前要求计划消息对应当前任务集且之后有用户消息；缺失/不匹配时由 `transitionToExecution` 用现有任务重新展示计划并停在 align_arch。**Round 2 复核发现 F2（拒绝/澄清也被当确认）、F3（align_pm 真实 POST 被非法转移挡住）、F6（展示集/批准集/执行集不一致）、R2（needsPlan 分支取消复查不足）**，P2-04 不能整体标 ✅。详见 §2.1。
+**状态：** 基础机制由 `6292cdd` 落地；Round 2 补项由 `351cdbe` 闭环：
+- F2：只有明确肯定文本（如“确认执行”）写 `[PLAN_APPROVED]plan-<id>` system 记录；拒绝/澄清/普通消息不写；gate 要求记录在计划之后且在所有 user 消息之后，旧批准会被后续拒绝作废。
+- F3：任务已提交且 phase=`align_pm` 时，真实 POST execute 走受约束恢复入口；缺计划/未批准只重呈计划，无任务仍按非法转移拒绝。
+- F6：plan ID、计划展示摘要、恢复/执行统一使用 session 全任务集，旧 pending/blocked 任务也会展示。
+- R2：ensure 等待后、重呈 helper 的 phase/消息副作用前均补取消复查。
+- system 审批记录不回聊天 UI、不进模型上下文；服务端 gate 直接查 DB。
+
+**已知残余：** plan ID 仍只 hash 任务 ID；同一 ID 的 description/dependencies/declaredFiles 内容变化不会自动使旧批准失效（Round 2 报告列为进一步版本关联风险，未在本项扩 scope）。多实例/跨进程的审批记录一致性也不在 P2-04；P2-03 F5 的 deleting 所有权仍是进程内语义。
 
 ### ✅ P2-05 Claude 无 provider 配置时未注入项目指令隔离开关
 
@@ -345,7 +354,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 31 | 未修 | `prisma/migrations` | 历史 v2 migration 对已有数据失败；当前 `db push` 规避，若走 migrate 需单独修 |
 | 32 | 未修 | `experiments/p5/config.ts:52`、`run.test.ts` | 路径写死 `D:/...`；metrics 清理仍在测试 setup；README 直跑配置未说明 |
 | 33 | 未修 | `.github/workflows/ci.yml` | CI 跑 `vitest run`，不跑 coverage；阈值只在 `npm test` 生效 |
-| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1426 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
+| 34 | 部分 | `README.md`、roadmap | Node 20.19+/1444 已更新；README 未再写 API 路由总数；E2E 文档需继续核对 |
 | 36 | 未修 | `message-parser.ts:30,34,46` | 只匹配 `\n` 不匹配 CRLF；`lineStart` 是块计数器不是真实行号；metadata 用 `split('=')` 截断含 `=` 的值 |
 
 ---
@@ -378,8 +387,8 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 ## 6. 建议执行顺序
 
 1. ~~P2-07 拿锁前旧快照~~（`d2fb158` 已闭环）
-2. **P2-04 F2/F3/F6/R2：明确批准记录 + align_pm 路由恢复 + 展示/执行集合一致 + 取消复查**
-3. **P2-03 F5：并发 DELETE 的 deleting 所有权**
+2. ~~P2-04 F2/F3/F6/R2~~（`351cdbe` 已闭环）
+3. ~~P2-03 F5 并发 DELETE~~（`95e0755` 已闭环）
 4. **P1-03 F4：OpenCode managed 资源最终清理**
 5. **P2-13 R1：onTimeout 与 next 的超时优先级**
 6. **P2-08/09 进程树/Agent 创建取消**
@@ -406,7 +415,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `122 files / 1430 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `123 files / 1444 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -432,7 +441,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 2 后不能再说“P1 全部闭环、所列 P2 均已完成”：P1-01/F1 已由 `61c7218` 闭环；P1-03 仍有 F4 资源清理尾项；P2-03 仍有 F5 并发所有权；P2-04 仍有 F2/F3/F6/R2；P2-06 已闭环。
-- 最危险的剩余项：**P2-04 F2/F3（审批/真实恢复入口）、P2-03 F5（并发 DELETE）**；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。P2-07 已由 `d2fb158` 闭环。
+- Round 2 后不能再说“P1 全部闭环、所列 P2 均已完成”：P1-01/F1 已由 `61c7218` 闭环；P1-03 仍有 F4 资源清理尾项；P2-03 F5 已由 `95e0755` 闭环；P2-04 F2/F3/F6/R2 已由 `351cdbe` 闭环；P2-06/P2-07 已闭环。
+- 最危险的剩余项：**P1-03 F4（OpenCode managed 资源最终清理）、P2-13 R1（timeout 优先级）**；随后 P2-08/09、P2-10/11/12。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
