@@ -141,6 +141,20 @@ describe('POST /api/sessions/[id]/tasks/[taskId]/redo', () => {
     expect(Array.isArray(agents)).toBe(true)
   })
 
+  it('P3 #16: 非字符串 description 在推进 phase 前返回 400，不更新任务', async () => {
+    mockTaskFindUnique.mockResolvedValue({
+      id: 't1', sessionId: 's1', status: 'failed', description: '原始描述',
+      assignedAgent: FAKE_AGENT, assignedAgentId: 'a1', dependencies: '[]',
+    })
+
+    const res = await POST(makeReq({ description: 123 }), params)
+
+    expect(res.status).toBe(400)
+    expect(mockSessionUpdateMany).not.toHaveBeenCalled()
+    expect(mockTaskUpdate).not.toHaveBeenCalled()
+    expect(mockHandleExecution).not.toHaveBeenCalled()
+  })
+
   it('[❌-2] allows updating task description on redo', async () => {
     mockTaskFindUnique
       .mockResolvedValueOnce({

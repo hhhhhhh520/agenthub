@@ -42,6 +42,12 @@ export async function POST(
 
 async function handleRedo(sessionId: string, taskId: string, request: Request) {
   const body = await request.json().catch(() => ({}))
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+  if (body.description !== undefined && typeof body.description !== 'string') {
+    return NextResponse.json({ error: 'description must be a string' }, { status: 400 })
+  }
   const newDescription = body.description as string | undefined
 
   // 1. Validate task exists and is redoable

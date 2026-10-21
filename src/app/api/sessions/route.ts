@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { hasLoneSurrogates } from '@/lib/utils'
+import { isPermissionMode } from '@/lib/permission-mode'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -23,12 +24,29 @@ export async function POST(request: Request) {
   if (title && hasLoneSurrogates(title)) {
     return NextResponse.json({ error: '标题包含无效编码，请使用 UTF-8 编码发送请求' }, { status: 400 })
   }
+  if (permissionMode !== undefined && !isPermissionMode(permissionMode)) {
+    return NextResponse.json({ error: 'permissionMode must be default or auto' }, { status: 400 })
+  }
+
+  // P3 #17: private session 的 agentIds 必须在 create 之前校验完成——失败不能留下空会话。
+  let privateAgentIds: string[] | null = null
+  if (type === 'private') {
+    if (!Array.isArray(agentIds) || agentIds.length === 0 || !agentIds.every(id => typeof id === 'string')) {
+      return NextResponse.json({ error: 'Private session requires at least one agentId' }, { status: 400 })
+    }
+    privateAgentIds = [...new Set(agentIds)]
+    const agents = await prisma.agent.findMany({ where: { id: { in: privateAgentIds } } })
+    if (agents.length !== privateAgentIds.length) {
+      return NextResponse.json({ error: 'No valid agents found for provided agentIds' }, { status: 400 })
+    }
+  }
+
   const session = await prisma.session.create({
     data: {
       title: title || '新会话',
       type: type || 'group',
       projectDir: projectDir || '',
-      permissionMode: permissionMode || 'default',
+      permissionMode: permissionMode ?? 'default',
     },
   })
 
@@ -48,17 +66,10 @@ export async function POST(request: Request) {
 
   // Private sessions: only add explicit agentIds, no auto-add preset agents
   if (type === 'private') {
-    if (!Array.isArray(agentIds) || agentIds.length === 0) {
-      return NextResponse.json({ error: 'Private session requires at least one agentId' }, { status: 400 })
-    }
-    const agents = await prisma.agent.findMany({ where: { id: { in: agentIds } } })
-    if (agents.length === 0) {
-      return NextResponse.json({ error: 'No valid agents found for provided agentIds' }, { status: 400 })
-    }
     await prisma.sessionMember.createMany({
-      data: agents.map(agent => ({
+      data: privateAgentIds!.map(agentId => ({
         sessionId: session.id,
-        agentId: agent.id,
+        agentId,
         role: 'member',
       })),
     })

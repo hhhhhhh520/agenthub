@@ -5,6 +5,7 @@ import { cleanupShadowGit } from '@/lib/services/shadow-git'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
 import { markSessionDeleting, clearSessionDeleting, isSessionDeleting } from '@/lib/session-lifecycle'
 import { waitForSessionUnlock } from '@/lib/session-lock'
+import { isPermissionMode } from '@/lib/permission-mode'
 
 export async function GET(
   request: Request,
@@ -67,6 +68,9 @@ export async function PUT(
   const { id } = await params
   const body = await request.json()
   const { title, projectDir, permissionMode, isPinned, isArchived } = body
+  if (permissionMode !== undefined && !isPermissionMode(permissionMode)) {
+    return NextResponse.json({ error: 'permissionMode must be default or auto' }, { status: 400 })
+  }
   const data: Record<string, unknown> = {}
   if (title !== undefined) data.title = title
   if (projectDir !== undefined) data.projectDir = projectDir

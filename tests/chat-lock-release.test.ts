@@ -132,6 +132,26 @@ afterEach(() => {
   clearSessionDeleting('s1')
 })
 
+describe('chat route — P3 #15 replyToId 校验', () => {
+  it('replyToId 不存在时 400，且不拿锁/不建消息', async () => {
+    mocks.messageFindUnique.mockResolvedValueOnce(null)
+    const res = await POST(makeReq({ message: 'hi', replyToId: 'missing' }), params)
+
+    expect(res.status).toBe(400)
+    expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+  })
+
+  it('replyToId 属于其他会话时 400，且不拿锁/不建消息', async () => {
+    mocks.messageFindUnique.mockResolvedValueOnce({ sessionId: 'other-session' })
+    const res = await POST(makeReq({ message: 'hi', replyToId: 'm-other' }), params)
+
+    expect(res.status).toBe(400)
+    expect(mocks.acquireSessionLock).not.toHaveBeenCalled()
+    expect(mocks.messageCreate).not.toHaveBeenCalled()
+  })
+})
+
 describe('chat route — 统一锁释放', () => {
   it('拿锁后、建流前的 DB 异常会释放锁（防永久 429）', async () => {
     mocks.attachmentFindMany.mockRejectedValueOnce(new Error('db down'))

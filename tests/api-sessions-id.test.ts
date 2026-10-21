@@ -48,6 +48,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockAttachmentFindMany.mockResolvedValue([])
   mockTaskFindMany.mockResolvedValue([]) // 默认无卡住任务
+  mockUpdate.mockResolvedValue({ id: 's1' })
 })
 
 // --- Tests ---
@@ -131,6 +132,21 @@ describe('PUT /api/sessions/[id]', () => {
       data: { title: 'new-title' },
       omit: { decisionTrace: true }, // P4 T5 审查整改: PUT 返回体同样排除
     })
+  })
+
+  it('P3 #5: 显式非法 permissionMode 返回 400，且不更新 session', async () => {
+    const res = await PUT(makeReq('PUT', { permissionMode: 'hack' }), params)
+    expect(res.status).toBe(400)
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it('P3 #5: permissionMode=auto 仍合法，并写入 update data', async () => {
+    mockUpdate.mockResolvedValueOnce({ id: 's1' })
+    const res = await PUT(makeReq('PUT', { permissionMode: 'auto' }), params)
+    expect(res.status).toBe(200)
+    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { permissionMode: 'auto' },
+    }))
   })
 
   it('includes multiple fields when provided', async () => {

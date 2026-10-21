@@ -26,6 +26,23 @@ export async function POST(
   }
   message = message || ''
 
+  // P3 #15: replyToId 必须指向当前会话内的消息；在拿锁/写消息前 fail-closed。
+  if (replyToId !== undefined && typeof replyToId !== 'string') {
+    return new Response('replyToId must be a string', { status: 400 })
+  }
+  if (replyToId) {
+    const target = await prisma.message.findUnique({
+      where: { id: replyToId },
+      select: { sessionId: true },
+    })
+    if (!target) {
+      return new Response('Referenced message not found', { status: 400 })
+    }
+    if (target.sessionId !== sessionId) {
+      return new Response('Referenced message belongs to different session', { status: 400 })
+    }
+  }
+
   const session = await prisma.session.findUnique({ where: { id: sessionId } })
   if (!session) {
     return new Response('Session not found', { status: 404 })
