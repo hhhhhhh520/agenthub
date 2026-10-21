@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { loadBatchRows, aggregateFingerprints, fingerprintKey, BATCH_FILES, type CellFingerprint } from './analyze-cross-batch'
+import { CONFIG } from './config'
 
 describe('loadBatchRows', () => {
   it('解析标准行（无 failKind 键 → null，与 P6 整批同型）', () => {
@@ -52,7 +53,7 @@ describe('aggregateFingerprints（inline fixture）', () => {
   })
 })
 
-const resultsDir = '<workspace>/agenthub/experiments/p5/results'
+const resultsDir = CONFIG.resultsDir
 const p8 = join(resultsDir, BATCH_FILES.P8)
 describe.skipIf(!existsSync(p8))('aggregateFingerprints（真实数据快照，已独立复算背书）', () => {
   it('P8 总量与 ON corr 口径', () => {
@@ -229,7 +230,7 @@ describe('renderCrossBatchReport（终审修复波 F1/F2/F3 文案）', () => {
   })
 })
 
-const p5dbPath = '<workspace>/agenthub/experiments/p5/p5.db'
+const p5dbPath = CONFIG.dbPath.replace(/^file:/, '')
 describe.skipIf(!existsSync(p5dbPath))('main() 集成冒烟（真实 p5.db 全量跑）', () => {
   it('产出报告且标题章节齐全', async () => {
     const { main } = await import('./analyze-cross-batch')

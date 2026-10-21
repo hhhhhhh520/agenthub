@@ -1,5 +1,6 @@
 import { describe, it, beforeAll, afterAll, afterEach, expect, vi } from 'vitest'
 import { writeFileSync, rmSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CONFIG, isP9ArmsOnly, parseGateCell, isMonitorAbOnly, isMonitorConfig } from './config'
 import { MONITOR_TASKS, type MonitorTaskId } from './tasks-monitor'
@@ -171,15 +172,16 @@ describe('P5 harness 单测', () => {
     expect(resolveFailureMode(false, CONFIG.escalateLimit + 1, 3)).toBe('escalate-exhausted')
     expect(resolveFailureMode(true, 0, 5)).toBe('pass')                             // pass 优先
   })
-  it('metrics 落盘往返', () => {
+  it('metrics 落盘往返（临时目录，不碰真实批次 metrics.jsonl）', () => {
     const runId = `__harness_${Date.now()}`
-    const m: RunMetrics = { runId, config: 'off+no-verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '' }
-    appendMetrics(m)
-    expect(loadMetrics().some(x => x.runId === runId)).toBe(true)
-    // 清理：runId 唯一，按行删除，不污染实验 metrics.jsonl
-    const rest = loadMetrics().filter(x => x.runId !== runId)
-    if (rest.length === 0) rmSync(join(CONFIG.resultsDir, 'metrics.jsonl'), { force: true })
-    else writeFileSync(join(CONFIG.resultsDir, 'metrics.jsonl'), rest.map(x => JSON.stringify(x)).join('\n') + '\n', 'utf8')
+    const dir = mkdtempSync(join(tmpdir(), 'p5-metrics-'))
+    try {
+      const m: RunMetrics = { runId, config: 'off+no-verify', taskId: 'A', seed: 0, pass: false, failureMode: 'no-pass', rounds: 3, escalateCount: 0, correctionCount: 0, illegalProposalCount: 1, totalTransitions: 2, latencyMs: 10, tracePath: '' }
+      appendMetrics(m, dir)
+      expect(loadMetrics(dir).some(x => x.runId === runId)).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    }
   })
   it('P7-A failKind: 穷尽 + 按 off/on 分列（F2/F4/F5）', () => {
     // 仅供逻辑验证——collectMetrics 本身查 DB，这里测纯的 failKind 归类 seed 需 mock prisma；

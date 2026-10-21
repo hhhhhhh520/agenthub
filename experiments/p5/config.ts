@@ -1,3 +1,5 @@
+import { join, resolve } from 'node:path'
+
 /** P5 实验配置（Spec §2/§4/§6 固化参数，报告需回显 model+config 供复现）
  *  model/baseUrl 支持 env 覆盖：GLM_MODEL / GLM_BASE_URL（用户可换 provider/模型，报告按实际值回显） */
 /** P6 T8: 配置名 → 实验 env 透传（configs 扩 2×2 矩阵：OFF 前缀关状态机，no-verify 前缀关 verify，否则未设=默认 on）
@@ -38,6 +40,25 @@ export const parseGateCell = (env: NodeJS.ProcessEnv = process.env): { config: s
   return { config, taskId }
 }
 
+/** 实验目录固定跟随源码位置，避免测试/脚本因 cwd 不同写入别的盘符。 */
+export const P5_DIR = resolve(import.meta.dirname)
+
+function toDbUrl(value: string): string {
+  const filePath = value.startsWith('file:') ? value.slice('file:'.length) : value
+  return `file:${resolve(filePath).replace(/\\/g, '/')}`
+}
+
+export function buildP5Paths(
+  env: Partial<NodeJS.ProcessEnv> = process.env,
+  p5Dir: string = P5_DIR,
+): { dbPath: string; workDir: string; resultsDir: string } {
+  return {
+    dbPath: toDbUrl(env.P5_DB_PATH || join(p5Dir, 'p5.db')),
+    workDir: resolve(env.P5_WORK_DIR || join(p5Dir, 'work')),
+    resultsDir: resolve(env.P5_RESULTS_DIR || join(p5Dir, 'results')),
+  }
+}
+
 export const CONFIG = {
   model: process.env.GLM_MODEL || 'deepseek-v4-flash',
   taskIds: ['A', 'B', 'C'] as const,
@@ -49,9 +70,7 @@ export const CONFIG = {
   escalateLimit: 3,
   maxRounds: 30,
   noProgressRounds: 5,
-  dbPath: 'file:<workspace>/agenthub/experiments/p5/p5.db',
-  workDir: '<workspace>/agenthub/experiments/p5/work',
-  resultsDir: '<workspace>/agenthub/experiments/p5/results',
+  ...buildP5Paths(),
   // 与 vitest testTimeout 同值（30min），globalDeadline 源头：run-one.ts → globalDeadline → execution.ts 硬判
   timeoutMs: 30 * 60 * 1000,
   // 暂停点罐头消息（Spec §6：混淆变量必须固定，报告写明）

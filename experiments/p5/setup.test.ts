@@ -20,7 +20,7 @@ vi.mock('@/lib/orchestrator', () => ({
   executeSingleAgent: env.exec,
 }))
 
-import { CONFIG } from './config'
+import { CONFIG, P5_DIR } from './config'
 import { assertCliConfigDir, detectPreflightError, ensureExperimentAgents, isValidModelId, preflightDecision, scrubInheritedProviderEnv, setupExperiment } from './setup'
 
 afterAll(() => {
@@ -117,8 +117,8 @@ describe('P9-乙 T4: 运行纪律硬化', () => {
     expect(() => assertCliConfigDir('C:/Users/example/.claude')).toThrow()        // 用户默认（正斜杠——原方案 fail-open 实锤反例）
     expect(() => assertCliConfigDir('~/.claude')).toThrow()                     // 家目录形态
     expect(() => assertCliConfigDir('C:\\Users\\p5fan\\.claude')).toThrow()     // 用户名恰含 p5 的击穿反例
-    expect(() => assertCliConfigDir('D:\\ai全栈挑战赛\\agenthub\\experiments\\p5\\.claude-cfg')).not.toThrow()
-    expect(() => assertCliConfigDir('<workspace>/agenthub/experiments/p5/.claude-cfg')).not.toThrow()
+    expect(() => assertCliConfigDir(join(P5_DIR, '.claude-cfg'))).not.toThrow()
+    expect(() => assertCliConfigDir(join(P5_DIR, '.claude-cfg').replace(/\\/g, '/'))).not.toThrow()
   })
   it('候选模型 ID 白名单校验（F2）', () => {
     expect(isValidModelId('xopdeepseekv4flash0731')).toBe(true)
@@ -143,13 +143,14 @@ describe('P9-乙 T5-1: scrubInheritedProviderEnv', () => {
     process.env.CLAUDE_CODE_EFFORT_LEVEL = 'max'
     process.env.CLAUDE_PID = '12060'
     // 豁免/无关变量
-    process.env.CLAUDE_CONFIG_DIR = '<workspace>/agenthub/experiments/p5/.claude-cfg'
+    const claudeCfg = join(P5_DIR, '.claude-cfg').replace(/\\/g, '/')
+    process.env.CLAUDE_CONFIG_DIR = claudeCfg
     process.env.GLM_MODEL_KEEP_TEST = 'keep-me'
     const scrubbed = scrubInheritedProviderEnv()
     for (const k of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL_NAME', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_PID'])
       expect(process.env[k]).toBeUndefined()
     // CLAUDE_CONFIG_DIR 是唯一保留的 CLAUDE_*（F3 断言与 CLI 子进程隔离目录依赖它）
-    expect(process.env.CLAUDE_CONFIG_DIR).toBe('<workspace>/agenthub/experiments/p5/.claude-cfg')
+    expect(process.env.CLAUDE_CONFIG_DIR).toBe(claudeCfg)
     expect(process.env.GLM_MODEL_KEEP_TEST).toBe('keep-me')
     expect(scrubbed).toContain('ANTHROPIC_AUTH_TOKEN')
     // 幂等：再跑一次不 throw、不再报同样的键
