@@ -37,7 +37,8 @@ jobs:
         env:
           DATABASE_URL: file:./dev.db
 
-      - run: npx vitest run
+      # npm test = vitest run --coverage；阈值在 vitest.config.ts，不能让 CI 绕过
+      - run: npm test
 
       - run: npx next build
         env:
