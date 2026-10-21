@@ -39,7 +39,8 @@ const SENSITIVE_PATTERNS = [
   /^vitest\.config\.[a-z]+$/,
   /^webpack\.config\.[a-z]+$/,
   // 任意目录层级的 .env / .env.* 都是部署边界；根目录前缀规则漏掉了 secrets/.env。
-  /(^|\/)\.env(\..*)?$/,
+  // Windows 文件系统不区分大小写，.ENV / .Env.Local 与 .env 是同一文件，必须同样判敏感。
+  /(^|\/)\.env(\..*)?$/i,
 ]
 
 /**

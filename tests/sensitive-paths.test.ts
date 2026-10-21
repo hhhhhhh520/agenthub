@@ -45,6 +45,13 @@ describe('isSensitivePath', () => {
       expect(isSensitivePath('secrets\\.env.local')).toBe(true)
     })
 
+    it('Windows 大小写：.ENV / .Env.Local 也是同一部署边界', () => {
+      expect(isSensitivePath('.ENV')).toBe(true)
+      expect(isSensitivePath('secrets/.ENV')).toBe(true)
+      expect(isSensitivePath('secrets/.Env.Local')).toBe(true)
+      expect(pickSensitive(['secrets/.ENV'])).toEqual(['secrets/.ENV'])
+    })
+
     it('node_modules 下任何文件都敏感', () => {
       expect(isSensitivePath('node_modules/some-pkg/index.js')).toBe(true)
       expect(isSensitivePath('node_modules/.bin/foo')).toBe(true)
