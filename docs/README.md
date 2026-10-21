@@ -18,7 +18,8 @@
 - [P3 #12 完成记录](design/handoff-2026-10-21-p3-12.md) — 四处 `transitionPhase` 返回值检查（`b017152`）；下一项 P3 #29
 - [安全/API 六项完成记录](design/handoff-2026-10-21-api-validation.md) — #5/#14/#15/#16/#17/#18（`b4fa42a`）；#3 保持已接受风险
 - [P3 #21–#27 交互完成记录](design/handoff-2026-10-21-ui-fixes.md) — 会话复位、权限入口、附件并发、setup/provider、Dialog 可达性、poller 刷新（`6198d62`）
-- [P3 #28 MCP DATABASE_URL 完成记录](design/handoff-2026-10-21-p3-28.md) — 主进程 DATABASE_URL 透传与相对路径绝对化（`2a71253`）；下一项 P3 #29
+- [P3 #28 MCP DATABASE_URL 完成记录](design/handoff-2026-10-21-p3-28.md) — 主进程 DATABASE_URL 透传与相对路径绝对化（`2a71253`）
+- [P3 剩余 7 项一次性修复交接](design/handoff-2026-10-21-remaining.md) — **下一段对话入口**：#29/#30/#31/#32/#33/#34/#36 的根因、修法、测试与验收
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 
 ## 参考资料
