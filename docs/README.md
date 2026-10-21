@@ -11,7 +11,8 @@
 - [对齐流程](design/alignment-flow-plan.md) — Orchestrator 智能编排对齐流程
 - [cc-connect Agent 参考](design/cc-connect-agent-reference.md) — cc-connect 架构借鉴
 - [权限模型 CLI 探针](design/permission-cli-probe-2026-10-20.md) — Claude 2.1.270 / OpenCode 2.0.27 双维度权限实测
-- [P2-03 完成记录](design/handoff-2026-10-20-p2-03.md) — stop/DELETE 单 DELETE 场景记录（`31c5946`）；Round 2 F5 并发 DELETE 仍未闭环，下一项 P2-07 见待办总表
+- [P2-03 完成记录](design/handoff-2026-10-20-p2-03.md) — stop/DELETE 单 DELETE 场景记录（`31c5946`）；Round 2 F5 并发 DELETE 仍未闭环
+- [P2-07 接续提示](design/handoff-2026-10-20-p2-07.md) — **当前下一项**：拿锁后重读 session 快照、测试与验收边界
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 
 ## 参考资料

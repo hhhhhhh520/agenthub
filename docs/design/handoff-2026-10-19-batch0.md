@@ -3,7 +3,7 @@
 > 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `61c7218`（嵌套 `.env` 敏感分类 + SSE body cancel 安全 + 恢复计划审批关联 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + OpenCode 清扫 hotfix + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `61c7218` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
 > 历史说明: P1-01/02 已闭环；P1-03 核心隔离已完成但 F4 资源清理尾项未闭环；P2-03（F5 并发 DELETE）与 P2-04（F2/F3/F6/R2）不能整体标 ✅；P2-06 已闭环。**当前下一项是 P2-07**，Round 2 补项见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v29
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 接续提示、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v29
 
 ## 1. 当前状态
 
