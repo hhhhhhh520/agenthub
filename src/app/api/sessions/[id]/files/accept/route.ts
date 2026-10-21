@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { writeFile, mkdir, readFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import { join, dirname, resolve } from 'path'
-import { isPathSafe } from '@/lib/path-safety'
+import { isPathRootSafe, isPathSafe } from '@/lib/path-safety'
 import { prisma } from '@/lib/db'
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -52,7 +52,14 @@ export async function POST(
   const normalizedPath = filePath.replace(/\\/g, '/')
 
   // baseDir 永远是 workspace 沙箱（target=project 已在上拒绝）
-  const baseDir = join(process.cwd(), 'workspaces', sessionId)
+  const workspaceRoot = join(process.cwd(), 'workspaces')
+  const baseDir = join(workspaceRoot, sessionId)
+
+  // #8 Round 6: workspaces/<sessionId> 是固定沙箱根，不能让根本身被
+  // junction 重定向到外部后再把外部目标当作新的合法 realpath。
+  if (!isPathRootSafe(workspaceRoot, process.cwd()) || !isPathRootSafe(baseDir, workspaceRoot)) {
+    return NextResponse.json({ error: 'Invalid file path' }, { status: 400 })
+  }
 
   // #3: 用 isPathSafe 替换原自证守卫（startsWith 无 sep 后缀，且 baseDir 被 sessionId 污染时自证无效）
   if (!isPathSafe(normalizedPath, baseDir)) {
@@ -101,9 +108,13 @@ export async function POST(
 
   try {
     await mkdir(dirname(fullPath), { recursive: true })
-    // mkdir 后复查：如果父目录在检查后被替换为 symlink，或创建过程跟随了
-    // symlink，必须在 writeFile 前拒绝，避免写到 workspace 外。
-    if (!isPathSafe(normalizedPath, baseDir)) {
+    // mkdir 后复查：如果父目录/固定根在检查后被替换为 symlink，或创建
+    // 过程跟随了 symlink，必须在 writeFile 前拒绝，避免写到 workspace 外。
+    if (
+      !isPathRootSafe(workspaceRoot, process.cwd()) ||
+      !isPathRootSafe(baseDir, workspaceRoot) ||
+      !isPathSafe(normalizedPath, baseDir)
+    ) {
       return NextResponse.json({ error: 'Invalid file path' }, { status: 400 })
     }
     await writeFile(fullPath, content, 'utf-8')

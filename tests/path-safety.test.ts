@@ -12,7 +12,7 @@ vi.mock('fs', async () => {
   }
 })
 
-import { isPathSafe } from '@/lib/path-safety'
+import { isPathRootSafe, isPathSafe } from '@/lib/path-safety'
 
 const WORK_DIR = path.resolve('/home/user/project')
 
@@ -147,6 +147,35 @@ describe('isPathSafe', () => {
     })
     expect(isPathSafe('newdir/file.ts', WORK_DIR)).toBe(true)
     expect(isPathSafe('../outside', WORK_DIR)).toBe(false)
+  })
+
+  it('isPathRootSafe 允许尚不存在的受管根', () => {
+    const workspaceRoot = path.join(WORK_DIR, 'workspaces')
+    vi.mocked(fs.lstatSync).mockImplementation(() => {
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    expect(isPathRootSafe(path.join(workspaceRoot, 's1'), workspaceRoot)).toBe(true)
+  })
+
+  it('isPathRootSafe 拒绝根本身是 symlink', () => {
+    const workspaceRoot = path.join(WORK_DIR, 'workspaces')
+    const sessionRoot = path.join(workspaceRoot, 's1')
+    vi.mocked(fs.lstatSync).mockImplementation((p: fs.PathLike) => {
+      if (String(p) === sessionRoot) {
+        return { isSymbolicLink: () => true } as unknown as fs.Stats
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    expect(isPathRootSafe(sessionRoot, workspaceRoot)).toBe(false)
+  })
+
+  it('isPathRootSafe 对非 ENOENT 读取失败 fail-closed', () => {
+    const workspaceRoot = path.join(WORK_DIR, 'workspaces')
+    const sessionRoot = path.join(workspaceRoot, 's1')
+    vi.mocked(fs.lstatSync).mockImplementation(() => {
+      throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+    })
+    expect(isPathRootSafe(sessionRoot, workspaceRoot)).toBe(false)
   })
 
   // ── workDir 含特殊字符 ──

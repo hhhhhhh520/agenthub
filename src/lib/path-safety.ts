@@ -62,6 +62,23 @@ export function isPathSafe(filePath: string, workDir: string): boolean {
 }
 
 /**
+ * 固定受管根校验：路径必须在 boundary 内，且自身不能是 symlink/junction。
+ *
+ * isPathSafe 会把 workDir 的 realpath 当作可信根；如果 workDir 本身被替换为
+ * junction，它会把外部目标当成新的合法边界。files API 的 workspaces/<sessionId>
+ * 是固定沙箱，必须在入口拒绝根本身重定向。根不存在（首次创建）允许。
+ */
+export function isPathRootSafe(rootPath: string, boundary: string): boolean {
+  if (!isPathSafe(rootPath, boundary)) return false
+  try {
+    return !lstatSync(rootPath).isSymbolicLink()
+  } catch (err) {
+    // 根尚未创建是正常初始化路径；其他读取失败不能证明安全，fail-closed。
+    return (err as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+}
+
+/**
  * list_files 目录校验：dir 相对 workDir 解析后必须落在 workDir 内。
  * 与裸 startsWith(WORK_DIR) 的区别：拒绝前缀同族目录（如 /a/b-evil 对 /a/b）。
  */

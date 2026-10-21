@@ -2,16 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const { mockReadFile, mockFindUnique, mockRealpathSync } = vi.hoisted(() => ({
+const { mockReadFile, mockFindUnique, mockRealpathSync, mockLstatSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockFindUnique: vi.fn(),
   mockRealpathSync: vi.fn(),
+  mockLstatSync: vi.fn(),
 }))
 
 vi.mock('fs/promises', () => ({ readFile: mockReadFile }))
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof fs>('fs')
-  return { ...actual, realpathSync: mockRealpathSync }
+  return { ...actual, realpathSync: mockRealpathSync, lstatSync: mockLstatSync }
 })
 vi.mock('@/lib/db', () => ({ prisma: { session: { findUnique: mockFindUnique } } }))
 
@@ -32,6 +33,9 @@ beforeEach(() => {
   mockFindUnique.mockResolvedValue({ id: VALID_SESSION_ID })
   mockReadFile.mockResolvedValue(Buffer.from('hello'))
   mockRealpathSync.mockImplementation((p: fs.PathLike) => String(p))
+  mockLstatSync.mockImplementation(() => {
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  })
 })
 
 describe('GET /api/sessions/[id]/files/[filename]', () => {
@@ -72,6 +76,21 @@ describe('GET /api/sessions/[id]/files/[filename]', () => {
     mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
     const res = await GET(makeReq(), params())
     expect(res.status).toBe(404)
+  })
+
+  it('returns 400 when the fixed session workspace root is an external junction', async () => {
+    const baseDir = path.join(process.cwd(), 'workspaces', VALID_SESSION_ID)
+    mockLstatSync.mockImplementation((p: fs.PathLike) => {
+      if (String(p) === baseDir) {
+        return { isSymbolicLink: () => true } as unknown as fs.Stats
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+
+    const res = await GET(makeReq(VALID_SESSION_ID, 'private.txt'), params(VALID_SESSION_ID, 'private.txt'))
+
+    expect(res.status).toBe(400)
+    expect(mockReadFile).not.toHaveBeenCalled()
   })
 
   it('returns 400 and does not read a file symlink escaping workspace', async () => {

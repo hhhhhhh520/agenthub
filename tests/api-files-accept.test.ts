@@ -3,12 +3,13 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 // Mock fs/promises
-const { mockReadFile, mockWriteFile, mockMkdir, mockFindUnique, mockRealpathSync } = vi.hoisted(() => ({
+const { mockReadFile, mockWriteFile, mockMkdir, mockFindUnique, mockRealpathSync, mockLstatSync } = vi.hoisted(() => ({
   mockReadFile: vi.fn(),
   mockWriteFile: vi.fn(),
   mockMkdir: vi.fn(),
   mockFindUnique: vi.fn(),
   mockRealpathSync: vi.fn(),
+  mockLstatSync: vi.fn(),
 }))
 
 vi.mock('fs/promises', () => ({
@@ -19,7 +20,7 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof fs>('fs')
-  return { ...actual, realpathSync: mockRealpathSync }
+  return { ...actual, realpathSync: mockRealpathSync, lstatSync: mockLstatSync }
 })
 
 vi.mock('@/lib/db', () => ({
@@ -49,6 +50,9 @@ beforeEach(() => {
   mockMkdir.mockResolvedValue(undefined)
   mockWriteFile.mockResolvedValue(undefined)
   mockRealpathSync.mockImplementation((p: fs.PathLike) => String(p))
+  mockLstatSync.mockImplementation(() => {
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  })
   // 默认：session 存在
   mockFindUnique.mockResolvedValue({ id: VALID_SESSION_ID, projectDir: '' })
 })
@@ -171,6 +175,23 @@ describe('POST /api/sessions/[id]/files/accept', () => {
     mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
 
     const res = await POST(makeReq({ filePath: 'link/new.txt', content: 'hello' }), params())
+    expect(res.status).toBe(400)
+    expect(mockWriteFile).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the fixed session workspace root is an external junction', async () => {
+    const baseDir = path.join(process.cwd(), 'workspaces', VALID_SESSION_ID)
+    mockLstatSync.mockImplementation((p: fs.PathLike) => {
+      if (String(p) === baseDir) {
+        return { isSymbolicLink: () => true } as unknown as fs.Stats
+      }
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+    })
+    mockReadFile.mockReset()
+    mockReadFile.mockRejectedValueOnce(new Error('ENOENT'))
+
+    const res = await POST(makeReq({ filePath: 'outside-write.txt', content: 'hello' }), params())
+
     expect(res.status).toBe(400)
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
