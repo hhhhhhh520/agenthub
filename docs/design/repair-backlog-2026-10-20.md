@@ -321,16 +321,16 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 10 | ✅ | `arg-safety.ts:8`、`opencode-adapter.ts`、`process-registry.ts` | 清理由 `4e869a9` 补齐：MCP 临时文件 0o600 + spawn 失败 unlink；OpenCode owner/send 失败清理 XDG 与 agent 文件。POSIX 字符仍 Windows-only 接受；Windows ACL 仍依赖 `%TEMP%`/profile ACL（§5 已接受残余） |
 | 12 | ✅ | `alignment.ts:224,606`、`execution.ts:828`、`chat-router.ts:306` | 已由 `b017152` 闭环：PM/QA phase 失败即报错返回；execution/chat-router done 失败不发布成功总结，发 error + `awaiting_user_input: escalate`。保留 `recordTrace`/CAS 拒绝回执；四条失败回归 + 两条正常路径守卫 |
 
-| 14 | ✅ | `attachments/route.ts` | `b4fa42a` 初次修复；**Round 7 重开**：请求上限只信 Content-Length，正文仍全量解析。`0a6aacd` 按实际读取字节截断，超限 cancel 源流并 413；54MB 路由回归通过 |
+| 14 | 🟡 | `attachments/route.ts` | `b4fa42a` 初次修复；**Round 7 重开**：请求上限只信 Content-Length，正文仍全量解析。`0a6aacd` 按实际读取字节截断，超限 cancel 源流并 413；54MB 路由回归通过，待独立复核 |
 | 15 | ✅ | `chat/route.ts` | 已由 `b4fa42a` 闭环：`POST /chat` 校验 replyToId 存在且属于当前会话，非字符串 400 |
 | 16 | ✅ | `redo/route.ts` | 已由 `b4fa42a` 闭环：body/description 类型在 `transitionPhase` 前校验；非字符串 400 |
 | 17 | ✅ | `sessions/route.ts` | 已由 `b4fa42a` 闭环：private agentIds 在 create 前校验数组/非空/全部存在 |
 | 18 | ✅ | `messages/[messageId]/route.ts` | 已由 `b4fa42a` 闭环：Pin 上限 count+update 移入事务；11 并发最多 10 成功 |
 | 19 | ✅ | `event-log.ts`、events route | 已由 P2-12 `1de1fbc` 闭环：per-session 共享写链按 seq 串行落库；SSE 不再跨过 2；跨实例 seq 仍非 DB 原子 |
-| 21 | ✅ | `use-chat.ts` | `6198d62` 初次修复；**Round 7 重开**：旧加载响应覆盖新会话、旧 finally 清新 loading。`8c2b4c3` 加独立 abort + 请求世代 + controller 所有权；真实浏览器两场景通过 |
+| 21 | 🟡 | `use-chat.ts` | `6198d62` 初次修复；**Round 7 重开**：旧加载响应覆盖新会话、旧 finally 清新 loading。`8c2b4c3` 加独立 abort + 请求世代 + controller 所有权；真实浏览器两场景通过，待独立复核 |
 | 22 | ✅ | `projects/[id]/page.tsx` | 已由 `6198d62` 闭环：接入 permission_request/cancel，项目页可允许/拒绝 |
 | 23 | ✅ | `attachment-input.tsx` | 已由 `6198d62` 闭环：函数式占位/合并，并发上传不覆盖，上传中禁止发送 |
-| 24 | ✅ | `setup-wizard.tsx` | `6198d62` 初次修复；**Round 7 重开**：测试按钮未发送草稿、后端只检测 CLI。`84056cd` 发送 apiKey/model/baseUrl 并做真实最小生成；本地回环 OpenAI 路由回归通过 |
+| 24 | 🟡 | `setup-wizard.tsx` | `6198d62` 初次修复；**Round 7 重开**：测试按钮未发送草稿、后端只检测 CLI。`84056cd` 发送 apiKey/model/baseUrl 并做真实最小生成；本地回环 OpenAI 路由回归通过，待独立复核 |
 | 25 | ✅ | `provider-import-dialog.tsx` | 已由 `6198d62` 闭环：await 导入成功后再提示/关闭；调用方检查状态 |
 | 26 | ✅ | `chat-area.tsx` 等 | 已由 `6198d62` 闭环：diff 失败 toast、Dialog role/aria/焦点、移动端侧栏入口；+ 添加 Agent 已有 onClick |
 | 27 | ✅ | `task-poller.ts` | 已由 `6198d62` 闭环：比较 description/dependencies/assignedAgentId/trace 并刷新 |
@@ -340,7 +340,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 31 | ✅ | `prisma/migrations` | 已由 `5504b60` 闭环：旧 content 回填 rawContent，CURRENT_TIMESTAMP 回填 updatedAt；仅 v2 migration |
 | 32 | ✅ | `experiments/p5/config.ts:52`、`run.test.ts` | 已由 `fdc963a` 闭环：路径从 experiments/p5 派生，P5_* env 可覆盖；harness metrics 写临时目录；README 补直跑配置 |
 | 33 | ✅ | `.github/workflows/ci.yml` | 已由 `da28bae` 闭环：CI 改 `npm test`（coverage 阈值生效），新增 workflow 守卫 |
-| 34 | ✅ | `README.md`、roadmap、CLAUDE.md | 本次文档提交：33 路由、1547 测试、CI coverage、E2E 命令/skip 条件、Node 20.19+ 口径已对齐 |
+| 34 | ✅ | `README.md`、roadmap、CLAUDE.md | 33 路由、CI coverage、E2E 命令/skip 条件、Node 20.19+ 口径已对齐；测试计数随后续 Round 7 更新为 1561 |
 | 36 | ✅ | `message-parser.ts:30,34,46` | 已由 `970f0a0` 闭环：CRLF、真实 1-based 行号、metadata 首个等号切分 |
 
 ---
@@ -451,6 +451,6 @@ npx eslint <changed-files>
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
 - Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 写链已用 `1de1fbc` 补齐，旧 P3 #19 同步闭环。
-- Round 6 复核修正：P2-08 的并发取消与容量驱逐由 `f873181` 补齐；P2-11 初始化发布窗口由 `4092e99` 补齐；P3 #8 固定根 junction 由 `6e7ea3a` 补齐。P3 #9 SVG inline 由 `9931fa8` 补齐；P3 #10 临时配置清理由 `4e869a9` 补齐；P3 #12 transitionPhase 返回值检查由 `b017152` 补齐；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环；P3 #29–#36 由 `1c9f93b`/`36fd0d6`/`970f0a0`/`5504b60`/`fdc963a`/`da28bae` 及本轮文档提交闭环。**P1/P2 全闭环；P3 可执行项全部闭环，仅 #3 按用户决定保持已接受风险**。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 6 复核修正：P2-08 的并发取消与容量驱逐由 `f873181` 补齐；P2-11 初始化发布窗口由 `4092e99` 补齐；P3 #8 固定根 junction 由 `6e7ea3a` 补齐。P3 #9 SVG inline 由 `9931fa8` 补齐；P3 #10 临时配置清理由 `4e869a9` 补齐；P3 #12 transitionPhase 返回值检查由 `b017152` 补齐；P3 #5/#14/#15/#16/#17/#18 由 `b4fa42a` 闭环；P3 #21–#27 由 `6198d62` 闭环；P3 #28 由 `2a71253` 闭环；P3 #29–#36 由 `1c9f93b`/`36fd0d6`/`970f0a0`/`5504b60`/`fdc963a`/`da28bae` 及本轮文档提交闭环。**Round 7 复核重开 #14/#21/#24**：已分别由 `0a6aacd`/`8c2b4c3`/`84056cd` 补修，待独立复核。**P1/P2 全闭环；P3 27 项均有修复提交，仅 #3 按用户决定保持已接受风险**。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
