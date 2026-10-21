@@ -278,6 +278,9 @@ export async function handleOrchestratorDecision(
       if (!(await handleArchitectPlan(message, sessionId, agents, sendEvent, { recordTrace: !(decisionRecorded && decisionApplied) }))) return
       break
     case 'align_qa':
+      // P2-04 F10: 用户明确“确认执行”但模型路由到 Q&A 时也要保存批准；
+      // 否则 QA 无问题后 transitionToExecution 会再次要求确认。后续 user 消息仍会使旧批准失效。
+      await recordPlanApproval(sessionId, message)
       // P4 T1: recordTrace 传 !(decisionRecorded && decisionApplied);内部 QA直发exec 恒 recordExecuteTrace:true(代码驱动)
       await handleAgentQA(message, sessionId, agents, sendEvent, globalDeadline, { recordTrace: !(decisionRecorded && decisionApplied) })
       break

@@ -208,6 +208,35 @@ describe('chat recovery route — P2-04 未获批计划不得自动执行', () =
     expect(rows.some(r => r.role === 'system' && r.rawContent === `[PLAN_APPROVED]plan-${planId}`)).toBe(true)
   })
 
+  it('F10: 明确确认被路由到 Q&A 时保存批准，QA 无问题后直接执行', async () => {
+    const planId = buildPlanId(['t1'])
+    const rows: Array<{ role: string; agentId?: string | null; rawContent: string }> = [
+      { role: 'user', rawContent: '做一个功能', agentId: null },
+      { role: 'agent', agentId: '架构师', rawContent: `plan summary\n\n> 计划编号：plan-${planId}` },
+    ]
+    mocks.messageFindMany.mockImplementation(async () => [...rows])
+    mocks.messageCreate.mockImplementation(async ({ data }: { data: { role: string; agentId?: string | null; rawContent: string } }) => {
+      rows.push({ role: data.role, agentId: data.agentId ?? null, rawContent: data.rawContent })
+      return { id: 'm1' }
+    })
+    mocks.getOrchestratorDecision.mockResolvedValue({
+      decision: { action: 'align_qa', message: '', reason: '先让 Agent 确认问题' },
+      sessionId: 'orch',
+    })
+    mocks.executeSingleAgent.mockResolvedValue({ result: '无问题' })
+
+    const request = new Request('http://localhost/api/sessions/s1/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: '确认执行' }),
+    })
+    const res = await POST(request, params)
+    await res.text()
+
+    expect(mocks.handleExecution).toHaveBeenCalledTimes(1)
+    expect(rows.some(r => r.role === 'system' && r.rawContent === `[PLAN_APPROVED]plan-${planId}`)).toBe(true)
+  })
+
   it('F2: 计划后的明确拒绝不能当作批准，不启动执行', async () => {
     const refusal = '不同意，先不要执行，我要修改方案'
     const planId = buildPlanId(['t1'])
