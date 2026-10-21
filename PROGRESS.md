@@ -297,13 +297,14 @@
 | P2-11 Round 6：owner 初始化发布窗口（commit 4092e99） | 根因：adapter 先 mkdir 公开 agenthub-oc-*、后写 owner；窗口内其他实例 sweep 把无 marker 新目录当历史孤儿删除；owner 写失败被吞后继续使用无保护目录。修复：无 marker 目录按 24h 发布宽限期保留，超过后才清理；owner marker 写失败 fail-fast，不再继续 spawn。新增新目录保留、owner 写失败拒绝、历史目录仍可清理回归；去掉宽限期、恢复吞错分别精确红。全量 129 files / 1481 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 | P2-12 Round 5：per-session 共享写链（commit 1de1fbc） | 根因：seq 计数器已按 session 共享，但每个 logger 仍有独立 writeChain；A 的 1、2 未落完时 B 的 3 可先落库，形成 1、3、2。SSE cursor 到 3 后 2 永远不补发。修复：writeChain 放入 SessionSeqState，所有 logger 按 seq 串行入队；flush 只等待调用时快照，超时仍保留 poisoned 状态。新增实际落库顺序与 SSE 补发 id 2 回归；变异验证恢复 per-logger 写链后两条测试精确红。全量 127 files / 1469 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 | P3 #6：permission requestId 归属校验（commit 2339123） | 根因：permission route 只查 session 存在，respondPermissionByRequestId 只按 requestId 反查 entry；知道其他会话 requestId 时可跨会话批准/拒绝工具请求，并提前消费映射。修复：方法增加 expectedOwnerSessionId，比较 entry.ownerSessionId 后才删除映射/唤醒 pending；错误 session 返回 false 且不消费。route 传入当前 sessionId。新增跨会话拒绝与正确会话仍可响应回归；变异验证移除归属检查后测试精确红。全量 127 files / 1470 passed / 3 skipped，build ✓，改动文件 eslint 0 error（3 条既有 warning） | 2026-10-21 |
+| P3 #9：attachments SVG inline（commit 9931fa8） | 根因：上传白名单允许 image/svg+xml，下载路由把所有 image/* 设为 inline，且无 nosniff；含 script 的 SVG 可同源执行。修复：规范化 MIME；SVG 强制 Content-Disposition: attachment，并加 X-Content-Type-Options: nosniff 与 CSP sandbox；普通图片仍 inline。新增 SVG/PNG 回归；把 SVG 改回 inline 后测试精确红。全量 130 files / 1488 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 | P3 #8：files symlink 路径逃逸（commit b24a6d7 + 6e7ea3a） | 根因：isPathSafe 对不存在目标只做 resolve+startsWith，父目录 symlink 可把 accept 新文件写到 workspace 外；download 只用 join+readFile，workspace 内文件 symlink 可读取外部文件。修复：isPathSafe 向上找最近存在祖先并 realpath，悬空 symlink fail-closed；accept 在 mkdir 后 writeFile 前复查；download 读取前 realpath 校验。Round 6 补固定根 junction：新增 isPathRootSafe，workspaces/<sessionId> 自身不能是 symlink/junction；accept/download 入口和 accept mkdir 后复查。新增父目录/悬空 symlink、accept 写入与复检、download、根 junction、缺失根、EACCES fail-closed 回归；父目录、download、post-mkdir、根 symlink 四次变异均精确红。审计真实 Windows junction fixture 4/4 通过。全量 129 files / 1486 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 
 ### ⏳ 进行中
 
 | 任务 | 状态 |
 |------|------|
-| （无——Round 6 的 P2-08、P2-11、P3 #8 根 junction 已闭环；下一项 P3 #9） | — |
+| （无——P3 #9 已闭环；下一项 P3 #10） | — |
 
 ### 📋 待办（2026-09-20 更新）
 
