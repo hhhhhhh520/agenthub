@@ -11,11 +11,11 @@
  * （src/instrumentation.ts）——仅挂 UI 加载会让出清与 UI 访问脱钩（生命周期审查 🟡1.1）。
  */
 import { tmpdir } from 'node:os'
-import { readdirSync, rmSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { prisma } from '@/lib/db'
 import { sweepAgentClaudeConfigDirs, claudeConfigDir } from '@/lib/adapter/claude-code-env'
-import { opencodeCfgDirName } from '@/lib/adapter/opencode-adapter'
+import { opencodeCfgDirName, OPENCODE_OWNER_FILE } from '@/lib/adapter/opencode-adapter'
 import { processRegistry } from '@/lib/adapter/process-registry'
 import { getOrchestratorAgent } from '@/lib/orchestrator'
 
@@ -44,9 +44,30 @@ function sweepOrphanOpencodeXdgDirs(activeAgentIds: string[], activeManagedDirs:
     for (const e of readdirSync(tmpdir(), { withFileTypes: true })) {
       if (!e.isDirectory() || !e.name.startsWith('agenthub-oc-')) continue
       if (active.has(e.name)) continue
+      // P2-11: 同一 tmpdir 上可能还有另一个 AgentHub 实例；owner PID 存活时
+      // 本实例不能删它的 XDG 目录。owner 是本进程但不在 active 集合，说明是
+      // 本进程遗留的孤儿，可以清理。
+      if (isOtherInstanceOwnerAlive(e.name)) continue
       rmSync(join(tmpdir(), e.name), { recursive: true })
       out.push(e.name)
     }
   } catch { /* tmp unreadable: best-effort */ }
   return out
+}
+
+function isOtherInstanceOwnerAlive(dirName: string): boolean {
+  try {
+    const raw = readFileSync(join(tmpdir(), dirName, OPENCODE_OWNER_FILE), 'utf-8')
+    const parsed = JSON.parse(raw) as { pid?: unknown }
+    const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return false
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'EPERM'
+    }
+  } catch {
+    return false
+  }
 }

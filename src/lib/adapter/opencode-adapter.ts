@@ -75,6 +75,8 @@ export function opencodeAgentName(agentId: string, isolationScope: string): stri
  * hash」拍板。传入 isolationScope 时追加会话/配置隔离；不传时保留旧 agent-only 语义
  * （供 sweep 识别历史目录）。
  */
+export const OPENCODE_OWNER_FILE = '.agenthub-owner.json'
+
 export function opencodeCfgDirName(agentId: string, isolationScope?: string): string {
   const key = isolationScope ? `${agentId}\0${isolationScope}` : agentId
   return 'agenthub-oc-' + createHash('sha256').update(key).digest('hex').slice(0, 12)
@@ -291,6 +293,17 @@ export class OpenCodeAdapter implements AgentAdapter {
     const configDir = join(tmpdir(), opencodeCfgDirName(this.agentId || 'default', this.isolationScope()))
     const opencodeDir = join(configDir, 'opencode')
     mkdirSync(opencodeDir, { recursive: true, mode: 0o700 })
+    // P2-11: 其他 AgentHub 实例的 sweep 通过 owner PID 判断目录是否仍在使用。
+    // 本进程重启/崩溃后旧目录不再有存活 owner，sweep 才允许清理。
+    try {
+      writeFileSync(
+        join(configDir, OPENCODE_OWNER_FILE),
+        JSON.stringify({ pid: process.pid, updatedAt: Date.now() }),
+        { encoding: 'utf-8', mode: 0o600 },
+      )
+    } catch {
+      // owner 标记写失败不阻塞 CLI；sweep 侧会按无 owner/死 owner 处理。
+    }
 
     // 读取全局配置（providers 等）并合并
     let globalConfig: Record<string, unknown> = {}

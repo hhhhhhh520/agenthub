@@ -14,7 +14,7 @@ vi.mock('@/lib/adapter/process-registry', () => ({
   },
 }))
 
-import { OpenCodeAdapter } from '@/lib/adapter/opencode-adapter'
+import { OpenCodeAdapter, OPENCODE_OWNER_FILE } from '@/lib/adapter/opencode-adapter'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -304,6 +304,8 @@ describe('OpenCodeAdapter', () => {
 
       expect(defaultCfg.managedAgentFile).toBe(defaultPath)
       expect(defaultCfg.managedConfigDir).toBe(defaultCfg.env.XDG_CONFIG_HOME)
+      const owner = JSON.parse(readFileSync(join(defaultCfg.managedConfigDir!, OPENCODE_OWNER_FILE), 'utf8'))
+      expect(owner.pid).toBe(process.pid)
     } finally {
       for (const dir of xdgDirs) {
         try { rmSync(dir, { recursive: true, force: true }) } catch {}

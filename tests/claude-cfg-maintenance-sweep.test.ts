@@ -33,6 +33,7 @@ vi.mock('@/lib/adapter/claude-code-env', () => ({
 
 vi.mock('@/lib/adapter/opencode-adapter', () => ({
   opencodeCfgDirName: (id: string) => 'agenthub-oc-' + id,
+  OPENCODE_OWNER_FILE: '.agenthub-owner.json',
 }))
 
 vi.mock('@/lib/adapter/process-registry', () => ({
@@ -42,7 +43,7 @@ vi.mock('@/lib/adapter/process-registry', () => ({
 }))
 
 import { sweepWithCurrentConfigs } from '@/lib/services/claude-cfg-maintenance'
-import { opencodeCfgDirName } from '@/lib/adapter/opencode-adapter'
+import { opencodeCfgDirName, OPENCODE_OWNER_FILE } from '@/lib/adapter/opencode-adapter'
 
 describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
   beforeEach(() => {
@@ -86,6 +87,41 @@ describe('sweepWithCurrentConfigs — OpenCode XDG 目录出清', () => {
     expect(existsSync(orphanDir)).toBe(false)
     expect(existsSync(unrelatedDir)).toBe(true)
     expect(removed).toEqual(['agenthub-oc-orphan-123'])
+  })
+
+  it('P2-11: 其他实例 owner 进程仍存活时保留目录', async () => {
+    const otherOwnerPid = 424242
+    const otherInstanceDir = join(h.root, 'agenthub-oc-other-instance')
+    mkdirSync(otherInstanceDir, { recursive: true })
+    writeFileSync(join(otherInstanceDir, OPENCODE_OWNER_FILE), JSON.stringify({ pid: otherOwnerPid }))
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: number | string) => {
+      if (pid === otherOwnerPid && signal === 0) return true
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+    }) as typeof process.kill)
+    try {
+      const removed = await sweepWithCurrentConfigs()
+      expect(existsSync(otherInstanceDir)).toBe(true)
+      expect(removed).not.toContain('agenthub-oc-other-instance')
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('P2-11: owner 进程已退出时清理目录', async () => {
+    const deadOwnerPid = 424243
+    const staleInstanceDir = join(h.root, 'agenthub-oc-stale-instance')
+    mkdirSync(staleInstanceDir, { recursive: true })
+    writeFileSync(join(staleInstanceDir, OPENCODE_OWNER_FILE), JSON.stringify({ pid: deadOwnerPid }))
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((() => {
+      throw Object.assign(new Error('no such process'), { code: 'ESRCH' })
+    }) as typeof process.kill)
+    try {
+      const removed = await sweepWithCurrentConfigs()
+      expect(existsSync(staleInstanceDir)).toBe(false)
+      expect(removed).toContain('agenthub-oc-stale-instance')
+    } finally {
+      killSpy.mockRestore()
+    }
   })
 
   it('P1-03: 保留 ProcessRegistry 正在使用的 per-session 目录', async () => {
