@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`cec556f`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`126 files / 1464 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`325d32d`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`126 files / 1465 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态、P2-11、P2-12 仍重开，P3 #19 随之重开。剩余 P1-03 异常终态、P2-11/12 与旧 P3。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11、P2-12 仍重开，P3 #19 随之重开。剩余 P2-11/12 与旧 P3。
 
 ---
 
@@ -62,7 +62,7 @@
 
 ---
 
-## 2. P1（P1-01/02 已闭环；P1-03 正常 F4 已闭环，异常终态重开）
+## 2. P1（P1-01/02/03 已闭环）
 
 ### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
@@ -150,10 +150,10 @@ return { ok: true, files: [...snapshot.files].filter(f => !before.has(f)) }
 
 ---
 
-### ⚠️ P1-03 OpenCode 不同会话覆盖同一权限文件（核心隔离与正常 F4 已闭环；异常终态待补）
+### ✅ P1-03 OpenCode 不同会话覆盖同一权限文件
 
-**状态：** 核心隔离 ✅ 已修（commit `ae39e00`）；Round 2 F4 正常成功收尾由 `d6ef4a0` 闭环：exit 先于 stdout.close 时 cleanupEntry 记录 managedCleanupPending，send 正常收尾用当前 entry 引用补做 md/XDG 最终删除。P2-05 已由 `a24ca60` 修复。
-**Round 5 R5-03：** 认证等永久失败在 `exit → stdout.close` 顺序下仍遗留 md/XDG；永久失败分支用 registry 重新查 entry，exit handler 已删除时拿不到原始 entry。该项重新打开，见 `review-round5-error-cleanup.test.ts`。
+**状态：** ✅ 已闭环（commit `ae39e00` + `d6ef4a0` + `325d32d`）。核心隔离已修；Round 2 F4 正常成功收尾由 `d6ef4a0` 闭环；Round 5 R5-03 永久失败由 `325d32d` 补齐：`send` 保存 `lastEntry`，永久失败/取消/重试耗尽终态都用原 entry 引用 `finalizeManagedCleanup`，exit handler 删除 registry 后仍能删除 md/XDG。新增永久失败 exit→stdout.close 回归；变异验证移除 finalize 后测试精确红。
+**位置：** `src/lib/adapter/process-registry.ts`、`src/lib/adapter/opencode-adapter.ts`
 **旧编号：** 原 36 项 #13（原“未修”，现已闭环）；审查报告 P1 #4
 **位置：**
 - `src/lib/adapter/opencode-adapter.ts:149` `ensureAgentConfig`
@@ -389,7 +389,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 12. ~~P2-09 Agent 创建取消~~（`a73f2d7` 已闭环）
 13. ~~P2-10 OpenCode 私聊只读提示~~（`a45921a` 已闭环）
 14. ~~P2-13 同步清理前缀吞 TimeoutError~~（`cec556f` 已闭环）
-15. **P1-03 永久失败 managed 资源最终清理**（Round 5 重开）
+15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
 16. **P2-11 send/retry 生命周期资源引用**（Round 5 重开）
 17. **P2-12 per-session 写队列 + 旧 #19**（Round 5 重开）
 18. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
@@ -414,7 +414,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `126 files / 1464 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `126 files / 1465 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -441,7 +441,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态、P2-11、P2-12 仍重开；旧 P3 #19 随之重开。
-- 当前剩余：P1-03 永久失败清理、P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11、P2-12 仍重开；旧 P3 #19 随之重开。
+- 当前剩余：P2-11 retry 资源引用、P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
