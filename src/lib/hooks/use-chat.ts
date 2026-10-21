@@ -1,6 +1,7 @@
 'use client'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { createSeqGate, recordLastSeq, loadLastSeq } from '@/lib/events-replay'
+import { createRequestEpoch } from '@/lib/hooks/latest-request'
 
 interface Attachment {
   id: string
@@ -55,20 +56,40 @@ export function useChat(sessionId: string | null) {
   const [thinking, setThinking] = useState<Record<string, string>>({})
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const loadAbortRef = useRef<AbortController | null>(null)
+  const requestEpochRef = useRef(createRequestEpoch())
+  const sessionIdRef = useRef<string | null>(sessionId)
+  sessionIdRef.current = sessionId
   const seqGateRef = useRef(createSeqGate(0))
   const streamBufferRef = useRef<Record<string, string>>({})
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const loadMessages = useCallback(async () => {
     if (!sessionId) return
-    const res = await fetch(`/api/sessions/${sessionId}/messages`)
-    const data = await res.json()
-    setMessages(data)
+    const requestId = requestEpochRef.current.next()
+    loadAbortRef.current?.abort()
+    const controller = new AbortController()
+    loadAbortRef.current = controller
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/messages`, { signal: controller.signal })
+      const data = await res.json()
+      // 迟到响应可能属于已切走的会话；只有最后一次请求允许写 messages。
+      if (!requestEpochRef.current.isCurrent(requestId)) return
+      setMessages(data)
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') {
+        console.warn('[useChat] loadMessages failed:', err)
+      }
+    } finally {
+      if (loadAbortRef.current === controller) loadAbortRef.current = null
+    }
   }, [sessionId])
 
   // §3.1: 事件分发统一入口——POST chat 流（首屏实时）与 EventSource 重放流共用。
   // 持久化事件（带 seq）经单调门去重（双通道同帧只处理一次），游标跨刷新恢复。
   const applyEvent = useCallback((event: SSEEvent) => {
+    // 旧会话的 POST 流/节流定时器可能在切换后才把事件送达，不能写入新会话。
+    if (sessionIdRef.current !== sessionId) return
     if (!seqGateRef.current.accept(event.seq)) return
     if (event.seq !== undefined && sessionId) recordLastSeq(sessionId, event.seq)
 
@@ -176,7 +197,9 @@ export function useChat(sessionId: string | null) {
       streamBufferRef.current[event.agentId] =
         (streamBufferRef.current[event.agentId] || '') + event.content
       if (!streamTimerRef.current) {
+        const timerSessionId = sessionId
         streamTimerRef.current = setTimeout(() => {
+          if (sessionIdRef.current !== timerSessionId) return
           const snapshot = { ...streamBufferRef.current }
           streamBufferRef.current = {}
           streamTimerRef.current = null
@@ -197,6 +220,9 @@ export function useChat(sessionId: string | null) {
   useEffect(() => {
     abortRef.current?.abort()
     abortRef.current = null
+    loadAbortRef.current?.abort()
+    loadAbortRef.current = null
+    requestEpochRef.current.invalidate()
     if (streamTimerRef.current) {
       clearTimeout(streamTimerRef.current)
       streamTimerRef.current = null
@@ -248,6 +274,7 @@ export function useChat(sessionId: string | null) {
 
     const controller = new AbortController()
     abortRef.current = controller
+    const isCurrentRequest = () => abortRef.current === controller
 
     try {
       const res = await fetch(`/api/sessions/${sessionId}/chat`, {
@@ -258,6 +285,7 @@ export function useChat(sessionId: string | null) {
       })
 
       if (!res.ok) {
+        if (!isCurrentRequest()) return
         let errorMsg = `请求失败 (${res.status})`
         try {
           const errData = await res.json()
@@ -287,6 +315,7 @@ export function useChat(sessionId: string | null) {
         buffer = lines.pop() || ''
 
         for (const line of lines) {
+          if (!isCurrentRequest()) return
           if (!line.startsWith('data: ')) continue
           let event: SSEEvent
           try {
@@ -300,6 +329,7 @@ export function useChat(sessionId: string | null) {
         }
       }
     } catch (err) {
+      if (!isCurrentRequest()) return
       if ((err as Error).name !== 'AbortError') {
         console.error('Chat error:', err)
         setMessages(prev => [...prev, {
@@ -310,8 +340,11 @@ export function useChat(sessionId: string | null) {
         }])
       }
     } finally {
-      setLoading(false)
-      abortRef.current = null
+      // 只有仍持有当前 controller 的请求才能收尾；旧请求不能清掉新请求的 loading/停止句柄。
+      if (abortRef.current === controller) {
+        setLoading(false)
+        abortRef.current = null
+      }
     }
   }, [sessionId, applyEvent])
 
