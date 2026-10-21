@@ -1,5 +1,6 @@
 import { PrismaClient } from '../src/generated/prisma/client'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
+import { markSeedFailure } from './seed-utils'
 
 const adapter = new PrismaLibSql({
   url: process.env.DATABASE_URL || 'file:./dev.db',
@@ -138,5 +139,5 @@ async function main() {
 }
 
 main()
-  .catch(console.error)
+  .catch(markSeedFailure)
   .finally(() => prisma.$disconnect())
