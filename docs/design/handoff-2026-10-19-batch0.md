@@ -1,9 +1,9 @@
 # Batch 0 交接：锁队列、统一释放、取消链路
 
-> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `52d66c9`（done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `52d66c9` 之后）
+> 创建时间: 2026-10-19 | 分支: master | 代码 HEAD: `4a7efec`（`.ENV` 大小写 + done 恢复审批 + 结构化计划批准 + 并发 DELETE 所有权 + 拿锁后会话快照重读 + 嵌套 `.env` 敏感分类 + SSE body cancel 安全 + stop/delete deleting 屏障 + regenerate 取消安全 + timeout 有界收尾 + Claude MDS 隔离 + OpenCode 会话隔离 + 主批次工具白名单 + 审计内容证据 + 结果发布门禁 + 双维度权限 + CLI 探针）；文档：本次修复文档提交（commit `4a7efec` 之后）
 > 适用对象: 接手后续批次的 AI/开发者
-> 历史说明: P1-01 有 `.ENV` 大小写尾项；P1-02 已闭环；P1-03 核心隔离完成但 F4 未闭环；P2-03 F5 已闭环；P2-04 F2/F3/F6/R2/F7 已闭环，但 F8/F9/F10 未闭环；P2-06/P2-07 已闭环。**当前下一项是 F11 `.ENV`，其次 F8/F9/F10**，见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
-> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v32
+> 历史说明: P1-01/02 已闭环；P1-03 核心隔离完成但 F4 未闭环；P2-03 F5 已闭环；P2-04 F2/F3/F6/R2/F7 已闭环，但 F8/F9/F10 未闭环；P2-06/P2-07 已闭环。**当前下一项是 F8 问句批准，其次 F9/F10**，见 `docs/design/repair-backlog-2026-10-20.md` §2.1。
+> 必读: `CLAUDE.md`「Chat API Session Lock」「会话取消与停止」「工作区与权限模式」、本文、P2-03 完成记录、P2-07 完成记录、`docs/design/repair-backlog-2026-10-20.md`（当前待办权威清单）、`docs/design/roadmap-to-excellence.md` v33
 
 ## 1. 当前状态
 
@@ -33,10 +33,11 @@
 | `95e0755` | 并发 DELETE 只允许首个删除者持有 deleting；第二个 409 |
 | `351cdbe` | 计划批准绑定 plan ID；align_pm 真实恢复；全任务展示集一致；取消复查 |
 | `52d66c9` | done 恢复必须先过计划展示/明确批准 gate；缺计划重呈 |
+| `4a7efec` | `.ENV` / `.Env.Local` 与 `.env` 一样判敏感 |
 
 回归基线（2026-10-20）：
 
-- `npx vitest run`：123 files / **1446 passed / 3 skipped**
+- `npx vitest run`：123 files / **1447 passed / 3 skipped**
 - `npx next build`：通过
 - 改动文件 eslint：0 error（存量 warning 不阻塞）
 - 工作区干净
@@ -126,7 +127,7 @@
 
 - ✅ 权限模型双维度（可用工具 vs 审批）与 CLI 探针（commit `4774de6`，证据
   `docs/design/permission-cli-probe-2026-10-20.md`）；
-- ✅ 审计内容证据（commit `0dd751a`/`ce2703b`/`61c7218`）：已脏同一路径再次修改、忽略 `.env`（含嵌套目录）、删除均按内容 hash 判定；
+- ✅ 审计内容证据（commit `0dd751a`/`ce2703b`/`61c7218`/`4a7efec`）：已脏同一路径再次修改、忽略 `.env`（含嵌套目录与 `.ENV` 大小写）、删除均按内容 hash 判定；
 - ✅ P1-02 主批次工具白名单（commit `a5e6991`）：批次与单 Agent 共用解析口径；
 - ⚠️ P1-03 OpenCode 权限文件按会话隔离（commit `ae39e00`）：核心隔离达标；Round 2 F4 发现正常 exit→stdout.close 顺序下 managed md/XDG 最终清理丢失，未闭环；
 - ✅ P2-05 Claude MDS 隔离（commit `a24ca60`）：所有 spawn 关闭项目 CLAUDE.md 自动发现；

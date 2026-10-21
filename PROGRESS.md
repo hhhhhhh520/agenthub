@@ -278,6 +278,7 @@
 | 并发 DELETE 所有权（commit 95e0755） | 根因：deleting 是无 owner 的进程内 Set；D1 清理中 D2 可再次 mark，D2 失败后的 finally 无条件清掉公共标记，随后 stop 误清取消并返回 200。修复：已 deleting 时第二个 DELETE 直接 409，不 mark 不进入清理；只有首个删除者能在 finally 清标记。新增并发 DELETE + stop 回归；变异验证移除拒绝分支后测试精确红（200 而非 409）。全量 122 files / 1431 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 计划批准绑定 plan ID + 恢复/展示集一致（commit 351cdbe） | F2：拒绝/澄清/普通消息不再被当成计划确认；只有明确肯定文本写 system 审批记录 `[PLAN_APPROVED]plan-<id>`，gate 要求它在计划后且在所有 user 消息之后；system 记录不回 UI、不进模型上下文。F3：任务已提交且 phase=align_pm 时，真实 POST execute 走受约束恢复入口，缺计划/未批准只重呈；无任务仍按非法转移拒绝。F6：plan ID、展示摘要、恢复/执行统一使用 session 全任务集。R2：ensure 等待后及重呈 helper 的 phase/消息副作用前补取消复查。变异验证逐项精确红；全量 123 files / 1444 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
 | done 恢复必须先过计划审批（commit 52d66c9） | 根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok；done + 已提交任务 + 未展示计划时，模型误提 execute 仍进入执行器。修复：idle 保持合法早退；done 先走 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归；变异验证恢复 `idle||done` 早退后 2 条测试精确红。全量 123 files / 1446 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| `.ENV` 大小写敏感分类（commit 4a7efec） | 根因：`.env` 敏感模式大小写敏感；Windows 上 `.ENV` 与 `.env` 是同一文件，但 `.ENV` 被审计判为普通越界。修复：任意层级 `.env` 模式加 `i` 标志；补 `.ENV`/`.Env.Local` 与 `pickSensitive` 回归；变异验证移除 `i` 后测试精确红。全量 123 files / 1447 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 
 ### ⏳ 进行中
 
