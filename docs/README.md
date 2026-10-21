@@ -14,7 +14,8 @@
 - [P2-03 完成记录](design/handoff-2026-10-20-p2-03.md) — stop/DELETE 场景记录（`31c5946`）；F5 并发 DELETE 已由 `95e0755` 闭环
 - [P2-07 完成记录](design/handoff-2026-10-20-p2-07.md) — 拿锁后重读 session 快照（`d2fb158`）
 - [P2-12 完成记录](design/handoff-2026-10-20-p2-12.md) — seq 分配、SSE in-flight 与 per-session 共享写链（`61f5b0d` + `1de1fbc`）
-- [P3 #8 完成记录](design/handoff-2026-10-21-p3-08.md) — files symlink 路径逃逸 + 固定根 junction（`b24a6d7` + `6e7ea3a`）；P3 #9 已由 `9931fa8` 闭环，P3 #10 已由 `4e869a9` 闭环，下一项 P3 #12
+- [P3 #8 完成记录](design/handoff-2026-10-21-p3-08.md) — files symlink 路径逃逸 + 固定根 junction（`b24a6d7` + `6e7ea3a`）；P3 #9 已由 `9931fa8` 闭环，P3 #10 已由 `4e869a9` 闭环
+- [P3 #12 接续提示](design/handoff-2026-10-21-p3-12.md) — **当前下一项**：四处 `transitionPhase` 返回值未检查
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 
 ## 参考资料
