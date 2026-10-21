@@ -77,7 +77,8 @@ export function isExplicitPlanApproval(message: string): boolean {
   const normalized = message
     .trim()
     .toLowerCase()
-    .replace(/[\s，。！？!?、；;：:,.]/g, '')
+    // 问号保留：`执行？` 是询问，不是明确批准；感叹号/句号等语气标点可忽略。
+    .replace(/[\s，。！、；;：:,.]/g, '')
   return PLAN_APPROVAL_TEXTS.has(normalized)
 }
 

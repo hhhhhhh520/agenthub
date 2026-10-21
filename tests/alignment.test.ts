@@ -451,6 +451,9 @@ describe('ensureExecutableState / transitionToExecution recovery', () => {
     expect(isExplicitPlanApproval('不同意，先不要执行，我要修改方案')).toBe(false)
     expect(isExplicitPlanApproval('修改方案后再执行')).toBe(false)
     expect(isExplicitPlanApproval('继续')).toBe(false)
+    expect(isExplicitPlanApproval('执行？')).toBe(false)
+    expect(isExplicitPlanApproval('确认执行?')).toBe(false)
+    expect(isExplicitPlanApproval('执行！')).toBe(true)
   })
 
   it('F2: 旧批准之后又有拒绝消息：旧批准失效', async () => {
