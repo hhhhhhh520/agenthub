@@ -47,7 +47,7 @@ afterEach(() => {
 describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
   it('非持久化类型（text/done/status/error 等）不写库、不占 seq，stream 照常回调', async () => {
     const seen: SequencedEvent[] = []
-    const logger = await createEventLogger('s1', {
+    const logger = await createEventLogger('s-nonpersist', {
       stream: e => seen.push(e),
     })
     logger.sendEvent({ agentId: 'orchestrator', type: 'text', content: 'hello' })
@@ -61,7 +61,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
 
   it('四类事件持久化：seq 单调递增，create 字段完整，stream 收到含 seq 的事件', async () => {
     const seen: SequencedEvent[] = []
-    const logger = await createEventLogger('s1', {
+    const logger = await createEventLogger('s-persist', {
       stream: e => seen.push(e),
     })
     logger.sendEvent({ agentId: 'a1', type: 'thinking', content: '思考中' })
@@ -73,7 +73,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
     expect(mockCreate).toHaveBeenCalledTimes(4)
     expect((mockCreate.mock.calls as Array<[{ data: { seq: number } }]>).map(c => c[0].data.seq)).toEqual([1, 2, 3, 4])
     expect(mockCreate.mock.calls[1][0].data).toMatchObject({
-      sessionId: 's1', seq: 2, type: 'tool_use', agentId: 'a1',
+      sessionId: 's-persist', seq: 2, type: 'tool_use', agentId: 'a1',
       data: JSON.stringify({ toolName: 'read', toolInput: { file: 'x' } }),
     })
     // stream 收到的帧带 seq（前端去重 + EventSource id 行的数据源）
@@ -82,14 +82,14 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
 
   it('seq 从 DB max 恢复（跨请求单调），max 查询失败时降级从 0 起', async () => {
     mockFindFirst.mockResolvedValueOnce({ seq: 41 })
-    const logger1 = await createEventLogger('s1')
+    const logger1 = await createEventLogger('s-max')
     logger1.sendEvent({ agentId: 'a1', type: 'thinking', content: 'x' })
     await logger1.flush()
     expect(mockCreate.mock.calls[0][0].data.seq).toBe(42)
 
     mockFindFirst.mockRejectedValueOnce(new Error('table missing'))
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const logger2 = await createEventLogger('s1')
+    const logger2 = await createEventLogger('s-fallback')
     logger2.sendEvent({ agentId: 'a1', type: 'thinking', content: 'y' })
     await logger2.flush()
     expect(mockCreate.mock.calls[1][0].data.seq).toBe(1)
@@ -97,7 +97,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
   })
 
   it('thinking 超 4KB 截断并带标注；tool_result 等其余类型不截断', async () => {
-    const logger = await createEventLogger('s1')
+    const logger = await createEventLogger('s-truncate')
     const longThinking = 'x'.repeat(MAX_THINKING_CONTENT_LENGTH + 100)
     logger.sendEvent({ agentId: 'a1', type: 'thinking', content: longThinking })
     logger.sendEvent({ agentId: 'a1', type: 'tool_result', content: 'y'.repeat(MAX_THINKING_CONTENT_LENGTH + 100) })
@@ -111,7 +111,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
   })
 
   it('串行写队列：flush() 排空全部写入；单条失败吞掉不阻塞后续', async () => {
-    const logger = await createEventLogger('s1')
+    const logger = await createEventLogger('s-failure')
     mockCreate.mockRejectedValueOnce(new Error('db locked'))
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     logger.sendEvent({ agentId: 'a1', type: 'thinking', content: 'fail' })
@@ -124,7 +124,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
 
   it(`封顶 ${MAX_EVENTS_PER_SESSION} 条：seq 超限后 deleteMany 删最旧，每 session 首次触顶 warn`, async () => {
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const logger = await createEventLogger('s1')
+    const logger = await createEventLogger('s-cap')
     for (let i = 0; i < MAX_EVENTS_PER_SESSION + 2; i++) {
       logger.sendEvent({ agentId: 'a1', type: 'thinking', content: `e${i}` })
     }
@@ -143,7 +143,7 @@ describe('createEventLogger — 四类过程事件持久化（§3.1）', () => {
   it('flush 有界：DB 写卡住时超时 resolve，不永久阻塞流关闭/锁释放', async () => {
     const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     mockCreate.mockImplementation(() => new Promise(() => {}))
-    const logger = await createEventLogger('s1')
+    const logger = await createEventLogger('s-timeout')
     logger.sendEvent({ agentId: 'a1', type: 'thinking', content: 'stuck' })
 
     const start = Date.now()

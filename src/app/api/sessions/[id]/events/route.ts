@@ -90,19 +90,26 @@ export async function GET(
       }
 
       // 2. 增量轮询（失败静默，下一轮重试——重放是 best-effort）
+      // in-flight 护栏：慢查询超过 pollMs 时跳过本轮，避免两个查询并发推进
+      // 同一 cursor 造成重复发送/游标竞争。
+      let polling = false
       poll.timer = setInterval(async () => {
-        if (closed) return
+        if (closed || polling) return
+        polling = true
         try {
           const rows = await prisma.agentProcessEvent.findMany({
             where: { sessionId, seq: { gt: cursor } },
             orderBy: { seq: 'asc' },
           })
+          if (closed || request.signal.aborted) return
           for (const row of rows) {
             send(row, false)
             cursor = row.seq
           }
         } catch {
           // 轮询失败静默
+        } finally {
+          polling = false
         }
       }, pollMs)
     },
