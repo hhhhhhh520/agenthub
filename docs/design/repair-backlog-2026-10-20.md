@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`37473ef`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`126 files / 1467 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`1de1fbc`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`127 files / 1469 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 仍重开，P3 #19 随之重开。剩余 P2-12 与旧 P3。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 正常成功路径由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 异步变体由 `3fac531` 修复；P2-08 由 `9201e30` + `1fd420e` 闭环；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；P2-11 由 `f889819` 初次修复；P2-12 由 `61f5b0d` 初次修复；**Round 5 复核后**：P2-13 同步前缀由 `cec556f` 补齐；P1-03 异常终态由 `325d32d` 补齐；P2-11 由 `37473ef` 补齐；P2-12 写链由 `1de1fbc` 补齐，P3 #19 随之闭环。**P1/P2 全闭环**，剩余旧 P3（27 项）。
 
 ---
 
@@ -293,11 +293,9 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 **状态：** ✅ 已闭环（commit `f889819` + `37473ef`）。`f889819` 覆盖其他实例存活 owner；Round 5 R5-04 补齐本进程 retry 场景：owner PID 存活（含 `process.pid`）一律保留；marker 损坏/不可读也保留；无 marker 的历史 agent-only 目录仍按旧规则清理。新增本进程 retry 目录与损坏 marker 回归；变异验证恢复 self 可删/损坏可删后测试分别精确红。
 **位置：** `src/lib/services/claude-cfg-maintenance.ts`、`src/lib/adapter/opencode-adapter.ts`
 
-### 🔴 P2-12 事件 seq 不可变 + 单 logger + SSE 轮询重叠（Round 5 重新打开 / 旧 #19）
+### ✅ P2-12 事件 seq 不可变 + 单 logger + SSE 轮询重叠
 
-**原修复：** commit `61f5b0d` 已实现 per-session seq 分配器与 SSE 轮询 in-flight 守卫；并发 logger 不再分配相同 seq。
-**Round 5 R5-05：** 只共享了 seq 计数器，没有共享写队列。每个 logger 仍有独立 `writeChain`；A 的 1、2 未落完时 B 拿到 3 并独立落库，可形成 `1、3、2`。SSE 读到 1、3 后 cursor=3，2 后续成功落库也不会补发。已有测试先 `seq.sort()` 再断言，只覆盖唯一性，未覆盖提交顺序。
-**最小修法：** 把写链也放进 per-session 状态，跨 logger 按 seq 串行入库；flush 超时后新 logger 仍使用同一写链；保留流/锁时间上限，不改 Prisma schema。旧 #19 重新打开。
+**状态：** ✅ 已闭环（commit `61f5b0d` + `1de1fbc`）。`61f5b0d` 已实现 per-session seq 分配器与 SSE 轮询 in-flight；`1de1fbc` 把 `writeChain` 放进 `SessionSeqState`，所有 logger 按 seq 串行落库。`flush` 只等待调用时快照，超时仍保留 poisoned 状态。新增实际落库顺序 `1、2、3` 与 SSE 补发 id 2 回归；变异验证恢复 per-logger 写链后两条测试精确红。跨实例 seq 原子性仍是残余（未改 schema）。
 **位置：** `src/lib/services/event-log.ts`、`src/app/api/sessions/[id]/events/route.ts`
 
 ### ✅ P2-13 timeout 清理期间 next 完成，可能吞掉 TimeoutError
@@ -328,7 +326,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | 16 | 未修 | `redo/route.ts:83,95` | `transitionPhase` 后才 `trim()`；非字符串 → 500。先校验类型再推进 |
 | 17 | 未修 | `sessions/route.ts:26,49` | 先 `session.create` 再校验 private agentIds；失败留空会话。先校验/事务 |
 | 18 | 未修 | `messages/[messageId]/route.ts:23` | Pin 数量 `count` 后 `update`；并发可超 10。用事务/短锁/条件写 |
-| 19 | 部分 | `event-log.ts`、events route | P2-12 `61f5b0d` 已修 in-flight 与同进程 seq 唯一；Round 5 发现写链仍独立，`1、3、2` 落库会跨过 2，重开 |
+| 19 | ✅ | `event-log.ts`、events route | 已由 P2-12 `1de1fbc` 闭环：per-session 共享写链按 seq 串行落库；SSE 不再跨过 2；跨实例 seq 仍非 DB 原子 |
 | 21 | 未修 | `use-chat.ts:43` | 切 session 不清 messages/pending/loading，不 abort 旧 fetch；只有 seq gate/EventSource 重置 |
 | 22 | 未修 | `projects/[id]/page.tsx:94` | 只处理 done；无 permission_request 批准入口 |
 | 23 | 未修 | `attachment-input.tsx:44,68` | 闭包 `attachments` 覆盖；并发上传互相覆盖；上传未完成发送仍带占位 ID |
@@ -390,7 +388,7 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 14. ~~P2-13 同步清理前缀吞 TimeoutError~~（`cec556f` 已闭环）
 15. ~~P1-03 永久失败 managed 资源最终清理~~（`325d32d` 已闭环）
 16. ~~P2-11 send/retry 生命周期资源引用~~（`37473ef` 已闭环）
-17. **P2-12 per-session 写队列 + 旧 #19**（Round 5 重开）
+17. ~~P2-12 per-session 写队列 + 旧 #19~~（`1de1fbc` 已闭环）
 18. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
@@ -413,7 +411,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `126 files / 1467 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `127 files / 1469 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -440,7 +438,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 仍重开；旧 P3 #19 随之重开。
-- 当前剩余：P2-12 写队列，以及 P3 其余项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
+- Round 5 复核修正：P2-08 已用 `1fd420e` 二次闭环；P2-13 已用 `cec556f` 补齐同步前缀；P1-03 异常终态已用 `325d32d` 补齐；P2-11 已用 `37473ef` 补齐；P2-12 写链已用 `1de1fbc` 补齐，旧 P3 #19 同步闭环。
+- **P1/P2 全闭环**；当前剩余为旧 P3 的 27 项。P2-12 的跨实例 seq 原子性仍是残余（未改 schema）。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。

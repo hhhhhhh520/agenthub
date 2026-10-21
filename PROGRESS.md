@@ -293,6 +293,7 @@
 | P2-13 Round 5：先结算超时再启动清理（commit cec556f） | 根因：timer 回调先同步执行 runCleanupBounded(onTimeout)，再 reject TimeoutError；清理回调同步 resolve 正在等待的 next(done) 时，next 微任务先入队赢得 race，超时被吞掉。修复：先 reject TimeoutError，再启动有界清理；清理错误仍只 warn。新增同步 resolve next 回归；变异验证恢复清理先行后测试精确红。全量 126 files / 1464 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 | P1-03 Round 5：终态 managed 资源最终清理（commit 325d32d） | 根因：永久失败分支用 registry 重新查 entry；exit handler 已删除 entry 时拿不到原引用，managed md/XDG 的 managedCleanupPending 永远不 finalize。修复：send 保存 lastEntry，永久失败、取消、重试耗尽终态都用原 entry 引用调用 finalizeManagedCleanup；中间 retry 仍保留配置供重建。新增永久失败 exit→stdout.close 回归；变异验证移除 finalize 后测试精确红。全量 126 files / 1465 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 warning） | 2026-10-21 |
 | P2-11 Round 5：本进程 retry 目录 owner 保护（commit 37473ef） | 根因：sweep 把 owner.pid === process.pid 判为可清理；working 进程 exit 后 send 进入 retry backoff，registry entry 已删除但 XDG 仍会被下一轮复用，正常 GET /api/agents sweep 会删掉它。修复：owner PID 存活（含本进程）一律保留；marker 损坏/不可读也保留；无 marker 的历史 agent-only 目录仍按旧规则清理。新增本进程 retry 目录与损坏 marker 回归；变异验证恢复 self 可删/损坏可删后测试分别精确红。全量 126 files / 1467 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
+| P2-12 Round 5：per-session 共享写链（commit 1de1fbc） | 根因：seq 计数器已按 session 共享，但每个 logger 仍有独立 writeChain；A 的 1、2 未落完时 B 的 3 可先落库，形成 1、3、2。SSE cursor 到 3 后 2 永远不补发。修复：writeChain 放入 SessionSeqState，所有 logger 按 seq 串行入队；flush 只等待调用时快照，超时仍保留 poisoned 状态。新增实际落库顺序与 SSE 补发 id 2 回归；变异验证恢复 per-logger 写链后两条测试精确红。全量 127 files / 1469 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-21 |
 
 ### ⏳ 进行中
 

@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v47（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2-08/P2-11/P2-13 经 Round 5 二次闭环；P2-12 重开） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v48（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02/03 闭环 + P2 全闭环（P2-08/11/12/13 经 Round 5 二次闭环）；剩旧 P3 27 项） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -54,6 +54,7 @@
 | v45 | 2026-10-21 | **P2-13 同步超时前缀闭环（commit cec556f）**。根因：timer 回调先同步执行 runCleanupBounded(onTimeout)，再 reject TimeoutError；清理回调同步 resolve 正在等待的 next(done) 时，next 微任务先入队赢得 race。修复：先 reject 超时结果，再启动有界清理；清理错误仍只 warn。新增同步 resolve next 回归；变异验证恢复清理先行后测试精确红。全量 126 files / 1464 passed / 3 skipped。**下一批**：P1-03 → P2-11 → P2-12。 |
 | v46 | 2026-10-21 | **P1-03 终态 managed 清理闭环（commit 325d32d）**。根因：永久失败分支用 registry 重新查 entry；exit handler 已删除 entry 时拿不到原引用，managed md/XDG 的 managedCleanupPending 永远不 finalize。修复：send 保存 lastEntry，永久失败、取消、重试耗尽终态都用原 entry 引用 finalizeManagedCleanup；中间 retry 仍保留配置供重建。新增永久失败 exit→stdout.close 回归；变异验证移除 finalize 后测试精确红。全量 126 files / 1465 passed / 3 skipped。**下一批**：P2-11 → P2-12。 |
 | v47 | 2026-10-21 | **P2-11 本进程 retry owner 保护闭环（commit 37473ef）**。根因：sweep 把 owner.pid === process.pid 判为可清理；working 进程 exit 后 send 进入 retry backoff，registry entry 已删除但 XDG 仍会被下一轮复用，正常 GET /api/agents sweep 会删掉它。修复：owner PID 存活（含本进程）一律保留；marker 损坏/不可读也保留；无 marker 的历史 agent-only 目录仍按旧规则清理。新增本进程 retry 目录与损坏 marker 回归；变异验证分别精确红。全量 126 files / 1467 passed / 3 skipped。**下一批**：P2-12。 |
+| v48 | 2026-10-21 | **P2-12 per-session 共享写链闭环（commit 1de1fbc）**。根因：seq 计数器已按 session 共享，但每个 logger 仍有独立 writeChain；A 的 1、2 未落完时 B 的 3 可先落库，形成 1、3、2。SSE cursor 到 3 后 2 永远不补发。修复：writeChain 放入 SessionSeqState，所有 logger 按 seq 串行入队；flush 只等待调用时快照，超时仍保留 poisoned 状态。新增实际落库顺序与 SSE 补发 id 2 回归；变异验证恢复 per-logger 写链后两条测试精确红。全量 127 files / 1469 passed / 3 skipped。**P1/P2 全闭环；旧 P3 #19 同步闭环，剩 27 项**。 |
 
 
 ---
@@ -257,7 +258,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1467 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1469 passed / 3 skipped（2026-10-21；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）
