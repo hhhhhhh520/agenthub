@@ -277,6 +277,7 @@
 | 拿锁后重读会话快照（commit d2fb158） | 根因：chat route 在 `acquireSessionLock` 前读取 session，排队等锁期间上一持有者可能修改 phase/phaseStep/decisionTrace、permissionMode 或 projectDir；拿锁后只复查取消/删除，后续仍使用旧快照。修复：拿锁后重新读取 `currentSession`，null 回 404，重新检查取消/删除，并用新值派生 permissionMode/workDir 及传给 orchestrator 的阶段信息。新增权限/目录、phase/trace、等待中删除、等待中 stop 四条并发排队回归；变异验证移除重读后 3 条新测试精确红。全量 122 files / 1430 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 并发 DELETE 所有权（commit 95e0755） | 根因：deleting 是无 owner 的进程内 Set；D1 清理中 D2 可再次 mark，D2 失败后的 finally 无条件清掉公共标记，随后 stop 误清取消并返回 200。修复：已 deleting 时第二个 DELETE 直接 409，不 mark 不进入清理；只有首个删除者能在 finally 清标记。新增并发 DELETE + stop 回归；变异验证移除拒绝分支后测试精确红（200 而非 409）。全量 122 files / 1431 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | 计划批准绑定 plan ID + 恢复/展示集一致（commit 351cdbe） | F2：拒绝/澄清/普通消息不再被当成计划确认；只有明确肯定文本写 system 审批记录 `[PLAN_APPROVED]plan-<id>`，gate 要求它在计划后且在所有 user 消息之后；system 记录不回 UI、不进模型上下文。F3：任务已提交且 phase=align_pm 时，真实 POST execute 走受约束恢复入口，缺计划/未批准只重呈；无任务仍按非法转移拒绝。F6：plan ID、展示摘要、恢复/执行统一使用 session 全任务集。R2：ensure 等待后及重呈 helper 的 phase/消息副作用前补取消复查。变异验证逐项精确红；全量 123 files / 1444 passed / 3 skipped，build ✓，改动文件 eslint 0 error（1 条存量 warning） | 2026-10-20 |
+| done 恢复必须先过计划审批（commit 52d66c9） | 根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok；done + 已提交任务 + 未展示计划时，模型误提 execute 仍进入执行器。修复：idle 保持合法早退；done 先走 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归；变异验证恢复 `idle||done` 早退后 2 条测试精确红。全量 123 files / 1446 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 
 ### ⏳ 进行中
 

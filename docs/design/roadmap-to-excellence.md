@@ -1,6 +1,6 @@
 # AgentHub 卓越路线图：对标 Codeg 的工程质量
 
-> 创建时间: 2026-09-20 | 修订: v31（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2；P1-03 F4 与 P2-13 R1 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
+> 创建时间: 2026-09-20 | 修订: v32（Batch 0/1 收口 + 双维度权限/CLI 探针 + P1-01/02 闭环 + P2-01/02/05/06/07 闭环 + P2-03 F5 + P2-04 F2/F3/F6/R2 + done 恢复审批；F11 `.ENV` 与 F8/F9/F10 待修） | 状态: 🟢 已审查（APPROVE_WITH_FIXES）→ 已整改，三项拍板落地
 > 来源: 与 xintaofei/codeg (v0.30.10) 的代码级对比（2026-09-18/19）
 
 ## 修订记录
@@ -38,6 +38,7 @@
 | v29 | 2026-10-20 | **Round 2 复核：嵌套 `.env` 补漏（commit 61c7218）**。根因：`SENSITIVE_PREFIX` 只匹配相对路径开头，`secrets/.env` 被当作普通越界，审计仍 pass。修复：敏感模式增加任意目录层级 `(^|/)\.env(\..*)?$`；新增 `isSensitivePath`/`pickSensitive` 单元回归和真实临时 Git 的 `auditBatchChanges` violation 回归；变异验证移除模式后 3 条测试精确红。全量 122 files / 1426 passed / 3 skipped。**Round 2 仍未闭环**：F2 任意 user 消息当计划确认、F3 align_pm 真实 POST 不可达、F4 OpenCode managed 资源清理丢失、F5 并发 DELETE 清除 deleting 标记、F6 展示/批准/执行任务集不一致、R1 timeout 清理竞争、R2 needsPlan 分支取消复查不足；P1-03/P2-03/P2-04 不能整体标 ✅。**下一批**：P2-07 + F2/F3/F5。 |
 | v30 | 2026-10-20 | **P2-07 拿锁后重读会话快照（commit d2fb158）**。根因：chat route 在 `acquireSessionLock` 前读取 session，排队等锁期间上一持有者可能修改 phase/phaseStep/decisionTrace、permissionMode 或 projectDir；拿锁后只复查取消/删除，后续仍用旧快照。修复：拿锁后重读 `currentSession`，null 回 404，重新检查取消/删除，并用新值派生 permissionMode/workDir、传最新阶段信息；新增权限/目录、phase/trace、等待中删除、等待中 stop 四条并发排队回归；变异验证移除重读后 3 条新测试精确红。全量 122 files / 1430 passed / 3 skipped。**下一批**：P2-04 F2/F3/F6/R2、P2-03 F5、P1-03 F4、P2-13 R1。 |
 | v31 | 2026-10-20 | **P2-03 F5 + P2-04 F2/F3/F6/R2 闭环（commit 95e0755 / 351cdbe）**。F5：并发 DELETE 第二个直接 409，不再清首个删除者标记。F2：只有明确肯定文本写 system 批准记录 `[PLAN_APPROVED]plan-<id>`；拒绝/澄清/旧批准失效；记录不进 UI/模型上下文。F3：align_pm + 已有任务的真实 POST 走受约束恢复入口，缺计划只重呈，无任务仍拒绝。F6：plan ID、展示摘要、恢复/执行统一使用全任务集。R2：ensure 后与重呈阶段/消息副作用前补取消复查。变异验证逐项精确红；全量 123 files / 1444 passed / 3 skipped。**下一批**：P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。 |
+| v32 | 2026-10-20 | **done 恢复审批闭环（commit 52d66c9）**。根因：`ensureExecutableState` 在计划 gate 前对 idle/done 直接返回 ok，done + 已提交任务 + 未展示计划时，模型误提 execute 仍会执行。修复：idle 保持合法早退；done 先过 plan ID/展示/明确批准 gate，已批准后才恢复 execute；done 缺计划时回到 align_decompose 重呈并等待确认。新增服务级与真实路由回归，变异验证恢复 `idle||done` 早退后 2 条测试精确红；全量 123 files / 1446 passed / 3 skipped。**最新复核未闭环**：F11 `.ENV` 大小写、F8 问句批准、F9 恢复 phase 写入前取消窗口、F10 Q&A 分支保存明确批准。 |
 
 
 ---
@@ -241,7 +242,7 @@
 | task_status 轮询是显式设计 | `use-chat.ts:184` 注释 | sed |
 | analytics 最小页存在 | `src/app/(dashboard)/analytics/page.tsx`（231 行） | wc |
 | 仓库 PUBLIC | `gh repo view` → visibility: PUBLIC, isPrivate: false | 命令 |
-| 单测 1444 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
+| 单测 1446 passed / 3 skipped（2026-10-20；2026-09-21 §3.1 后为 1175，v6 1154、v4 1137、初版 1098） | `npx vitest run` | 实跑 |
 | 关键文件真实路径 | `src/lib/services/{execution,chat-router,shadow-git,alignment}.ts`；`src/lib/orchestrator/{state-machine,decision-trace}.ts` | find |
 
 ## 附录 B：审查发现与处置（2026-09-20 独立审查 → v2/v3/v4）

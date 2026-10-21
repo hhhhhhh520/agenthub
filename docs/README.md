@@ -3,8 +3,8 @@
 ## 设计文档
 
 - [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
-- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v31：CI 门禁、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、嵌套 `.env` 敏感分类、拿锁后快照重读、结构化计划批准、并发 DELETE 所有权；阶段一/阶段二已收口）
-- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前唯一未闭环 P1/P2/P3 清单**（P1-01/02 已闭环、P1-03 有 F4 尾项；P2-03/04 的 Round 2 补项已闭环；P2-06/07 已闭环；含进程树/清扫与旧 36 项映射）
+- [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v32：CI 门禁、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、结果发布门禁、审计内容证据、主批次工具白名单、OpenCode 会话隔离、Claude MDS 隔离、timeout 有界收尾、regenerate 取消安全、stop/delete deleting 屏障、恢复计划审批关联、嵌套 `.env` 敏感分类、拿锁后快照重读、结构化计划批准、并发 DELETE 所有权、done 恢复审批；阶段一/阶段二已收口）
+- [修复待办总表](design/repair-backlog-2026-10-20.md) — **当前唯一未闭环 P1/P2/P3 清单**（P1-01 有 `.ENV` 大小写尾项、P1-03 有 F4 尾项；P2-03 的 F5 已闭环、P2-04 仍有问句/取消/Q&A 三项；P2-06/07 已闭环；含进程树/清扫与旧 36 项映射）
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
 - [工作区与权限](design/workspace-and-permissions.md) — 项目目录、权限模式、变更检测
 - [实施计划](design/implementation-plan.md) — 8 阶段任务拆分
@@ -12,7 +12,7 @@
 - [cc-connect Agent 参考](design/cc-connect-agent-reference.md) — cc-connect 架构借鉴
 - [权限模型 CLI 探针](design/permission-cli-probe-2026-10-20.md) — Claude 2.1.270 / OpenCode 2.0.27 双维度权限实测
 - [P2-03 完成记录](design/handoff-2026-10-20-p2-03.md) — stop/DELETE 场景记录（`31c5946`）；F5 并发 DELETE 已由 `95e0755` 闭环
-- [P2-07 完成记录](design/handoff-2026-10-20-p2-07.md) — 拿锁后重读 session 快照（`d2fb158`）；下一项 P1-03 F4 与 P2-13 R1
+- [P2-07 完成记录](design/handoff-2026-10-20-p2-07.md) — 拿锁后重读 session 快照（`d2fb158`）；下一步 F11 `.ENV` 大小写、F8 问句批准、F9 取消窗口、F10 Q&A 批准保存
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
 
 ## 参考资料

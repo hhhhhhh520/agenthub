@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`351cdbe`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`123 files / 1444 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`52d66c9`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`123 files / 1446 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐，P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐；P1-03 F4 与 P2-13 R1 仍未闭环（见 §2.1）；旧 36 项中已修/部分修的映射见 §4。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 已由 `61c7218` 补齐，但 Windows `.ENV` 大小写仍漏；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，但问句批准、取消窗口、Q&A 批准保存仍未闭环；P1-03 F4 与 P2-13 R1 仍未闭环（见 §2.1）；旧 36 项中已修/部分修的映射见 §4。
 
 ---
 
@@ -62,11 +62,11 @@
 
 ---
 
-## 2. P1（P1-01/02 已闭环；P1-03 核心隔离已完成，F4 资源清理尾项未闭环）
+## 2. P1（P1-01 有 `.ENV` 大小写尾项；P1-02 已闭环；P1-03 核心隔离已完成，F4 资源清理尾项未闭环）
 
-### ✅ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
+### ⚠️ P1-01 审计内容证据：已脏路径再次修改 / 被忽略的 .env 会漏检
 
-**状态：** ✅ 已修（commit `0dd751a` + `ce2703b` + `61c7218`，2026-10-20）。Round 2 F1：嵌套 `secrets/.env` 原先未被判敏感，导致审计 pass；`61c7218` 已补任意层级 `.env`/`.env.*` 模式并加真实影 Git 审计回归。
+**状态：** 核心已修（commit `0dd751a` + `ce2703b` + `61c7218`，2026-10-20）。Round 2 F1：嵌套 `secrets/.env` 原先未被判敏感，导致审计 pass；`61c7218` 已补任意层级 `.env`/`.env.*` 模式并加真实影 Git 审计回归。**新复核发现 Windows 大小写尾项：`.ENV` 与 `.env` 指向同一文件，但当前模式大小写敏感，`.ENV` 仍 pass（F11）。** P1-01 暂不能整体标 ✅。
 **旧编号：** 原 36 项 #2（原“部分修”，现已闭环）
 **位置：**
 - `src/lib/services/shadow-git.ts:111` `getGitSnapshotDetailed`
@@ -203,8 +203,13 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 | F6 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts:444`、`:471`、`:737` | plan ID、展示摘要、恢复/执行统一使用 session 全任务集；旧 pending/blocked 任务也展示 |
 | R1 | P2 | 🔴 未闭环 | `timeout.ts:73`、`:99` | `onTimeout` 清理期间底层 `next` 先完成时，可能吞掉 `TimeoutError`；与已修的 `iterator.return` 有界性独立 |
 | R2 | P2 | ✅ 已闭环 `351cdbe` | `alignment.ts` needsPlan 分支 | ensure 等待后、重呈 helper 的 phase/消息副作用前均补取消复查 |
+| F7 | P1 | ✅ 已闭环 `52d66c9` | `alignment.ts:725` | done + 已提交任务 + 计划未展示时，ensure 在计划 gate 前直接返回 ok，拒绝消息也会进入执行；已改为 done 先过计划 gate |
+| F8 | P2 | 🔴 未闭环 | `alignment.ts:80` | `执行？` 的问号被 normalize 删除，命中批准集合；应保留问号并拒绝 |
+| F9 | P2 | 🔴 未闭环 | `alignment.ts:746` | 已批准恢复在查询后先写 align_decompose/execute，期间取消要到调用方才发现；phase 写入前缺取消复查 |
+| F10 | P2 | 🔴 未闭环 | `chat-router.ts` align_qa 分支 | 明确“确认执行”被路由到 Q&A 时不保存批准；QA 无问题后仍要求再次确认（保守拒绝，非越权） |
+| F11 | P1 | 🔴 未闭环 | `sensitive-paths.ts:41` | Windows `.ENV` 与 `.env` 同一文件，但 `.env` 模式大小写敏感，`.ENV` 仍审计 pass |
 
-> F4 属于 P1-03 的资源生命周期；R1 单列，不能据此否定 `iterator.return` 已修复。P2-03/P2-04 的 Round 2 补项均已闭环。
+> F4 属于 P1-03 的资源生命周期；F8/F9/F10/F11 是最新一轮复核项；P1-01 在 F11 修完前、P2-04 在 F8/F9/F10 修完前不能整体标 ✅。P2-03 F5 已闭环。
 
 ---
 
@@ -237,9 +242,9 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 
 **状态：** 单 DELETE 由 `31c5946` 修复；Round 2 F5 由 `95e0755` 闭环：同一 session 已有 deleting 时第二个 DELETE 直接 409，不 mark、不进入 finally，因此不会清掉首个删除者的标记；stop 在首个删除完成前仍返回 202 并保留取消。详情见 `docs/design/handoff-2026-10-20-p2-03.md`。
 
-### ✅ P2-04 执行恢复没有“同一获批计划”关联（F2/F3/F6/R2 已闭环）
+### ⚠️ P2-04 执行恢复没有“同一获批计划”关联（F2/F3/F6/R2/F7 已闭环；F8/F9/F10 未闭环）
 
-**状态：** 基础机制由 `6292cdd` 落地；Round 2 补项由 `351cdbe` 闭环：
+**状态：** 基础机制由 `6292cdd` 落地；Round 2 补项由 `351cdbe` 闭环；done 恢复绕过由 `52d66c9` 闭环。**最新复核仍有 F8（问句算批准）、F9（恢复 phase 写入前取消窗口）、F10（Q&A 分支不保存明确批准）**，P2-04 暂不能整体标 ✅。
 - F2：只有明确肯定文本（如“确认执行”）写 `[PLAN_APPROVED]plan-<id>` system 记录；拒绝/澄清/普通消息不写；gate 要求记录在计划之后且在所有 user 消息之后，旧批准会被后续拒绝作废。
 - F3：任务已提交且 phase=`align_pm` 时，真实 POST execute 走受约束恢复入口；缺计划/未批准只重呈计划，无任务仍按非法转移拒绝。
 - F6：plan ID、计划展示摘要、恢复/执行统一使用 session 全任务集，旧 pending/blocked 任务也会展示。
@@ -389,11 +394,16 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 1. ~~P2-07 拿锁前旧快照~~（`d2fb158` 已闭环）
 2. ~~P2-04 F2/F3/F6/R2~~（`351cdbe` 已闭环）
 3. ~~P2-03 F5 并发 DELETE~~（`95e0755` 已闭环）
-4. **P1-03 F4：OpenCode managed 资源最终清理**
-5. **P2-13 R1：onTimeout 与 next 的超时优先级**
-6. **P2-08/09 进程树/Agent 创建取消**
-7. **P2-10/11/12 提示/清扫/事件**
-8. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+4. ~~F7 done 恢复绕过审批~~（`52d66c9` 已闭环）
+5. **F11：Windows `.ENV` 大小写审计**
+6. **F8：问句不得算批准**
+7. **F9：恢复 phase 写入前取消复查**
+8. **F10：Q&A 分支保存明确批准**
+9. **P1-03 F4：OpenCode managed 资源最终清理**
+10. **P2-13 R1：onTimeout 与 next 的超时优先级**
+11. **P2-08/09 进程树/Agent 创建取消**
+12. **P2-10/11/12 提示/清扫/事件**
+13. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -415,7 +425,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `123 files / 1444 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `123 files / 1446 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -441,7 +451,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- Round 2 后不能再说“P1 全部闭环、所列 P2 均已完成”：P1-01/F1 已由 `61c7218` 闭环；P1-03 仍有 F4 资源清理尾项；P2-03 F5 已由 `95e0755` 闭环；P2-04 F2/F3/F6/R2 已由 `351cdbe` 闭环；P2-06/P2-07 已闭环。
-- 最危险的剩余项：**P1-03 F4（OpenCode managed 资源最终清理）、P2-13 R1（timeout 优先级）**；随后 P2-08/09、P2-10/11/12。
+- 最新复核后不能再说“P1 全部闭环、P2-04 已完成”：P1-01 的 `.ENV` 大小写（F11）、P2-04 的问句批准（F8）、取消窗口（F9）、Q&A 批准保存（F10）仍未闭环；F7 done 恢复绕过已由 `52d66c9` 闭环。
+- 最危险的剩余项：**F11 `.ENV` 审计、F8 问句批准、F9 恢复取消窗口、F10 Q&A 批准保存**；随后 P1-03 F4、P2-13 R1、P2-08/09、P2-10/11/12。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
