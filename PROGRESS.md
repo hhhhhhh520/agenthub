@@ -286,6 +286,7 @@
 | 超时先胜出（commit 3fac531） | 根因：timer 回调先 await onTimeout 再 reject；清理期间底层 next(done) 先完成时 Promise.race 正常返回，吞掉 TimeoutError。修复：超时触发后只启动有界 onTimeout 后台清理并立即 reject TimeoutError；iterator.return 仍在 finally 有界收尾。新增 onTimeout 清理期间 next 完成回归；变异验证恢复 await cleanup 后测试精确红。全量 123 files / 1451 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 | Windows 进程树退出确认（commit 9201e30） | 根因：Windows 终止只等待直接 ChildProcess exit；taskkill /T 启动后 unref，不能证明后代进程已退出，父进程退出即可被误报 confirmed。修复：terminateEntry 并发等待直接 exit 与 taskkill /T 子进程退出码；treeConfirmed 必须为 true，非 0/超时/error 走 force 或返回 unconfirmed。新增 taskkill 树确认失败但父进程已退出回归；变异验证移除 treeConfirmed 条件后测试精确红。全量 123 files / 1452 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条存量 warning） | 2026-10-20 |
 | Agent 创建取消安全（commit a73f2d7） | 根因：LLM 分析完成后直接 findUnique/create，stop/delete 在 LLM 或 DB await 期间到达仍继续创建 Agent/成员/消息。修复：入口、LLM 返回后检查取消；Agent+成员+消息同一事务，事务内每个写前复查并抛 SessionCancelledError；取消/失败回滚，不留下半个 Agent，也不再发成功 done。新增 LLM 返回后取消、Agent 创建期间取消两条回归；变异验证移除 LLM 后检查后测试精确红。全量 123 files / 1454 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
+| OpenCode 私聊只读提示（commit a45921a） | 根因：群聊创建路径已有 OpenCode default 只读提示，私聊 ChatFab 没有；用户在私聊里发送写操作会因 CLI headless 限制被拒绝且无解释。修复：新增 OpencodeReadOnlyHint，按 selectedAgent.platform === opencode 在输入区显示只读提示与 /permission auto 切换说明；Agent 接口补 platform 字段。新增 server-render 组件回归：opencode 显示、claude/未选择不显示；变异验证移除平台门禁后测试精确红。全量 124 files / 1456 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-10-20 |
 
 ### ⏳ 进行中
 

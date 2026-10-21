@@ -1,12 +1,12 @@
 # AgentHub 修复待办总表（2026-10-20）
 
 > 状态：**active**（压缩上下文后的唯一待办权威清单）
-> 代码 HEAD：`a73f2d7`；文档：本清单所在提交（见 `git log`）
-> 回归基线：`123 files / 1454 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
+> 代码 HEAD：`a45921a`；文档：本清单所在提交（见 `git log`）
+> 回归基线：`124 files / 1456 passed / 3 skipped`，`next build` 通过，改动文件 eslint 0 error
 > 工作区：clean；未 push
 > 来源：① 原始 36 项审查；② 2026-10-20《AgentHub 已修部分质量复核》；③ 2026-10-20 Round 2 复核；④ 当前代码复核
 
-本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 由 `3fac531` 补齐；P2-08 由 `9201e30` 补齐；P2-09 由 `a73f2d7` 补齐；剩余 P2-10/11/12 与旧 36 项。
+本文只记录**尚未闭环**的事项。已完成且不应回退的基线见 §1；P1-01 的嵌套 `.env` 与 Windows `.ENV` 大小写均已补齐；P1-03 F4 由 `d6ef4a0` 补齐；P2-06/P2-07 保留完成记录；P2-03 F5 由 `95e0755` 补齐；P2-04 F2/F3/F6/R2 由 `351cdbe` 补齐，done 恢复由 `52d66c9` 补齐，问句批准由 `3bb12ad` 补齐，取消窗口由 `1af2112` 补齐，Q&A 批准保存由 `0412a39` 补齐；P2-13 R1 由 `3fac531` 补齐；P2-08 由 `9201e30` 补齐；P2-09 由 `a73f2d7` 补齐；P2-10 由 `a45921a` 补齐；剩余 P2-11/12 与旧 36 项。
 
 ---
 
@@ -282,12 +282,10 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 **状态：** ✅ 已闭环（commit `a73f2d7`，2026-10-20）。入口、LLM 返回后检查取消；Agent + 成员 + 消息同一事务，事务内每个写前复查并抛 `SessionCancelledError`；取消/失败回滚，不留下半个 Agent，也不再发成功 done。新增“LLM 返回后取消”和“Agent create 期间取消”两条回归；变异验证移除 LLM 后检查后测试精确红。
 **位置：** `src/lib/services/agent-factory.ts:26`
 
-### P2-10 OpenCode 只读提示只覆盖群聊创建
+### ✅ P2-10 OpenCode 只读提示只覆盖群聊创建
 
-**位置：** `src/components/chat-fab.tsx`（私聊路径）
-**现状：** 群聊创建 UI 有 default 只读提示；私聊 ChatFab 仍默认 default，没有同等提示。
-**最小修法：** 私聊也展示“default 只读，需写操作请切 auto”的提示；不要改默认策略。
-**测试：** UI 文案快照/组件测试或人工验收记录。
+**状态：** ✅ 已闭环（commit `a45921a`，2026-10-20）。新增 `OpencodeReadOnlyHint`，私聊 ChatFab 在 `selectedAgent.platform === 'opencode'` 时显示“默认只读，写操作需 `/permission auto`”提示；Claude/未选择不渲染。新增 server-render 组件回归；变异验证移除平台门禁后测试精确红。
+**位置：** `src/components/chat-fab.tsx`、`src/components/opencode-readonly-hint.tsx`
 
 ### P2-11 配置清扫 owner/实例/运行引用护栏
 
@@ -397,8 +395,9 @@ Round 2 报告与复现：`<home>\.codex\visualizations\2026\10\20\01a157b9-2549
 10. ~~P2-13 R1：onTimeout 与 next 的超时优先级~~（`3fac531` 已闭环）
 11. ~~P2-08 进程树退出确认~~（`9201e30` 已闭环）
 12. ~~P2-09 Agent 创建取消~~（`a73f2d7` 已闭环）
-13. **P2-10/11/12 提示/清扫/事件**
-14. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
+13. ~~P2-10 OpenCode 私聊只读提示~~（`a45921a` 已闭环）
+14. **P2-11/12 清扫/事件**
+15. 旧 36 项 P3 表按风险分批；Pin、MCP、附件、UI 可各自独立提交。
 
 每项完成后更新 `PROGRESS.md`、`docs/design/roadmap-to-excellence.md`、`docs/design/handoff-2026-10-19-batch0.md`，并在本文件把对应项标记为 ✅（或删除已闭环项）。
 
@@ -420,7 +419,7 @@ npx next build
 npx eslint <changed-files>
 ```
 
-**当前基线：** `123 files / 1454 passed / 3 skipped`；build 通过；未 push。
+**当前基线：** `124 files / 1456 passed / 3 skipped`；build 通过；未 push。
 
 **变异验证模板：**
 1. 先写失败测试，确认失败原因正确。
@@ -446,7 +445,7 @@ npx eslint <changed-files>
 ## 9. 本次审查的结论摘要
 
 - 锁队列、chat 常规异常释放、任务/verify 单事务、OpenCode 目录名 hotfix：可独立认可。
-- 最新复核项已全部闭环：F4/F7/F8/F9/F10/F11；P2-13 R1、P2-08、P2-09 也已闭环。
-- 剩余项转为：**P2-10/11/12（提示/清扫/事件）**；随后旧 P3。
+- 最新复核项已全部闭环：F4/F7/F8/F9/F10/F11；P2-13 R1、P2-08、P2-09、P2-10 也已闭环。
+- 剩余项转为：**P2-11/12（清扫/事件）**；随后旧 P3。
 - 已独立认可：P2-05 Claude MDS `a24ca60`、P2-01 iterator.return `ff53430`、P2-02 regenerate `74bda96`、P2-06 SSE cancel `7520866`、P1-02 tools `a5e6991`、P1-01 根/忽略目录 `.env` + 嵌套 `.env` `0dd751a`/`ce2703b`/`61c7218`。
 - 质量复核报告第 2 项“completed CAS 拒绝后仍发布成功摘要”已由 `be969e0` 修复；不要重复修。原 36 项 #2（审计内容漏检）已由 `0dd751a`+`ce2703b` 修复，原 #13（OpenCode 会话隔离）核心已由 `ae39e00` 修复。
