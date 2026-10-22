@@ -32,10 +32,20 @@ export async function readFormDataWithLimit(request: Request, maxBytes: number):
     reader.releaseLock()
   }
 
+  // TypeScript 5.9: BlobPart requires an ArrayBuffer-backed view. Chunks from
+  // ReadableStream are Uint8Array<ArrayBufferLike>, so copy them into one
+  // fresh buffer before constructing the Blob.
+  const body = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+
   const replay = new Request(request.url, {
     method: request.method,
     headers: request.headers,
-    body: new Blob(chunks, { type: request.headers.get('content-type') ?? '' }),
+    body: new Blob([body], { type: request.headers.get('content-type') ?? '' }),
     signal: request.signal,
   })
   return replay.formData()

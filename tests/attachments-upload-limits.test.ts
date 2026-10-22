@@ -198,6 +198,33 @@ describe('readFormDataWithLimit — 无 Content-Length 的实际字节上限', (
     expect((parsed.get('files') as File).name).toBe('a.txt')
   })
 
+  it('多个 chunk 未超限时按字节顺序拼接并解析', async () => {
+    const boundary = 'x'
+    const payload =
+      `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="description"\r\n\r\n' +
+      'hello\r\n' +
+      `--${boundary}--\r\n`
+    const bytes = new TextEncoder().encode(payload)
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 10))
+        controller.enqueue(bytes.slice(10, 35))
+        controller.enqueue(bytes.slice(35))
+        controller.close()
+      },
+    })
+    const request = new Request(`http://localhost/api/sessions/${SESSION_ID}/attachments`, {
+      method: 'POST',
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      body,
+      duplex: 'half',
+    } as RequestInit)
+
+    const parsed = await readFormDataWithLimit(request, 1024)
+    expect(parsed.get('description')).toBe('hello')
+  })
+
   it('上传路由接线到实际字节上限，不再直接 request.formData()', () => {
     const src = readFileSync(
       resolve(__dirname, '../src/app/api/sessions/[id]/attachments/route.ts'),
