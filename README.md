@@ -62,7 +62,7 @@ npm run dev
 
 - **无认证，按本机单用户设计。** `npm run dev` 绑定 `127.0.0.1`；不要用 `npm start` 把服务暴露到局域网/公网，除非先补认证。
 - **Agent 有真实文件/命令权限。** 它会在你指定的项目目录里读写文件并执行命令；请从 `default` 权限模式开始，只对可信仓库使用。
-- **不要公开贴密钥。** 安全问题请先开 issue 说明影响和复现概况，不要贴 API Key 或可直接利用的细节。
+- **不要公开贴密钥。** 请通过 [SECURITY.md](SECURITY.md) 的私密渠道报告，不要公开贴 API Key 或可直接利用的细节。完整威胁模型见 [docs/security/threat-model.md](docs/security/threat-model.md)。
 
 ## 架构
 

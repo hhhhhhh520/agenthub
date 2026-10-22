@@ -64,7 +64,7 @@ Open http://localhost:3000. The first run opens a Setup Wizard for the CLI and a
 
 - **No API authentication by design.** The app is single-user and local. `npm run dev` binds to `127.0.0.1`; do not expose it with `npm start`, a LAN address, or a tunnel before adding authentication.
 - **Agents have real file and command access.** They read and write files and run commands in the project directory you select. Start with the `default` permission mode and only use trusted repositories.
-- **Do not post secrets.** For security issues, open an issue describing the impact and reproduction at a high level; do not include API keys or ready-to-run exploit details.
+- **Do not post secrets.** Report vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue with API keys or exploit details. See the [threat model](docs/security/threat-model.md) for trust boundaries and accepted risks.
 
 ## How it works
 
