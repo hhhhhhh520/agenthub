@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle } from '@/lib/agent-colors'
-import { FolderOpen, Shield, ShieldCheck } from 'lucide-react'
+import { resolveSessionPermissionMode } from '@/lib/permission-mode'
+import { GROUP_FLOW_GUIDE_KEY } from '@/lib/onboarding'
+import { FolderOpen, Shield, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface Agent {
@@ -14,6 +16,7 @@ interface Agent {
   expertise: string
   accentColor: string
   capabilities: string
+  platform: string
 }
 
 interface RecentDir {
@@ -27,12 +30,14 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: (sessionId: string) => void
+  initialTask?: string
 }
 
-export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
+export function CreateGroupDialog({ open, onOpenChange, onCreated, initialTask }: Props) {
   const [step, setStep] = useState<'describe' | 'select' | 'creating'>('describe')
   const [taskDesc, setTaskDesc] = useState('')
   const [projectDir, setProjectDir] = useState('')
+  const [showFlowGuide, setShowFlowGuide] = useState(false)
   const [permissionMode, setPermissionMode] = useState<'default' | 'auto'>('default')
   const [recentDirs, setRecentDirs] = useState<RecentDir[]>([])
   const [allAgents, setAllAgents] = useState<Agent[]>([])
@@ -41,6 +46,19 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [llmUnavailable, setLlmUnavailable] = useState(false)
+
+  const selectedAgents = allAgents.filter(agent => selectedIds.has(agent.id))
+  const openCodeSelected = selectedAgents.some(agent => agent.platform === 'opencode')
+  const effectivePermissionMode = resolveSessionPermissionMode(
+    permissionMode,
+    selectedAgents.map(agent => agent.platform),
+  )
+
+  useEffect(() => {
+    if (effectivePermissionMode !== permissionMode) {
+      setPermissionMode(effectivePermissionMode)
+    }
+  }, [effectivePermissionMode, permissionMode])
 
   const fetchRecentDirs = useCallback(async () => {
     try {
@@ -53,6 +71,17 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
   useEffect(() => {
     if (open) fetchRecentDirs()
   }, [open, fetchRecentDirs])
+
+  useEffect(() => {
+    if (open) {
+      setTaskDesc(initialTask || '')
+      try {
+        setShowFlowGuide(localStorage.getItem(GROUP_FLOW_GUIDE_KEY) !== '1')
+      } catch {
+        setShowFlowGuide(true)
+      }
+    }
+  }, [open, initialTask])
 
   useEffect(() => {
     if (!open) {
@@ -86,7 +115,7 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
       setSelectedIds(new Set(recIds))
       setStep('select')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '推荐 Agent 失败')
+      setError(e instanceof Error ? e.message : '推荐智能体失败')
     } finally {
       setLoading(false)
     }
@@ -109,6 +138,11 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
     }
   }
 
+  const dismissFlowGuide = () => {
+    setShowFlowGuide(false)
+    try { localStorage.setItem(GROUP_FLOW_GUIDE_KEY, '1') } catch { /* ignore */ }
+  }
+
   const handleCreate = async () => {
     if (selectedIds.size === 0) return
     setStep('creating')
@@ -124,11 +158,12 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
           type: 'group',
           agentIds: Array.from(selectedIds),
           projectDir: projectDir.trim(),
-          permissionMode,
+          permissionMode: effectivePermissionMode,
         }),
       })
       const session = await res.json()
       if (!res.ok) throw new Error(session.error || '创建失败')
+      try { localStorage.setItem(GROUP_FLOW_GUIDE_KEY, '1') } catch { /* ignore */ }
       onCreated(session.id)
       toast.success('群聊创建成功')
       onOpenChange(false)
@@ -145,13 +180,35 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {step === 'describe' ? '创建群聊' : step === 'select' ? '选择 Agent' : '创建中...'}
+            {step === 'describe' ? '创建群聊' : step === 'select' ? '选择智能体' : '创建中...'}
           </DialogTitle>
         </DialogHeader>
 
         {step === 'describe' && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-500">描述你的需求，系统会推荐合适的 Agent 组合。</p>
+            <p className="text-sm text-gray-500">描述你的需求，系统会推荐合适的智能体组合。</p>
+            {showFlowGuide && (
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium">对齐三拍</p>
+                  <button
+                    type="button"
+                    onClick={dismissFlowGuide}
+                    className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    知道了
+                  </button>
+                </div>
+                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+                  <li>产品经理确认需求</li>
+                  <li>架构师拆解任务</li>
+                  <li>智能体提问澄清</li>
+                </ol>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  需要你确认：产品经理的确认、架构师计划、智能体提问；默认权限模式下写文件/执行命令也会先询问。
+                </p>
+              </div>
+            )}
             <textarea
               className="w-full h-28 p-3 border rounded-lg resize-none text-sm"
               placeholder="例如：做一个 TODO 应用，支持增删改查和分类..."
@@ -172,6 +229,9 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                 value={projectDir}
                 onChange={e => setProjectDir(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground">
+                不确定就留空，默认使用应用工作目录；之后仍可修改。
+              </p>
               {recentDirs.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {recentDirs.slice(0, 5).map(dir => (
@@ -199,8 +259,10 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                     permissionMode === 'default'
                       ? 'bg-blue-50 border-blue-300 text-blue-700'
                       : 'bg-white hover:bg-gray-50'
-                  }`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => setPermissionMode('default')}
+                  disabled={openCodeSelected}
+                  title={openCodeSelected ? '已选择 OpenCode 智能体，默认模式不可用' : undefined}
                 >
                   <div className="flex items-center justify-center gap-1">
                     <Shield className="w-4 h-4" />
@@ -223,8 +285,12 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                   <div className="text-xs text-gray-500 mt-1">自动处理，减少打扰</div>
                 </button>
               </div>
-              <p className="text-xs text-gray-500">
-                OpenCode 的默认模式无法弹出确认（CLI headless 限制），写文件/执行命令会被拒绝；需要写入请选择自动模式。
+              <p className={`text-xs ${openCodeSelected ? 'text-amber-700' : 'text-gray-500'}`}>
+                {openCodeSelected
+                  ? '已选 OpenCode 智能体：默认模式不可用，已自动切换为自动模式。自动模式下智能体的写文件/执行命令会直接执行。'
+                  : permissionMode === 'auto'
+                    ? '自动模式：智能体的写文件/执行命令会自动执行，不再逐次确认。'
+                    : '默认模式需要逐次确认。如果下一步选中 OpenCode 智能体，会自动切换为自动模式（headless 无法逐次确认）。'}
               </p>
             </div>
 
@@ -243,7 +309,7 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                   setLoading(false)
                 }}
               >
-                手动选择 Agent →
+                手动选择智能体 →
               </button>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>
@@ -259,12 +325,26 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
           <div className="space-y-4">
             {llmUnavailable && (
               <p className="text-xs text-amber-600 bg-amber-50 p-2 rounded">
-                LLM API 未配置，无法智能推荐，已默认选中全部 Agent。配置 ANTHROPIC_API_KEY 后可启用智能推荐。
+                LLM API 未配置，无法智能推荐，已默认选中全部智能体。配置 ANTHROPIC_API_KEY 后可启用智能推荐。
               </p>
+            )}
+            {openCodeSelected && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <ShieldAlert className="w-4 h-4" />
+                  已选择 OpenCode 智能体
+                </div>
+                <p className="mt-1">
+                  OpenCode 在 headless 下无法逐次确认，写文件/执行命令会被拒绝。本群聊将使用自动模式：智能体操作会自动执行，不再逐次确认。
+                </p>
+                <p className="mt-1">
+                  如果要使用默认模式，请取消选择所有 OpenCode 智能体。
+                </p>
+              </div>
             )}
             <div className="flex items-center justify-between">
               <p className="text-sm text-gray-500">
-                已选 {selectedIds.size}/{allAgents.length} 个 Agent
+                已选 {selectedIds.size}/{allAgents.length} 个智能体
               </p>
               <Button variant="ghost" size="sm" onClick={toggleAll}>
                 {selectedIds.size === allAgents.length ? '取消全选' : '全选'}
@@ -300,6 +380,11 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
                         {isRecommended && (
                           <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700">推荐</Badge>
                         )}
+                        {agent.platform === 'opencode' && (
+                          <Badge variant="outline" className="text-xs border-amber-300 text-amber-700">
+                            OpenCode · 自动
+                          </Badge>
+                        )}
                       </div>
                       <div className="text-xs text-gray-500 truncate">{agent.expertise}</div>
                     </div>
@@ -312,7 +397,9 @@ export function CreateGroupDialog({ open, onOpenChange, onCreated }: Props) {
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep('describe')}>上一步</Button>
               <Button onClick={handleCreate} disabled={selectedIds.size === 0 || loading}>
-                {loading ? '创建中...' : `创建群聊 (${selectedIds.size} 人)`}
+                {loading
+                  ? '创建中...'
+                  : `创建群聊 (${selectedIds.size} 人 · ${effectivePermissionMode === 'auto' ? '自动模式' : '默认模式'})`}
               </Button>
             </DialogFooter>
           </div>

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { sweepWithCurrentConfigs } from '@/lib/services/claude-cfg-maintenance'
+import { summarizeAgentPresence } from '@/lib/agent-presence'
 
 // 导出供测试验证：如果有人修改这些值，测试会同步感知
 export const XSS_TAG_RE = /<[a-zA-Z][^>]*>/
-export const SELECTED_FIELDS = ['id', 'name', 'expertise', 'platform', 'model', 'baseUrl', 'tools', 'isPreset', 'accentColor', 'capabilities', 'status'] as const
+export const SELECTED_FIELDS = ['id', 'name', 'expertise', 'platform', 'model', 'baseUrl', 'tools', 'isPreset', 'accentColor', 'capabilities'] as const
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -14,7 +15,17 @@ export async function GET(request: Request) {
   const agents = await prisma.agent.findMany({
     where,
     orderBy: { name: 'asc' },
-    select: { id:true, name:true, expertise:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+    select: {
+      id: true, name: true, expertise: true, platform: true, model: true,
+      baseUrl: true, tools: true, isPreset: true, accentColor: true, capabilities: true,
+      // U9: 不读已废弃的 Agent.status；状态只看 SessionMember.status（per-session）。
+      memberships: {
+        select: {
+          status: true,
+          session: { select: { id: true, title: true, updatedAt: true } },
+        },
+      },
+    },
   })
 
   // ISSUE-027 生命周期（评审 #1 + 双审查 🟡）：全量视图加载时兜底出清受管配置目录
@@ -30,7 +41,10 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json(agents)
+  return NextResponse.json(agents.map(({ memberships, ...agent }) => ({
+    ...agent,
+    ...summarizeAgentPresence(memberships),
+  })))
 }
 
 export async function POST(request: Request) {
@@ -99,7 +113,7 @@ export async function POST(request: Request) {
         accentColor: accentColor || '#6366f1',
         isPreset: false,
       },
-      select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+      select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true },
     })
     return NextResponse.json(agent, { status: 201 })
   } catch (e: unknown) {

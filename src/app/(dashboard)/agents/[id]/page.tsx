@@ -19,7 +19,6 @@ interface Agent {
   model?: string
   baseUrl?: string
   apiKey?: string
-  status: string
   accentColor: string
   capabilities: string
   isPreset: boolean

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { hasLoneSurrogates } from '@/lib/utils'
 import { cleanupAttachmentFiles } from '@/lib/attachment-cleanup'
 import { cleanupShadowGit } from '@/lib/services/shadow-git'
 import { requestSessionCancel, clearSessionCancel } from '@/lib/cancellation'
@@ -71,8 +72,24 @@ export async function PUT(
   if (permissionMode !== undefined && !isPermissionMode(permissionMode)) {
     return NextResponse.json({ error: 'permissionMode must be default or auto' }, { status: 400 })
   }
+  let normalizedTitle: string | undefined
+  if (title !== undefined) {
+    if (typeof title !== 'string') {
+      return NextResponse.json({ error: 'title must be a string' }, { status: 400 })
+    }
+    normalizedTitle = title.trim()
+    if (!normalizedTitle) {
+      return NextResponse.json({ error: 'title cannot be empty' }, { status: 400 })
+    }
+    if (Array.from(normalizedTitle).length > 120) {
+      return NextResponse.json({ error: 'title is too long (max 120 characters)' }, { status: 400 })
+    }
+    if (hasLoneSurrogates(normalizedTitle)) {
+      return NextResponse.json({ error: '标题包含无效编码，请使用 UTF-8 编码发送请求' }, { status: 400 })
+    }
+  }
   const data: Record<string, unknown> = {}
-  if (title !== undefined) data.title = title
+  if (normalizedTitle !== undefined) data.title = normalizedTitle
   if (projectDir !== undefined) data.projectDir = projectDir
   if (permissionMode !== undefined) data.permissionMode = permissionMode
   if (isPinned !== undefined) data.isPinned = isPinned

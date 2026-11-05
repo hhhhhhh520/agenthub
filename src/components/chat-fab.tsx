@@ -101,14 +101,18 @@ export function ChatFab() {
                   <span className="text-sm font-medium">{selectedAgent.name}</span>
                 </>
               ) : (
-                <span className="text-sm text-muted-foreground">选择 Agent</span>
+                <span className="text-sm text-muted-foreground">选择智能体</span>
               )}
             </button>
             {/* Agent Picker Dropdown */}
             {showAgentPicker && (
               <div className="absolute top-full left-0 mt-1 w-56 rounded-lg border bg-card shadow-lg z-10">
                 {agents.length === 0 ? (
-                  <div className="px-3 py-2 text-sm text-muted-foreground">暂无可用 Agent</div>
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    暂无可用智能体
+                    <br />
+                    先在「智能体」页创建或导入。
+                  </div>
                 ) : (
                   agents.map(agent => (
                     <button
@@ -157,7 +161,7 @@ export function ChatFab() {
             {!selectedAgent ? (
               /* Agent Picker */
               <div className="flex flex-col items-center justify-center h-full py-8">
-                <h3 className="text-lg font-semibold mb-4">选择 Agent 开始对话</h3>
+                <h3 className="text-lg font-semibold mb-4">选择智能体开始对话</h3>
                 <div className="w-full space-y-2">
                   {agents.map(agent => (
                     <button
@@ -182,7 +186,7 @@ export function ChatFab() {
                 </div>
                 {!projectDir && (
                   <p className="mt-4 text-xs text-amber-600 text-center">
-                    建议先在主页面设置工作目录，Agent 将在该目录下工作
+                    建议先在主页面设置工作目录，智能体将在该目录下工作
                   </p>
                 )}
               </div>
@@ -225,7 +229,7 @@ export function ChatFab() {
                         {msg.role !== 'user' && (
                           <Avatar className="h-6 w-6 mt-0.5 shrink-0">
                             <AvatarFallback
-                              className="text-[10px] font-bold text-white"
+                              className="text-xs font-bold text-white"
                               style={{ backgroundColor: agent?.accentColor || '#6366f1' }}
                             >
                               {agent?.name?.[0] || '?'}
@@ -235,7 +239,7 @@ export function ChatFab() {
                         <div
                           className={`rounded-lg px-3 py-2 text-sm ${
                             msg.role === 'user'
-                              ? 'bg-primary text-primary-foreground'
+                              ? 'bg-blue-50 text-slate-900 border border-blue-100 dark:bg-blue-950/40 dark:text-blue-50 dark:border-blue-900/60'
                               : 'bg-muted'
                           }`}
                         >
@@ -253,7 +257,7 @@ export function ChatFab() {
                       <div className="flex items-start gap-2 max-w-[85%]">
                         <Avatar className="h-6 w-6 mt-0.5 shrink-0">
                           <AvatarFallback
-                            className="text-[10px] font-bold text-white"
+                            className="text-xs font-bold text-white"
                             style={{ backgroundColor: agent?.accentColor || '#6366f1' }}
                           >
                             {agent?.name?.[0] || '?'}
@@ -312,7 +316,7 @@ export function ChatFab() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-                placeholder={selectedAgent ? `和${selectedAgent.name}对话...` : '请先选择 Agent'}
+                placeholder={selectedAgent ? `和${selectedAgent.name}对话...` : '请先选择智能体'}
                 disabled={!selectedAgent}
                 className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
               />

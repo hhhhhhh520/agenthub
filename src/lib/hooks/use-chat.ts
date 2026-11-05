@@ -15,6 +15,7 @@ interface Message {
   role: 'user' | 'agent' | 'orchestrator'
   rawContent: string
   agentId?: string
+  taskId?: string | null
   replyToId?: string
   replyTo?: { id: string; rawContent: string; role: string } | null
   isPinned?: boolean
@@ -298,6 +299,11 @@ export function useChat(sessionId: string | null) {
           createdAt: new Date().toISOString(),
         }])
         return
+      }
+
+      // 首条消息可能触发服务端自动命名；通知侧栏刷新标题/排序。
+      if (!regenerate && typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('agenthub:sessions-changed'))
       }
 
       const reader = res.body?.getReader()

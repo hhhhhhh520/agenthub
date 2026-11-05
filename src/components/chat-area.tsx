@@ -1,42 +1,70 @@
 'use client'
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useChat } from '@/lib/hooks/use-chat'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getAgentStyle } from '@/lib/agent-colors'
-import { parseMessage, type ParsedMessage } from '@/lib/message-parser'
+import { parseMessage, stripProtocolMarkers, type ParsedMessage } from '@/lib/message-parser'
+import { normalizeAgentSelfIntro } from '@/lib/agent-identity'
+import { MarkdownMessage } from '@/components/markdown-message'
+import { SessionHeader, type SessionHeaderTaskCounts } from '@/components/session-header'
+import { SystemEventNotice } from '@/components/system-event-notice'
+import { SystemEventDrawer } from '@/components/system-event-drawer'
+import { EmptyState } from '@/components/empty-state'
+import { collectSystemEvents, groupMessagesForChat } from '@/lib/system-events'
+import { isSystemTask, summarizeTaskBoard } from '@/lib/task-board'
+import { getLastTraceEvent, getTaskStartedAt } from '@/lib/task-timing'
+import { deriveWaitingReason } from '@/lib/waiting-state'
+import { isOpenCodePlatform } from '@/lib/permission-mode'
 import { MessageActionMenu } from '@/components/message-action-menu'
 import { WebPreview } from '@/components/web-preview'
 import { CodeDiff } from '@/components/code-diff'
-import { Shield, Pin } from 'lucide-react'
+import { formatMessageClock, formatMessageFullTime } from '@/lib/message-time'
+import { COMPLETION_GUIDE_KEY } from '@/lib/onboarding'
+import { Shield, ShieldAlert, Pin, Info } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { FileCard } from '@/components/file-card'
 import { AttachmentInput, type AttachmentPreview } from '@/components/attachment-input'
 import { toast } from 'sonner'
 
 const ROLE_STYLES: Record<string, { bg: string; label: string }> = {
-  user: { bg: 'bg-blue-500 text-white ml-auto', label: 'You' },
-  orchestrator: { bg: 'bg-purple-100 text-purple-900', label: 'Orchestrator' },
+  user: {
+    bg: 'bg-blue-50/90 text-slate-900 border border-blue-100 dark:bg-blue-950/40 dark:text-blue-50 dark:border-blue-900/60',
+    label: '你',
+  },
+  orchestrator: {
+    bg: 'bg-violet-50 text-violet-950 border border-violet-100 dark:bg-violet-950/40 dark:text-violet-100 dark:border-violet-900/60',
+    label: 'Orchestrator',
+  },
 }
 
 interface MemberAgent {
   id: string
   name: string
   accentColor?: string
+  platform?: string
 }
 
-const SESSION_TYPE_LABELS: Record<string, string> = {
-  group: '群聊',
-  private: '私聊',
-  orchestrator: '对话',
+interface SessionMeta {
+  phase: string
+  phaseStep: string
+  projectDir: string
+  permissionMode: string
+  recoveredTaskCount?: number
+  createdAt?: string
+  updatedAt?: string
 }
 
-const PHASE_LABELS: Record<string, string> = {
-  alignment: '对齐中',
-  execution: '执行中',
-  done: '已完成',
+interface HeaderTask {
+  id: string
+  description: string
+  status: string
+  assignedAgentId?: string | null
+  createdAt?: string
+  updatedAt?: string
+  trace?: string | null
 }
 
 const COMMANDS = [
@@ -56,38 +84,224 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   const [mentionQuery, setMentionQuery] = useState('')
   const [showRecovery, setShowRecovery] = useState(false)
   const [recoveredCount, setRecoveredCount] = useState(0)
+  const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null)
+  const [tasks, setTasks] = useState<HeaderTask[]>([])
+  const [agentIdToName, setAgentIdToName] = useState<Record<string, string>>({})
+  const [liveStep, setLiveStep] = useState('')
+  const [systemDrawerOpen, setSystemDrawerOpen] = useState(false)
+  const [hasOpenCodeMember, setHasOpenCodeMember] = useState(false)
+  const [switchingToAuto, setSwitchingToAuto] = useState(false)
+  const [messagesReady, setMessagesReady] = useState(false)
+  const [waitingSince, setWaitingSince] = useState<string | null>(null)
+  const waitingStartedRef = useRef<number | null>(null)
+  const [showProductsGuide, setShowProductsGuide] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const nearBottomRef = useRef(true)
 
+  const applyMembers = useCallback((members: Array<{ agent: MemberAgent }>) => {
+    const names = members.map(m => m.agent.name)
+    const colorMap: Record<string, string> = {}
+    const idToName: Record<string, string> = {}
+    members.forEach(m => {
+      idToName[m.agent.id] = m.agent.name
+      if (m.agent.accentColor) colorMap[m.agent.name] = m.agent.accentColor
+    })
+    setAgentNames(names)
+    setAgentColorMap(colorMap)
+    setAgentIdToName(idToName)
+    setHasOpenCodeMember(members.some(m => isOpenCodePlatform(m.agent.platform)))
+  }, [])
+
   useEffect(() => {
-    if (!sessionId) return
-    loadMessages()
+    if (!sessionId) {
+      setSessionMeta(null)
+      setTasks([])
+      setLiveStep('')
+      setHasOpenCodeMember(false)
+      setMessagesReady(false)
+      return
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+
+    setSessionMeta(null)
+    setTasks([])
+    setLiveStep('')
+    setHasOpenCodeMember(false)
+    setMessagesReady(false)
+
+    const messagesPromise = loadMessages().finally(() => {
+      if (!cancelled) setMessagesReady(true)
+    })
+
     // 并行请求成员和会话信息
     Promise.all([
-      fetch(`/api/sessions/${sessionId}/members`)
+      messagesPromise,
+      fetch(`/api/sessions/${sessionId}/members`, { signal: controller.signal })
         .then(r => r.json())
         .then((members: Array<{ agent: MemberAgent }>) => {
-          const names = members.map(m => m.agent.name)
-          const colorMap: Record<string, string> = {}
-          members.forEach(m => {
-            if (m.agent.accentColor) colorMap[m.agent.name] = m.agent.accentColor
-          })
-          setAgentNames(names)
-          setAgentColorMap(colorMap)
+          if (cancelled) return
+          applyMembers(members)
         })
-        .catch(console.error),
-      // 断点续跑：检查是否有任务被恢复
-      fetch(`/api/sessions/${sessionId}`)
-        .then(r => r.json())
-        .then((session: { recoveredTaskCount?: number }) => {
+        .catch(err => {
+          if (!cancelled && (err as Error).name !== 'AbortError') console.error(err)
+        }),
+      // 会话上下文 + 断点续跑检查
+      fetch(`/api/sessions/${sessionId}`, { signal: controller.signal })
+        .then(r => r.ok ? r.json() : null)
+        .then((session: SessionMeta | null) => {
+          if (cancelled || !session) return
+          setSessionMeta(session)
           if (session.recoveredTaskCount && session.recoveredTaskCount > 0) {
             setRecoveredCount(session.recoveredTaskCount)
             setShowRecovery(true)
           }
         })
-        .catch(console.error),
+        .catch(err => {
+          if (!cancelled && (err as Error).name !== 'AbortError') console.error(err)
+        }),
     ])
-  }, [sessionId, loadMessages])
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [sessionId, loadMessages, applyMembers])
+
+  // AgentPanel 新增/编辑成员后，刷新成员列表，让 OpenCode 权限提示即时出现。
+  useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    const refreshMembers = () => {
+      fetch(`/api/sessions/${sessionId}/members`)
+        .then(r => r.ok ? r.json() : [])
+        .then((members: unknown) => {
+          if (!cancelled && Array.isArray(members)) {
+            applyMembers(members as Array<{ agent: MemberAgent }>)
+          }
+        })
+        .catch(() => {})
+    }
+    window.addEventListener('agenthub:members-changed', refreshMembers)
+    return () => {
+      cancelled = true
+      window.removeEventListener('agenthub:members-changed', refreshMembers)
+    }
+  }, [sessionId, applyMembers])
+
+  // phase 事件只带 phase；页面刷新后 useChat 可能停在 idle，用会话快照兜底。
+  const effectivePhase = phase !== 'idle' ? phase : (sessionMeta?.phase || 'idle')
+
+  // Header 只需要当前任务和计数：活跃阶段 5s 轮询，空闲/完成只取一次。
+  useEffect(() => {
+    if (!sessionId) return
+
+    let cancelled = false
+    let inFlight = false
+    const controller = new AbortController()
+
+    const load = () => {
+      if (inFlight) return
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      inFlight = true
+      fetch(`/api/sessions/${sessionId}/tasks`, { signal: controller.signal, cache: 'no-store' })
+        .then(r => r.ok ? r.json() : [])
+        .then((data: unknown) => {
+          if (!cancelled && Array.isArray(data)) setTasks(data as HeaderTask[])
+        })
+        .catch(() => { /* 轮询失败静默，下一轮再试 */ })
+        .finally(() => { inFlight = false })
+    }
+
+    load()
+    if (effectivePhase !== 'alignment' && effectivePhase !== 'execution') {
+      return () => {
+        cancelled = true
+        controller.abort()
+      }
+    }
+
+    const timer = setInterval(load, 5000)
+    return () => {
+      cancelled = true
+      controller.abort()
+      clearInterval(timer)
+    }
+  }, [sessionId, effectivePhase])
+
+  // awaitingInput 是实时 phaseStep；刷新时用会话快照的 phaseStep 兜底。
+  useEffect(() => {
+    if (awaitingInput) setLiveStep(awaitingInput)
+  }, [awaitingInput])
+
+  useEffect(() => {
+    if (phase === 'idle' || phase === 'execution' || phase === 'done') setLiveStep('')
+  }, [phase])
+
+  const headerStep = effectivePhase === 'alignment'
+    ? (liveStep || sessionMeta?.phaseStep || '')
+    : ''
+
+  const activeTask = tasks.find(t => t.status === 'in_progress' && !isSystemTask(t.description))
+  const boardSummary = summarizeTaskBoard(tasks)
+  const taskCounts: SessionHeaderTaskCounts = {
+    total: boardSummary.total,
+    done: boardSummary.done,
+    running: boardSummary.running,
+    pending: boardSummary.pending,
+    failed: boardSummary.failed + boardSummary.blocked,
+    system: boardSummary.system,
+  }
+  const currentTask = activeTask
+    ? {
+        description: activeTask.description,
+        agentName: activeTask.assignedAgentId ? agentIdToName[activeTask.assignedAgentId] : undefined,
+        startedAt: getTaskStartedAt(activeTask) || undefined,
+      }
+    : undefined
+
+  useEffect(() => {
+    if (boardSummary.done === 0 || typeof window === 'undefined') return
+    try {
+      if (localStorage.getItem(COMPLETION_GUIDE_KEY) === '1') return
+    } catch {
+      // localStorage 不可用时仍展示一次
+    }
+    setShowProductsGuide(true)
+  }, [boardSummary.done])
+
+  const dismissProductsGuide = () => {
+    setShowProductsGuide(false)
+    try { localStorage.setItem(COMPLETION_GUIDE_KEY, '1') } catch { /* ignore */ }
+  }
+  const runningTool = toolCalls.find(tc => tc.status === 'running')?.toolName ?? null
+  const waitingReason = deriveWaitingReason({
+    loading,
+    pendingPermissionCount: pendingPermissions.length,
+    awaitingInput,
+    retrying: !!activeTask && loading && getLastTraceEvent(activeTask.trace) === 'retry',
+    runningTool,
+    thinking: Object.keys(thinking).length > 0,
+    streaming: Object.keys(streaming).length > 0,
+  }).label
+  const isWaiting = !!waitingReason
+
+  useEffect(() => {
+    if (!isWaiting) {
+      waitingStartedRef.current = null
+      setWaitingSince(null)
+      return
+    }
+    if (waitingStartedRef.current === null) {
+      const now = Date.now()
+      waitingStartedRef.current = now
+      setWaitingSince(new Date(now).toISOString())
+    }
+  }, [isWaiting])
+
+  const systemEvents = useMemo(() => collectSystemEvents(messages, tasks), [messages, tasks])
+  const chatItems = useMemo(() => groupMessagesForChat(messages), [messages])
   useEffect(() => {
     if (nearBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -132,7 +346,15 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   }
 
   if (!sessionId) {
-    return <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500">选择或创建一个会话</div>
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <EmptyState
+          title="选择一个会话开始"
+          description="从左侧选择会话，或点击「创建群聊」描述你的需求。"
+          className="max-w-sm"
+        />
+      </div>
+    )
   }
 
   const handleSend = () => {
@@ -149,6 +371,13 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
       }
     }
     const attachmentIds = attachments.filter(a => !a.uploading).map(a => a.id)
+    const trimmed = input.trim()
+    if (trimmed.startsWith('/permission')) {
+      const mode = trimmed.split(/\s+/)[1]
+      if (mode === 'auto' || mode === 'default') {
+        setSessionMeta(prev => prev ? { ...prev, permissionMode: mode } : prev)
+      }
+    }
     send(input, mentionAll, targetAgent, replyTo?.id, undefined, attachmentIds.length > 0 ? attachmentIds : undefined)
     setInput('')
     setReplyTo(null)
@@ -156,11 +385,44 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
   }
 
   const handleCopy = (content: string) => {
-    navigator.clipboard.writeText(content)
+    navigator.clipboard.writeText(stripProtocolMarkers(content))
   }
 
   const handleQuote = (content: string) => {
-    setInput(content)
+    setInput(stripProtocolMarkers(content))
+  }
+
+  const handleCopyProjectDir = () => {
+    const dir = sessionMeta?.projectDir?.trim()
+    if (!dir) {
+      toast.info('当前会话未指定项目目录，使用应用工作目录')
+      return
+    }
+    navigator.clipboard.writeText(dir)
+      .then(() => toast.success('项目目录已复制'))
+      .catch(() => toast.error('复制项目目录失败'))
+  }
+
+  const switchToAuto = async () => {
+    if (!sessionId || switchingToAuto) return
+    setSwitchingToAuto(true)
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissionMode: 'auto' }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(data?.error || '切换失败')
+      }
+      setSessionMeta(prev => prev ? { ...prev, permissionMode: 'auto' } : prev)
+      toast.success('已切换为自动模式')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '切换自动模式失败')
+    } finally {
+      setSwitchingToAuto(false)
+    }
   }
 
   const handleRegenerate = (messageId: string) => {
@@ -178,47 +440,113 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      {sessionType && (
-        <div className="border-b px-4 py-2 flex items-center gap-2 text-sm bg-white dark:bg-gray-800 dark:border-gray-700">
-          <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
-            {SESSION_TYPE_LABELS[sessionType] || sessionType}
+      <SessionHeader
+        sessionType={sessionType}
+        phase={effectivePhase}
+        phaseStep={headerStep}
+        projectDir={sessionMeta?.projectDir}
+        permissionMode={sessionMeta?.permissionMode}
+        pendingPermissionCount={pendingPermissions.length}
+        systemEventCount={systemEvents.length}
+        onOpenSystemEvents={() => setSystemDrawerOpen(true)}
+        taskCounts={taskCounts}
+        currentTask={currentTask}
+        loading={loading}
+        sessionStartedAt={sessionMeta?.createdAt}
+        waitingReason={waitingReason}
+        waitingSince={waitingSince}
+        onStop={stop}
+        onCopyProjectDir={handleCopyProjectDir}
+      />
+      {sessionMeta?.permissionMode === 'default' && hasOpenCodeMember && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200 flex items-center gap-2">
+          <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+          <span className="min-w-0 truncate">
+            当前会话包含 OpenCode 智能体，默认模式下写文件/执行命令会被拒绝。
           </span>
-          {phase !== 'idle' && PHASE_LABELS[phase] && (
-            <span className="flex items-center gap-1.5 text-xs text-gray-400">
-              <span className={`w-1.5 h-1.5 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
-              {PHASE_LABELS[phase]}
-            </span>
-          )}
+          <button
+            type="button"
+            onClick={switchToAuto}
+            disabled={switchingToAuto}
+            className="ml-auto shrink-0 font-medium underline underline-offset-2 disabled:opacity-50"
+          >
+            {switchingToAuto ? '切换中...' : '切换自动模式'}
+          </button>
         </div>
       )}
-      <ScrollArea className="flex-1 min-h-0 overflow-hidden p-4" onScroll={(e) => {
+      {showProductsGuide && (
+        <div className="border-b border-blue-200 bg-blue-50 px-4 py-2 text-xs text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200 flex items-center gap-2">
+          <Info className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0">
+            产物在聊天消息里：Diff 可直接 Accept/Reject；文件卡片可下载；任务卡「轨迹」可查看执行记录。
+          </span>
+          <button
+            type="button"
+            onClick={dismissProductsGuide}
+            className="ml-auto shrink-0 font-medium underline underline-offset-2"
+          >
+            知道了
+          </button>
+        </div>
+      )}
+      <ScrollArea className="flex-1 min-h-0 overflow-hidden px-4 py-5" onScroll={(e) => {
         const el = e.currentTarget
         nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
       }}>
-        <div className="space-y-3 max-w-3xl mx-auto">
-          {messages.map(msg => {
+        <div className="space-y-4 max-w-4xl mx-auto">
+          {messagesReady && chatItems.length === 0 && !loading &&
+            Object.keys(streaming).length === 0 &&
+            Object.keys(thinking).length === 0 &&
+            toolCalls.length === 0 && (
+              <EmptyState
+                title="还没有消息"
+                description="在下方描述你的目标，Orchestrator 会先和你对齐需求，再拆解任务。"
+              />
+            )}
+          {chatItems.map(item => {
+            if (item.type === 'system') {
+              return (
+                <SystemEventNotice
+                  key={`system-${item.events[0].id}`}
+                  events={item.events}
+                  onOpen={() => setSystemDrawerOpen(true)}
+                />
+              )
+            }
+            const msg = item.message
+            const replyText = msg.replyTo ? stripProtocolMarkers(msg.replyTo.rawContent) : ''
             const replyPreview = msg.replyTo
               ? (
                 <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 rounded px-2 py-1 mb-1 border-l-2 border-gray-300 dark:border-gray-600">
-                  {msg.replyTo.rawContent.slice(0, 80)}{msg.replyTo.rawContent.length > 80 ? '...' : ''}
+                  {replyText.slice(0, 80)}{replyText.length > 80 ? '...' : ''}
                 </div>
               )
               : null
 
             if (msg.role === 'agent' && msg.agentId) {
               const style = getAgentStyle(msg.agentId, agentColorMap[msg.agentId])
-              const parsed = parseMessage(msg.rawContent)
+              const parsed = parseMessage(normalizeAgentSelfIntro(msg.rawContent, msg.agentId))
+              const agentName = agentIdToName[msg.agentId] || msg.agentId
               return (
-                <div key={msg.id} className="flex gap-2 max-w-[80%] group relative">
+                <div key={msg.id} className="flex gap-2 max-w-[92%] sm:max-w-[86%] group relative">
                   {msg.isPinned && (
                     <Pin className="absolute -top-1 -left-1 w-3 h-3 text-amber-500 fill-amber-500 z-10" />
                   )}
                   <Avatar size="sm">
                     <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                   </Avatar>
-                  <div className={`rounded-lg p-3 ${style.bg} flex-1`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium opacity-70">{msg.agentId}</span>
+                  <div className={`rounded-xl p-3.5 border border-black/5 dark:border-white/10 shadow-sm ${style.bg} flex-1`}>
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-xs font-semibold opacity-80">{agentName}</span>
+                        <time
+                          dateTime={msg.createdAt}
+                          title={formatMessageFullTime(msg.createdAt)}
+                          className="shrink-0 text-xs font-normal opacity-60"
+                        >
+                          {formatMessageClock(msg.createdAt)}
+                        </time>
+                      </div>
                       <MessageActionMenu
                         role="agent"
                         isPinned={msg.isPinned}
@@ -258,14 +586,30 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
               )
             }
             const style = ROLE_STYLES[msg.role] || ROLE_STYLES.orchestrator
-            const parsed = parseMessage(msg.rawContent)
+            const roleName = msg.role === 'orchestrator' ? 'Orchestrator' : (msg.agentId || '智能体')
+            const parsed = parseMessage(
+              msg.role === 'user' ? msg.rawContent : normalizeAgentSelfIntro(msg.rawContent, roleName)
+            )
+            const isUser = msg.role === 'user'
             return (
-              <div key={msg.id} className={`max-w-[80%] rounded-lg p-3 ${msg.role === 'user' ? style.bg + ' ml-auto' : style.bg} group relative`}>
+              <div
+                key={msg.id}
+                className={`${isUser ? 'max-w-[85%] sm:max-w-[60%] ml-auto' : 'max-w-[90%] sm:max-w-[78%]'} rounded-xl p-3 ${style.bg} group relative`}
+              >
                 {msg.isPinned && (
                   <Pin className="absolute -top-1 -right-1 w-3 h-3 text-amber-500 fill-amber-500 z-10" />
                 )}
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium opacity-70">{style.label}</span>
+                <div className="flex items-start justify-between gap-2 mb-1.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-xs font-semibold opacity-80">{style.label}</span>
+                    <time
+                      dateTime={msg.createdAt}
+                      title={formatMessageFullTime(msg.createdAt)}
+                      className="shrink-0 text-xs font-normal opacity-60"
+                    >
+                      {formatMessageClock(msg.createdAt)}
+                    </time>
+                  </div>
                   <MessageActionMenu
                     role={msg.role}
                     isPinned={msg.isPinned}
@@ -299,7 +643,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
                     ))}
                   </div>
                 )}
-                <MessageErrorBoundary><MessageContent parsed={parsed} sessionId={sessionId} /></MessageErrorBoundary>
+                <MessageErrorBoundary><MessageContent parsed={parsed} sessionId={sessionId} markdown={msg.role !== 'user'} /></MessageErrorBoundary>
               </div>
             )
           })}
@@ -308,7 +652,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
             if (!text) return null
             const style = getAgentStyle(agentId, agentColorMap[agentId])
             return (
-              <div key={`thinking-${agentId}`} className="flex gap-2 max-w-[80%]">
+              <div key={`thinking-${agentId}`} className="flex gap-2 max-w-[92%] sm:max-w-[86%]">
                 <Avatar size="sm">
                   <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                 </Avatar>
@@ -321,7 +665,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           })}
           {/* Tool Calls 展示 */}
           {toolCalls.map(tc => (
-            <div key={tc.id} className="flex gap-2 max-w-[80%] ml-8">
+            <div key={tc.id} className="flex gap-2 max-w-[92%] sm:max-w-[86%] ml-8">
               <div className={`rounded-lg p-2 text-xs font-mono border ${tc.status === 'running' ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
                 <div className="flex items-center gap-1 mb-1">
                   {tc.status === 'running' ? (
@@ -346,7 +690,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           {Object.entries(streaming).map(([agentId, text]) => {
             const style = getAgentStyle(agentId, agentColorMap[agentId])
             return (
-              <div key={agentId} className="flex gap-2 max-w-[80%]">
+              <div key={agentId} className="flex gap-2 max-w-[92%] sm:max-w-[86%]">
                 <Avatar size="sm">
                   <AvatarFallback className={style.avatarBg}>{style.initial}</AvatarFallback>
                 </Avatar>
@@ -370,7 +714,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         <div className="border-t px-3 py-2 text-sm text-blue-600 bg-blue-50">
           {awaitingInput === 'pm_confirm' && '产品经理已确认需求，请查看并回复'}
           {awaitingInput === 'architect_plan' && '架构师已出方案，请查看并确认'}
-          {awaitingInput === 'agent_qa' && 'Agent 有问题需要你回答'}
+          {awaitingInput === 'agent_qa' && '智能体有问题需要你回答'}
           {!['pm_confirm', 'architect_plan', 'agent_qa'].includes(awaitingInput) && '等待你的输入...'}
         </div>
       )}
@@ -378,7 +722,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
         <div key={p.requestId} className="border-t px-3 py-2 text-sm bg-amber-50 text-amber-800 flex items-center justify-between">
           <span className="flex items-center gap-1">
             <Shield className="w-4 h-4" />
-            Agent 请求使用 <strong>{p.toolName}</strong>
+            智能体请求使用 <strong>{p.toolName}</strong>
             {p.toolName === 'Bash' && !!p.toolInput?.command && (
               <code className="ml-1 text-xs bg-amber-100 px-1 rounded">
                 {String(p.toolInput.command).slice(0, 80)}
@@ -396,14 +740,6 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           </div>
         </div>
       ))}
-      {phase !== 'idle' && (
-        <div className="border-t px-3 py-1 text-xs text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${phase === 'done' ? 'bg-blue-500' : phase === 'execution' ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
-          {phase === 'alignment' && '对齐中'}
-          {phase === 'execution' && '执行中'}
-          {phase === 'done' && '已完成'}
-        </div>
-      )}
       <div className="border-t p-3">
         {showCommands && (
           <div className="mb-2 bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
@@ -430,7 +766,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
             >
               <span className="text-lg">👥</span>
               <span className="text-sm font-medium">所有人</span>
-              <span className="text-xs text-gray-500">让所有 Agent 参与讨论</span>
+              <span className="text-xs text-gray-500">让所有智能体参与讨论</span>
             </button>
             {agentNames
               .filter(name => name.toLowerCase().includes(mentionQuery.toLowerCase()))
@@ -453,7 +789,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
               ))
             }
             {agentNames.filter(name => name.toLowerCase().includes(mentionQuery.toLowerCase())).length === 0 && (
-              <div className="px-3 py-2 text-sm text-gray-400">无匹配的 Agent</div>
+              <div className="px-3 py-2 text-sm text-gray-400">没有匹配的智能体</div>
             )}
           </div>
         )}
@@ -469,7 +805,7 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
             value={input}
             onChange={handleInputChange}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder="输入消息... (/ 命令，@Agent名 指定执行，@所有人 讨论)"
+            placeholder="输入消息…（/ 命令，@智能体名 指定执行，@所有人 讨论）"
             disabled={loading}
           />
           {loading ? (
@@ -493,6 +829,11 @@ export function ChatArea({ sessionId, sessionType }: { sessionId: string | null;
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <SystemEventDrawer
+        open={systemDrawerOpen}
+        onOpenChange={setSystemDrawerOpen}
+        events={systemEvents}
+      />
     </div>
   )
 }
@@ -508,7 +849,7 @@ class MessageErrorBoundary extends Component<{ children: ReactNode }, { hasError
   }
 }
 
-function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionId: string }) {
+function MessageContent({ parsed, sessionId, markdown = true }: { parsed: ParsedMessage; sessionId: string; markdown?: boolean }) {
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null)
   const [diffStatus, setDiffStatus] = useState<Record<number, 'accepted' | 'rejected'>>({})
 
@@ -557,7 +898,7 @@ function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionI
 
   const parts = parsed.text.split(/__(?:CODE_BLOCK|ARTIFACT)_(\d+)__/)
   return (
-    <div className="text-sm">
+    <div className="text-sm leading-relaxed">
       {parts.map((part, i) => {
         if (i % 2 === 1) {
           const codeBlock = parsed.codeBlocks[parseInt(part)]
@@ -617,7 +958,11 @@ function MessageContent({ parsed, sessionId }: { parsed: ParsedMessage; sessionI
 
           return null
         }
-        return part ? <span key={i} className="whitespace-pre-wrap">{part}</span> : null
+        return part ? (
+          markdown
+            ? <MarkdownMessage key={i} content={part} />
+            : <span key={i} className="whitespace-pre-wrap">{part}</span>
+        ) : null
       })}
     </div>
   )

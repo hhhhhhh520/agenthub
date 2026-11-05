@@ -16,6 +16,56 @@ export interface ParsedMessage {
   artifacts: Artifact[]
 }
 
+/**
+ * 内部协议前缀只用于编排/审计，不该出现在聊天 UI 或任务卡里。
+ * 这里只处理「开头」的标记，避免误伤正文中正常出现的同名字符串。
+ *
+ * 例：
+ * - `[DISCUSSION_SUMMARY][STATUS:success]前端工程师...`
+ * - `[REPLAN]未能生成有效任务方案...`
+ * - `[PLAN_APPROVED]plan-<id>`
+ * - `[系统验证任务] 验证以下代码任务...`
+ */
+const LEADING_PROTOCOL_MARKERS: readonly RegExp[] = [
+  /^\[DISCUSSION_SUMMARY\]/i,
+  /^\[STATUS:[^\]]*\]/i,
+  /^\[REPLAN-EXHAUSTED\]/i,
+  /^\[REPLAN\]/i,
+  /^\[PLAN_APPROVED\]plan-[0-9a-z-]+/i,
+  /^\[系统验证任务\]/,
+]
+
+/**
+ * 去掉消息/任务开头的内部协议标记，保留正文。
+ * 只用于展示层；数据库 rawContent 必须保持原样（审计、回放、协议逻辑都依赖原文）。
+ */
+export function stripProtocolMarkers(rawContent: string): string {
+  if (!rawContent) return ''
+
+  let text = rawContent
+  let changed = true
+  while (changed) {
+    changed = false
+
+    // 标记之间可能隔着空格/换行（例如 "[DISCUSSION_SUMMARY] [STATUS:success]"）
+    const trimmed = text.replace(/^\s+/, '')
+    if (trimmed !== text) {
+      text = trimmed
+      changed = true
+    }
+
+    for (const marker of LEADING_PROTOCOL_MARKERS) {
+      const next = text.replace(marker, '')
+      if (next !== text) {
+        text = next
+        changed = true
+      }
+    }
+  }
+
+  return text.trimStart()
+}
+
 export function parseMessage(rawContent: string): ParsedMessage {
   if (!rawContent) {
     return { text: '', codeBlocks: [], artifacts: [] }
@@ -52,7 +102,9 @@ export function parseMessage(rawContent: string): ParsedMessage {
     }
   )
 
-  const text = remaining.trim()
+  // 代码块/工件先抽出来，再清理协议前缀：这样 lineStart 仍按 rawContent 计算，
+  // 且代码块内部的同名字符串不会被误删。
+  const text = stripProtocolMarkers(remaining).trim()
 
   return { text, codeBlocks, artifacts }
 }

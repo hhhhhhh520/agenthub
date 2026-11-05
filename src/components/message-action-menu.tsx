@@ -20,7 +20,7 @@ interface MessageActionMenuProps {
 export function MessageActionMenu({ role, isPinned, onReply, onCopy, onQuote, onRegenerate, onPin }: MessageActionMenuProps) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200">
+      <DropdownMenuTrigger className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-gray-200" aria-label="消息操作">
         <MoreHorizontal className="w-4 h-4 text-gray-500" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
@@ -32,7 +32,7 @@ export function MessageActionMenu({ role, isPinned, onReply, onCopy, onQuote, on
         )}
         {onPin && (
           <DropdownMenuItem onClick={onPin}>
-            {isPinned ? '取消 Pin' : 'Pin 消息'}
+            {isPinned ? '取消置顶' : '置顶消息'}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>

@@ -4,6 +4,7 @@ import { acquireSessionLock } from '@/lib/session-lock'
 import { handleCreateAgent } from '@/lib/services/agent-factory'
 import { handleOrchestratorDecision, handleMentionAllDiscussion, handleDirectAgentChat, isCreateAgentIntent } from '@/lib/services/chat-router'
 import { createEventLogger, type EventLogger } from '@/lib/services/event-log'
+import { maybeAutoTitleSession } from '@/lib/services/session-title'
 import { isSessionCancelled } from '@/lib/cancellation'
 import { isSessionDeleting } from '@/lib/session-lifecycle'
 import type { TaskAttachment } from '@/lib/adapter/types'
@@ -130,6 +131,19 @@ export async function POST(
     }
 
     if (!regenerate) {
+      // 首条用户消息自动命名。只覆盖系统占位标题，失败不阻塞聊天。
+      try {
+        await maybeAutoTitleSession({
+          sessionId,
+          currentTitle: currentSession.title,
+          message,
+        })
+      } catch (err) {
+        console.warn(
+          `[chat] 自动会话标题失败: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+
       const userMsg = await prisma.message.create({
         data: { role: 'user', rawContent: message, sessionId, replyToId },
       })

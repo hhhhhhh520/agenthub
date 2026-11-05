@@ -49,6 +49,10 @@ describe('agents route: field exclusion contract', () => {
     expect(SELECTED_FIELDS).not.toContain('systemPrompt')
   })
 
+  it('deprecated Agent.status should be excluded from list responses', () => {
+    expect(SELECTED_FIELDS).not.toContain('status')
+  })
+
   it('no field name should contain secret/password/token/key patterns', () => {
     for (const field of SELECTED_FIELDS) {
       expect(field).not.toMatch(/secret|password|token|key/i)

@@ -53,7 +53,7 @@ export function DfgGraph({ edges, stateSignals }: Props) {
           return (
             <g key={`${e.from}>${e.to}`}>
               <path d={`M ${x} ${y1} C ${x + bulge} ${y1}, ${x + bulge} ${y2}, ${x} ${y2}`} fill="none" stroke="#6b7280" strokeWidth={sw} markerEnd="url(#dfg-arrow)" />
-              <text x={x + bulge + 6} y={(y1 + y2) / 2 + 4} className="fill-gray-500 text-[10px]">×{e.count}</text>
+              <text x={x + bulge + 6} y={(y1 + y2) / 2 + 4} className="fill-gray-500 text-xs">×{e.count}</text>
               <title>{label}</title>
             </g>
           )
@@ -65,7 +65,7 @@ export function DfgGraph({ edges, stateSignals }: Props) {
           return (
             <g key={`${e.from}>${e.to}`}>
               <line x1={x1} y1={NODE_Y + NODE_H / 2} x2={x2} y2={NODE_Y + NODE_H / 2} stroke="#6b7280" strokeWidth={sw} markerEnd="url(#dfg-arrow)" />
-              <text x={(x1 + x2) / 2} y={NODE_Y + NODE_H / 2 - 6} textAnchor="middle" className="fill-gray-500 text-[10px]">×{e.count}</text>
+              <text x={(x1 + x2) / 2} y={NODE_Y + NODE_H / 2 - 6} textAnchor="middle" className="fill-gray-500 text-xs">×{e.count}</text>
               <title>{label}</title>
             </g>
           )
@@ -78,7 +78,7 @@ export function DfgGraph({ edges, stateSignals }: Props) {
         return (
           <g key={`${e.from}>${e.to}`}>
             <path d={`M ${x1} ${NODE_Y + NODE_H / 2} C ${x1} ${apex}, ${x2} ${apex}, ${x2} ${NODE_Y + NODE_H / 2}`} fill="none" stroke="#6b7280" strokeWidth={sw} markerEnd="url(#dfg-arrow)" />
-            <text x={(x1 + x2) / 2} y={apex + 12} textAnchor="middle" className="fill-gray-500 text-[10px]">×{e.count}</text>
+            <text x={(x1 + x2) / 2} y={apex + 12} textAnchor="middle" className="fill-gray-500 text-xs">×{e.count}</text>
             <title>{label}</title>
           </g>
         )
@@ -102,7 +102,7 @@ export function DfgGraph({ edges, stateSignals }: Props) {
             <text x={CX(i)} y={NODE_Y + 25} textAnchor="middle" className="fill-gray-700 text-[13px]">
               {stateText(s)}
             </text>
-            <text x={CX(i)} y={NODE_Y + NODE_H + 14} textAnchor="middle" className="fill-gray-400 text-[10px]">
+            <text x={CX(i)} y={NODE_Y + NODE_H + 14} textAnchor="middle" className="fill-gray-400 text-xs">
               入{sig.visits}
               {sig.escalateCount > 0 && <tspan className="fill-yellow-700"> 升{sig.escalateCount}</tspan>}
               {sig.correctionCount > 0 && <tspan className="fill-blue-700"> 纠{sig.correctionCount}</tspan>}

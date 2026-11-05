@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { assertOkResponse } from '@/lib/http-error'
+import { ONBOARDING_CHECKLIST } from '@/lib/onboarding'
 
 interface Props {
   open: boolean
@@ -142,7 +143,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
         await assertOkResponse(orchRes, '读取配置失败')
         const orchData = await orchRes.json()
         const agentsRes = await fetch('/api/agents?preset=true')
-        await assertOkResponse(agentsRes, '读取预设 Agent 失败')
+        await assertOkResponse(agentsRes, '读取预设智能体失败')
         const agents = await agentsRes.json()
         for (const agent of agents) {
           const updateRes = await fetch(`/api/agents/${agent.id}`, {
@@ -153,7 +154,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
               model: orchData.model || model,
             }),
           })
-          await assertOkResponse(updateRes, `更新 Agent ${agent.name || agent.id} 失败`)
+          await assertOkResponse(updateRes, `更新智能体 ${agent.name || agent.id} 失败`)
         }
       }
 
@@ -165,7 +166,6 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
       await assertOkResponse(completeRes, '保存完成状态失败')
 
       setStep('done')
-      setTimeout(() => { onComplete(); onOpenChange(false) }, 1500)
     } catch (e) {
       setError(e instanceof Error ? e.message : '保存失败')
     } finally {
@@ -196,15 +196,15 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
             <DialogHeader>
               <DialogTitle>欢迎使用 AgentHub</DialogTitle>
               <DialogDescription>
-                AgentHub 是一个多 Agent 协作平台，通过 CLI 工具（Claude Code / OpenCode）驱动 Agent 执行任务。
+                AgentHub 是一个多智能体协作平台，通过 CLI 工具（Claude Code / OpenCode）驱动智能体执行任务。
               </DialogDescription>
             </DialogHeader>
             <div className="text-sm text-gray-600 space-y-2 mt-2">
               <p>配置后你将获得：</p>
               <ul className="list-disc ml-4 space-y-1">
-                <li>智能推荐：根据任务描述自动选择合适的 Agent</li>
-                <li>任务协调：Orchestrator 分析需求并分配给专业 Agent</li>
-                <li>多 Agent 讨论：Agent 之间协作解决复杂问题</li>
+                <li>智能推荐：根据任务描述自动选择合适的智能体</li>
+                <li>任务协调：Orchestrator 分析需求并分配给专业智能体</li>
+                <li>多智能体讨论：智能体之间协作解决复杂问题</li>
               </ul>
             </div>
             {error && <p className="text-sm text-red-500">{error}</p>}
@@ -332,11 +332,11 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
         {step === 'agents' && (
           <>
             <DialogHeader>
-              <DialogTitle>预设 Agent 平台设置</DialogTitle>
+              <DialogTitle>预设智能体平台设置</DialogTitle>
               <DialogDescription>
                 {detectedPlatform
-                  ? `检测到 ${detectedPlatform === 'claude-code' ? 'Claude CLI' : 'OpenCode CLI'}，预设 Agent 将使用 CLI 平台。`
-                  : '未检测到 CLI，预设 Agent 将使用 LLM API 平台。'}
+                  ? `检测到 ${detectedPlatform === 'claude-code' ? 'Claude CLI' : 'OpenCode CLI'}，预设智能体将使用 CLI 平台。`
+                  : '未检测到 CLI，预设智能体将使用 LLM API 平台。'}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3">
@@ -348,7 +348,7 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
                     onChange={e => setApplyToPresets(e.target.checked)}
                     className="accent-blue-500"
                   />
-                  将预设 Agent 改为 LLM API 平台（CLI 不可用时的备选方案）
+                  将预设智能体改为 LLM API 平台（CLI 不可用时的备选方案）
                 </label>
               )}
               <p className="text-xs text-gray-500">
@@ -370,8 +370,28 @@ export function SetupWizard({ open, onOpenChange, onComplete }: Props) {
           <>
             <DialogHeader>
               <DialogTitle>配置完成</DialogTitle>
+              <DialogDescription>
+                接下来按这 3 步开始；需要你确认时，聊天顶部会给出提示。
+              </DialogDescription>
             </DialogHeader>
-            <p className="text-sm text-gray-600">配置已保存，即将进入 AgentHub 主界面。</p>
+            <div className="space-y-2">
+              {ONBOARDING_CHECKLIST.map((item, index) => (
+                <div key={item.title} className="flex gap-3 rounded-lg border bg-muted/30 p-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                    {index === 0 ? '✓' : index + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{item.title}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{item.detail}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button onClick={() => { onComplete(); onOpenChange(false) }}>
+                开始使用
+              </Button>
+            </DialogFooter>
           </>
         )}
       </DialogContent>

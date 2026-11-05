@@ -42,11 +42,11 @@ describe('GET /api/sessions（列表）', () => {
     }))
   })
 
-  it('archived 过滤参数透传', async () => {
+  it('archived=true 只返回已归档会话', async () => {
     mockFindMany.mockResolvedValueOnce([])
     await GET(makeReq('http://localhost/api/sessions?archived=true'))
     expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: {}, // archived=true 不过滤
+      where: { isArchived: true },
       omit: { decisionTrace: true },
     }))
   })

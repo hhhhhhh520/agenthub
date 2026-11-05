@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
-import { callLLMForAnalysis, parseJSON } from '@/lib/orchestrator'
+import { callLLMForAnalysis } from '@/lib/orchestrator'
 
 // Quick recommendation for session creation UI.
 // At runtime, the Orchestrator autonomously selects agents via delegate/discuss actions.
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   const agents = await prisma.agent.findMany({
     select: {
       id: true, name: true, expertise: true, platform: true, model: true,
-      baseUrl: true, isPreset: true, accentColor: true, capabilities: true, status: true, tools: true,
+      baseUrl: true, isPreset: true, accentColor: true, capabilities: true, tools: true,
     },
     orderBy: { name: 'asc' },
   })

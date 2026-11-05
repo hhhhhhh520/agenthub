@@ -10,22 +10,22 @@ import { Input } from "@/components/ui/input"
 import { CreateAgentDialog } from "@/components/create-agent-dialog"
 import { ProviderImportDialog } from "@/components/provider-import-dialog"
 import { assertOkResponse } from "@/lib/http-error"
+import type { AgentPresenceSummary } from "@/lib/agent-presence"
 
-interface Agent {
+interface Agent extends AgentPresenceSummary {
   id: string
   name: string
   expertise: string
   platform: string
   model?: string
-  status: string
   accentColor: string
   capabilities: string
 }
 
 const statusLabels: Record<string, { text: string; color: string }> = {
   idle: { text: "空闲", color: "bg-gray-400" },
-  working: { text: "工作中", color: "bg-yellow-500" },
-  done: { text: "已完成", color: "bg-green-500" },
+  working: { text: "工作中", color: "bg-emerald-500 animate-pulse" },
+  done: { text: "已完成", color: "bg-blue-500" },
   error: { text: "异常", color: "bg-red-500" },
 }
 
@@ -53,7 +53,7 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-2xl font-semibold">智能体</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            选择或创建 AI Agent，配置模型和技能，参与多 Agent 协作
+            选择或创建智能体，配置模型和技能，参与多智能体协作
           </p>
         </div>
         <div className="flex gap-2">
@@ -81,13 +81,16 @@ export default function AgentsPage() {
             <tr className="border-b bg-muted/50">
               <th className="px-4 py-2 text-xs font-medium text-muted-foreground text-left">智能体</th>
               <th className="px-4 py-2 text-xs font-medium text-muted-foreground text-left">描述</th>
-              <th className="px-4 py-2 text-xs font-medium text-muted-foreground text-left">状态</th>
+              <th className="px-4 py-2 text-xs font-medium text-muted-foreground text-left">当前会话</th>
               <th className="px-4 py-2 text-xs font-medium text-muted-foreground text-left">运行时</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((agent) => {
               const caps: string[] = (() => { try { return JSON.parse(agent.capabilities) } catch { return [] } })()
+              const current = agent.currentSession
+              const status = current ? (statusLabels[current.status] || { text: current.status, color: "bg-gray-400" }) : null
+              const workingCount = agent.workingSessionCount || 0
               return (
                 <tr key={agent.id} className="border-b last:border-0 hover:bg-accent/50 transition-colors">
                   <td className="px-4 py-3">
@@ -111,10 +114,34 @@ export default function AgentsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full ${statusLabels[agent.status]?.color || "bg-gray-400"}`} />
-                      <span className="text-xs">{statusLabels[agent.status]?.text || agent.status}</span>
-                    </div>
+                    {workingCount > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-xs font-medium text-emerald-700">工作中</span>
+                        {workingCount > 1 && (
+                          <span className="text-xs text-muted-foreground">· {workingCount} 个会话</span>
+                        )}
+                      </div>
+                    ) : status ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className={`h-2 w-2 rounded-full ${status.color}`} />
+                        <span className="text-xs">{status.text}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">未加入会话</span>
+                    )}
+                    {current && (
+                      <Link
+                        href={`/chat?session=${current.id}`}
+                        className="mt-1 block max-w-[180px] truncate text-xs text-muted-foreground hover:text-foreground"
+                        title={current.title}
+                      >
+                        {current.title}
+                      </Link>
+                    )}
+                    {agent.sessionCount > 1 && (
+                      <span className="mt-0.5 block text-xs text-muted-foreground">共 {agent.sessionCount} 个会话</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs text-muted-foreground">{agent.platform === 'opencode' ? 'OpenCode' : 'Claude Code'}</span>

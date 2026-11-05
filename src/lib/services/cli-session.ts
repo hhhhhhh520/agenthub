@@ -44,3 +44,21 @@ export async function invalidateCliSession(opts: {
   ])
   return { applied: taskRes.count === 1 }
 }
+
+/**
+ * U6：Agent 的角色名 / systemPrompt / 平台变更后，清空该 Agent 在所有会话与任务上的
+ * CLI sessionId。旧 CLI 会话里“我是 opencode / Claude Code”的身份记忆不能带进新角色。
+ * 只允许在本文件写 `cliSessionId: null`（架构守卫要求统一入口）。
+ */
+export async function invalidateAgentCliSessions(agentId: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.sessionMember.updateMany({
+      where: { agentId },
+      data: { cliSessionId: null },
+    }),
+    prisma.task.updateMany({
+      where: { assignedAgentId: agentId },
+      data: { cliSessionId: null },
+    }),
+  ])
+}

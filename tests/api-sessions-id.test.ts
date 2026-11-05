@@ -168,6 +168,22 @@ describe('PUT /api/sessions/[id]', () => {
     expect(data).not.toHaveProperty('isPinned')
     expect(data).not.toHaveProperty('isArchived')
   })
+
+  it('trims the title before updating', async () => {
+    mockUpdate.mockResolvedValueOnce({ id: 's1' })
+    await PUT(makeReq('PUT', { title: '  登录页重构  ' }), params)
+    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { title: '登录页重构' },
+    }))
+  })
+
+  it('rejects empty, non-string and overlong titles', async () => {
+    for (const title of ['   ', 42, '一'.repeat(121)]) {
+      const res = await PUT(makeReq('PUT', { title }), params)
+      expect(res.status).toBe(400)
+    }
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
   // P4 T5 审查整改: PUT 的 omit 排除已由上方 toHaveBeenCalledWith 含 omit: { decisionTrace: true } 断言覆盖
 })
 

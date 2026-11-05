@@ -8,7 +8,6 @@ interface Agent {
   expertise: string
   platform: string
   accentColor: string
-  status: string
 }
 
 interface Session {

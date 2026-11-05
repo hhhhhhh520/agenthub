@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { AgentPanel } from "@/components/agent-panel"
+import { EmptyState } from "@/components/empty-state"
 import { applyProjectPermissionEvent, type ProjectPendingPermission } from "@/lib/project-permissions"
 
 interface Session {
@@ -165,12 +166,12 @@ export default function ProjectDetailPage() {
             <div className="p-2 space-y-1">
               {messages.map((msg) => {
                 const agent = msg.agentId ? agentMap[msg.agentId] : null
-                const senderName = msg.role === "user" ? "你" : msg.role === "orchestrator" ? "Orchestrator" : agent?.name || "Agent"
+                const senderName = msg.role === "user" ? "你" : msg.role === "orchestrator" ? "Orchestrator" : agent?.name || "智能体"
                 return (
                   <div key={msg.id} className="p-2 rounded text-sm hover:bg-accent cursor-pointer">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-xs">{senderName}</span>
-                      <span className="text-xs text-muted-foreground ml-auto">
+                      <span className="text-xs text-muted-foreground ml-auto" title={new Date(msg.createdAt).toLocaleString()}>
                         {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                     </div>
@@ -189,11 +190,11 @@ export default function ProjectDetailPage() {
           <ScrollArea className="flex-1 p-4">
             <div className="space-y-4 max-w-3xl mx-auto">
               {messages.length === 0 && (
-                <div className="text-center text-muted-foreground text-sm py-12">暂无消息</div>
+                <EmptyState title="还没有消息" description="在下方输入框发出第一条需求，Orchestrator 会开始对齐。" />
               )}
               {messages.map((msg) => {
                 const agent = msg.agentId ? agentMap[msg.agentId] : null
-                const senderName = msg.role === "user" ? "你" : msg.role === "orchestrator" ? "Orchestrator" : agent?.name || "Agent"
+                const senderName = msg.role === "user" ? "你" : msg.role === "orchestrator" ? "Orchestrator" : agent?.name || "智能体"
                 const color = msg.role === "user" ? "#6366f1" : agent?.accentColor || "#f59e0b"
                 return (
                   <div key={msg.id} className="flex gap-3">
@@ -205,7 +206,7 @@ export default function ProjectDetailPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-medium text-sm">{senderName}</span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-xs text-muted-foreground" title={new Date(msg.createdAt).toLocaleString()}>
                           {new Date(msg.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
@@ -224,7 +225,7 @@ export default function ProjectDetailPage() {
             <div key={p.requestId} className="border-t px-3 py-2 text-sm bg-amber-50 text-amber-800 flex items-center justify-between gap-3">
               <span className="flex items-center gap-1 min-w-0">
                 <Shield className="w-4 h-4 shrink-0" />
-                Agent 请求使用 <strong>{p.toolName}</strong>
+                智能体请求使用 <strong>{p.toolName}</strong>
                 {p.toolName === 'Bash' && !!p.toolInput?.command && (
                   <code className="ml-1 text-xs bg-amber-100 px-1 rounded truncate">{String(p.toolInput.command)}</code>
                 )}

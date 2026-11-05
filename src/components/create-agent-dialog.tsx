@@ -229,7 +229,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
         body: JSON.stringify(body),
       })
       if (res.status === 409) {
-        setError('Agent 名称已存在')
+        setError('智能体名称已存在')
         return
       }
       if (!res.ok) {
@@ -238,7 +238,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
       }
       const data = await res.json()
       reset()
-      toast.success(isEdit ? 'Agent 已保存' : 'Agent 已创建')
+      toast.success(isEdit ? '智能体已保存' : '智能体已创建')
       onOpenChange(false)
       onCreated(data.id)
     } catch {
@@ -274,7 +274,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
     <Dialog open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v) }}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? '编辑 Agent' : '创建 Agent'}</DialogTitle>
+          <DialogTitle>{isEdit ? '编辑智能体' : '创建智能体'}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <div>
@@ -306,7 +306,7 @@ export function CreateAgentDialog({ open, onOpenChange, onCreated, editAgent }: 
               value={systemPrompt}
               onChange={e => setSystemPrompt(e.target.value)}
               onBlur={() => markTouched('systemPrompt')}
-              placeholder="定义 Agent 的角色和行为规范..."
+              placeholder="定义智能体的角色和行为规范..."
             />
             {fieldError('systemPrompt', systemPrompt) && <p className="text-xs text-red-500 mt-1">{fieldError('systemPrompt', systemPrompt)}</p>}
           </div>

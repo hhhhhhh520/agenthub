@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMessage } from '../src/lib/message-parser'
+import { parseMessage, stripProtocolMarkers } from '../src/lib/message-parser'
 
 describe('parseMessage', () => {
   it('should parse plain text without code blocks', () => {
@@ -149,5 +149,60 @@ Link text
 
     expect(result.artifacts[0].meta.href).toBe('https://example.com/?a=b')
     expect(result.artifacts[0].meta.title).toBe('A=B')
+  })
+})
+
+describe('stripProtocolMarkers', () => {
+  it('strips discussion summary + status prefix', () => {
+    expect(stripProtocolMarkers('[DISCUSSION_SUMMARY][STATUS:success]前端工程师（第1轮）：建议用 React'))
+      .toBe('前端工程师（第1轮）：建议用 React')
+  })
+
+  it('strips markers separated by whitespace', () => {
+    expect(stripProtocolMarkers('[DISCUSSION_SUMMARY] [STATUS:failed]\n需求不够具体'))
+      .toBe('需求不够具体')
+  })
+
+  it('strips replan prefixes', () => {
+    expect(stripProtocolMarkers('[REPLAN]未能生成有效任务方案')).toBe('未能生成有效任务方案')
+    expect(stripProtocolMarkers('[REPLAN-EXHAUSTED]连续 3 次未能生成有效任务方案'))
+      .toBe('连续 3 次未能生成有效任务方案')
+  })
+
+  it('strips plan approval records', () => {
+    expect(stripProtocolMarkers('[PLAN_APPROVED]plan-abc123')).toBe('')
+  })
+
+  it('strips the system verification task prefix', () => {
+    expect(stripProtocolMarkers('[系统验证任务] 验证以下代码任务')).toBe('验证以下代码任务')
+  })
+
+  it('only strips markers at the beginning', () => {
+    expect(stripProtocolMarkers('说明 [STATUS:success] 的含义')).toBe('说明 [STATUS:success] 的含义')
+  })
+
+  it('returns empty string for empty input', () => {
+    expect(stripProtocolMarkers('')).toBe('')
+  })
+})
+
+describe('parseMessage protocol cleanup', () => {
+  it('cleans display text but keeps protocol-like strings inside code blocks', () => {
+    const input = '[DISCUSSION_SUMMARY][STATUS:success]报告如下：\n\n```js\nconst tag = "[REPLAN] not a real marker"\n```'
+    const result = parseMessage(input)
+
+    expect(result.text).toContain('报告如下')
+    expect(result.text).not.toContain('[DISCUSSION_SUMMARY]')
+    expect(result.text).not.toContain('[STATUS:')
+    expect(result.codeBlocks).toHaveLength(1)
+    expect(result.codeBlocks[0].code).toContain('[REPLAN] not a real marker')
+  })
+
+  it('keeps code fence line numbers when a protocol prefix exists', () => {
+    const input = '[DISCUSSION_SUMMARY][STATUS:success]\n```js\nconst x = 1\n```'
+    const result = parseMessage(input)
+
+    expect(result.codeBlocks).toHaveLength(1)
+    expect(result.codeBlocks[0].lineStart).toBe(2)
   })
 })

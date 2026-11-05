@@ -12,6 +12,18 @@ import { createTaskPoller } from '@/lib/task-poller'
 import { assertOkResponse } from '@/lib/http-error'
 import { CreateAgentDialog } from '@/components/create-agent-dialog'
 import { ProviderImportDialog } from '@/components/provider-import-dialog'
+import { TaskCard } from '@/components/task-card'
+import { TaskTraceDialog, type TraceEntry } from '@/components/task-trace-dialog'
+import { EmptyState } from '@/components/empty-state'
+import {
+  isSystemTask,
+  splitTaskBoard,
+  summarizeTaskBoard,
+  summarizeTasks,
+  systemTaskTitle,
+  taskDisplayTitle,
+  type TaskBoardCounts,
+} from '@/lib/task-board'
 import { toast } from 'sonner'
 
 interface Agent {
@@ -23,7 +35,7 @@ interface Agent {
   model?: string
   baseUrl?: string
   apiKey?: string
-  status: string
+  status?: string
   accentColor: string
   capabilities: string
   parsedCapabilities: string[]
@@ -34,17 +46,10 @@ interface Task {
   id: string
   description: string
   status: string
-  assignedAgentId: string
+  assignedAgentId?: string
   dependencies: string
+  declaredFiles?: string
   trace?: string
-}
-
-const TASK_STATUS_ICONS: Record<string, string> = {
-  pending: '⬜',
-  in_progress: '🔄',
-  completed: '✅',
-  failed: '❌',
-  blocked: '⏸',
 }
 
 const parseCaps = (caps: string): string[] => {
@@ -56,8 +61,9 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
   const [tasks, setTasks] = useState<Task[]>([])
   const [agentsLoading, setAgentsLoading] = useState(true)
   const [tasksLoading, setTasksLoading] = useState(true)
-  const [expandedTraces, setExpandedTraces] = useState<Set<string>>(new Set())
-  const [tab, setTab] = useState<'agents' | 'tasks'>('agents')
+  const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
+  const [traceTask, setTraceTask] = useState<Task | null>(null)
+  const [tab, setTab] = useState<'agents' | 'tasks'>('tasks')
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null)
@@ -84,7 +90,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
       }
     } catch (err) {
       console.error('Failed to load agents:', err)
-      toast.error('加载 Agent 列表失败')
+      toast.error('加载智能体列表失败')
     } finally {
       setAgentsLoading(false)
     }
@@ -111,12 +117,39 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
 
   // Memoize parsed traces to avoid JSON.parse on every render
   const parsedTraces = useMemo(() => {
-    const map = new Map<string, Array<{ ts: string; event: string; message?: string; agent?: string; attempt?: number; duration_ms?: number }>>()
+    const map = new Map<string, TraceEntry[]>()
     for (const task of tasks) {
-      try { map.set(task.id, JSON.parse(task.trace || '[]')) } catch { map.set(task.id, []) }
+      try {
+        const parsed: unknown = JSON.parse(task.trace || '[]')
+        map.set(task.id, Array.isArray(parsed) ? parsed as TraceEntry[] : [])
+      } catch {
+        map.set(task.id, [])
+      }
     }
     return map
   }, [tasks])
+
+  const { batches, systemTasks } = useMemo(() => splitTaskBoard(tasks), [tasks])
+  const boardSummary = useMemo(() => summarizeTaskBoard(tasks), [tasks])
+  const agentNameById = useMemo(
+    () => new Map(agents.map(agent => [agent.id, agent.name])),
+    [agents],
+  )
+
+  const toggleTask = (id: string) => {
+    setExpandedTasks(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const traceTaskTitle = traceTask
+    ? (isSystemTask(traceTask.description)
+        ? systemTaskTitle(traceTask.description)
+        : taskDisplayTitle(traceTask.description))
+    : ''
 
   return (
     <div className="w-72 border-l bg-gray-50 dark:bg-gray-900 dark:border-gray-700 flex flex-col min-h-0 overflow-hidden">
@@ -125,13 +158,13 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           className={`flex-1 p-2 text-sm font-medium ${tab === 'agents' ? 'border-b-2 border-blue-500' : ''}`}
           onClick={() => setTab('agents')}
         >
-          Agents ({agents.length})
+          智能体 ({agents.length})
         </button>
         <button
           className={`flex-1 p-2 text-sm font-medium ${tab === 'tasks' ? 'border-b-2 border-blue-500' : ''}`}
           onClick={() => setTab('tasks')}
         >
-          Tasks ({tasks.length})
+          任务 ({tasks.length})
         </button>
       </div>
       <ScrollArea className="flex-1 min-h-0 overflow-hidden">
@@ -140,7 +173,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             <>
               <div className="flex gap-1">
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowCreate(true)}>
-                  + 创建 Agent
+                  + 创建智能体
                 </Button>
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowImport(true)}>
                   导入服务商
@@ -159,9 +192,11 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                   ))}
                 </div>
               ) : agents.length === 0 ? (
-                <div className="text-center text-gray-400 dark:text-gray-500 text-xs py-6">
-                  还没有 Agent，创建或导入一个
-                </div>
+                <EmptyState
+                  compact
+                  title="还没有智能体"
+                  description="创建或导入一个智能体，然后开始对话。"
+                />
               ) : agents.map(agent => {
                 const style = getAgentStyle(agent.name, agent.accentColor)
                 const caps = agent.parsedCapabilities || []
@@ -188,7 +223,9 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                           私聊
                         </button>
                       )}
-                      <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[agent.status] || 'bg-gray-400'}`} />
+                      {agent.status && (
+                        <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[agent.status] || 'bg-gray-400'}`} />
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 mt-1 ml-9">{agent.expertise}</div>
                     {caps.length > 0 && (
@@ -217,52 +254,70 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
                 ))}
               </div>
             ) : tasks.length === 0 ? (
-              <div className="text-center text-gray-400 dark:text-gray-500 text-xs py-6">
-                暂无任务，开始对话后会在这里显示
-              </div>
-            ) : tasks.map(task => {
-            const traceEntries = parsedTraces.get(task.id) || []
-            const isExpanded = expandedTraces.has(task.id)
-            return (
-              <div key={task.id} className="p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-sm">
-                <div className="flex items-center gap-2">
-                  <span>{TASK_STATUS_ICONS[task.status] || task.status}</span>
-                  <span className="flex-1">{task.description}</span>
-                  {traceEntries.length > 0 && (
-                    <button
-                      onClick={() => setExpandedTraces(prev => { const next = new Set(prev); next.has(task.id) ? next.delete(task.id) : next.add(task.id); return next })}
-                      className="text-xs text-gray-400 hover:text-gray-600"
-                    >
-                      {isExpanded ? '收起' : `trace(${traceEntries.length})`}
-                    </button>
-                  )}
-                  {(task.status === 'failed' || task.status === 'blocked') && (
-                    <button
-                      onClick={() => { setRedoTask(task); setRedoDescription(task.description) }}
-                      className="text-xs text-blue-500 hover:underline whitespace-nowrap"
-                    >
-                      重做
-                    </button>
-                  )}
-                </div>
-                {isExpanded && traceEntries.length > 0 && (
-                  <div className="mt-2 text-xs text-gray-500 space-y-0.5 font-mono">
-                    {traceEntries.map((entry, i) => (
-                      <div key={i}>
-                        {entry.event === 'start' && `▶ ${entry.agent || '?'} 开始执行`}
-                        {entry.event === 'success' && `✓ 完成${entry.duration_ms ? ` (${entry.duration_ms}ms)` : ''}`}
-                        {entry.event === 'error' && `✗ 失败: ${entry.message || '未知错误'}`}
-                        {entry.event === 'correction' && `↻ 纠偏 #${entry.attempt}: ${entry.message || ''}`}
-                        {entry.event === 'blocked' && `⏸ 阻塞: ${entry.message || ''}`}
-                        {entry.event === 'monitor' && `🔍 结构化监控: ${entry.message || ''}`}
-                        {entry.event === 'preflight' && `🚦 preflight: ${entry.message || ''}`}
+              <EmptyState
+                compact
+                title="暂无任务"
+                description="发出第一条需求后，这里会显示拆解结果与执行进度。"
+              />
+            ) : (
+              <>
+                <TaskProgress summary={boardSummary} />
+
+                {batches.map(({ batch, tasks: batchTasks }) => {
+                  const batchSummary = summarizeTasks(batchTasks)
+                  return (
+                    <div key={batch} className="space-y-1.5">
+                      <div className="flex items-center justify-between px-1 pt-1">
+                        <span className="text-xs font-medium text-gray-500">第 {batch + 1} 批</span>
+                        <span className="text-xs text-gray-400">
+                          {batchSummary.done}/{batchSummary.total}
+                          {batchSummary.running > 0 && <span className="text-blue-500"> · 执行 {batchSummary.running}</span>}
+                          {batchSummary.failed > 0 && <span className="text-red-500"> · 失败 {batchSummary.failed}</span>}
+                          {batchSummary.blocked > 0 && <span className="text-amber-600"> · 阻塞 {batchSummary.blocked}</span>}
+                        </span>
                       </div>
+                      {batchTasks.map(task => (
+                        <TaskCard
+                          key={task.id}
+                          task={task}
+                          agentName={task.assignedAgentId ? agentNameById.get(task.assignedAgentId) : undefined}
+                          traceCount={(parsedTraces.get(task.id) || []).length}
+                          expanded={expandedTasks.has(task.id)}
+                          onToggle={() => toggleTask(task.id)}
+                          onOpenTrace={() => setTraceTask(task)}
+                          onRedo={() => {
+                            setRedoTask(task)
+                            setRedoDescription(task.description)
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )
+                })}
+
+                {systemTasks.length > 0 && (
+                  <div className="pt-2 space-y-1.5">
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-xs font-medium text-gray-500">系统校验</span>
+                      <span className="text-xs text-gray-400">
+                        {systemTasks.filter(task => task.status === 'completed').length}/{systemTasks.length}
+                      </span>
+                    </div>
+                    {systemTasks.map(task => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        agentName={task.assignedAgentId ? agentNameById.get(task.assignedAgentId) : undefined}
+                        traceCount={(parsedTraces.get(task.id) || []).length}
+                        expanded={expandedTasks.has(task.id)}
+                        onToggle={() => toggleTask(task.id)}
+                        onOpenTrace={() => setTraceTask(task)}
+                      />
                     ))}
                   </div>
                 )}
-              </div>
+              </>
             )
-          })
           )}
         </div>
       </ScrollArea>
@@ -279,6 +334,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             })
           }
           loadAgents()
+          if (sessionId) window.dispatchEvent(new Event('agenthub:members-changed'))
         }}
       />
       {editingAgent && (
@@ -286,7 +342,11 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           open={!!editingAgent}
           onOpenChange={(open) => { if (!open) setEditingAgent(null) }}
           editAgent={editingAgent}
-          onCreated={() => { setEditingAgent(null); loadAgents() }}
+          onCreated={() => {
+            setEditingAgent(null)
+            loadAgents()
+            if (sessionId) window.dispatchEvent(new Event('agenthub:members-changed'))
+          }}
         />
       )}
       <ProviderImportDialog
@@ -311,6 +371,7 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
             await assertOkResponse(memberRes, '加入当前会话失败')
           }
           loadAgents()
+          if (sessionId) window.dispatchEvent(new Event('agenthub:members-changed'))
         }}
       />
       {redoTask && sessionId && (
@@ -386,6 +447,43 @@ export function AgentPanel({ sessionId, onPrivateChat }: { sessionId: string | n
           </DialogContent>
         </Dialog>
       )}
+      <TaskTraceDialog
+        open={!!traceTask}
+        onOpenChange={(open) => { if (!open) setTraceTask(null) }}
+        taskId={traceTask?.id}
+        title={traceTaskTitle}
+        entries={traceTask ? (parsedTraces.get(traceTask.id) || []) : []}
+        raw={traceTask?.trace || ''}
+      />
+    </div>
+  )
+}
+
+function TaskProgress({ summary }: { summary: TaskBoardCounts }) {
+  const percent = summary.total > 0 ? Math.round((summary.done / summary.total) * 100) : 0
+  const barTone = summary.total > 0 && summary.done === summary.total
+    ? 'bg-emerald-500'
+    : summary.failed + summary.blocked > 0
+      ? 'bg-amber-500'
+      : 'bg-blue-500'
+
+  return (
+    <div className="rounded-md border bg-white p-2 dark:bg-gray-800 dark:border-gray-700">
+      <div className="flex items-center justify-between text-xs">
+        <span className="font-medium">任务进度</span>
+        <span className="text-gray-500">{summary.done}/{summary.total}</span>
+      </div>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+        <div className={`h-full rounded-full ${barTone}`} style={{ width: `${percent}%` }} />
+      </div>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
+        {summary.running > 0 && <span className="text-blue-500">执行中 {summary.running}</span>}
+        {summary.pending > 0 && <span>待执行 {summary.pending}</span>}
+        {summary.failed > 0 && <span className="text-red-500">失败 {summary.failed}</span>}
+        {summary.blocked > 0 && <span className="text-amber-600">阻塞 {summary.blocked}</span>}
+        {summary.system > 0 && <span>系统校验 {summary.system}</span>}
+        {summary.total === 0 && <span>暂无用户任务</span>}
+      </div>
     </div>
   )
 }

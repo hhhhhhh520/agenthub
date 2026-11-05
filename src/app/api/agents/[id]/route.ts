@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { invalidateAgentCliSessions } from '@/lib/services/cli-session'
 
 export async function GET(
   request: Request,
@@ -8,7 +9,7 @@ export async function GET(
   const { id } = await params
   const agent = await prisma.agent.findUnique({
     where: { id },
-    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true },
   })
   if (!agent) {
     return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
@@ -29,6 +30,11 @@ export async function PUT(
   }
 
   const { name, expertise, systemPrompt, platform, model, baseUrl, apiKey, tools, capabilities, accentColor, providerRef } = body
+
+  const identityChanged =
+    (name !== undefined && name !== agent.name) ||
+    (systemPrompt !== undefined && systemPrompt !== agent.systemPrompt) ||
+    (platform !== undefined && platform !== agent.platform)
 
   // #34 修复 ④:providerRef 路径——服务端解析真 apiKey,前端永远不传明文
   let resolvedApiKey: string | undefined
@@ -72,8 +78,21 @@ export async function PUT(
       ...(capabilities !== undefined && { capabilities: JSON.stringify(capabilities) }),
       ...(accentColor !== undefined && { accentColor }),
     },
-    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true, status:true },
+    select: { id:true, name:true, expertise:true, systemPrompt:true, platform:true, model:true, baseUrl:true, tools:true, isPreset:true, accentColor:true, capabilities:true },
   })
+
+  // U6: 角色名 / systemPrompt / 平台变了，旧 CLI 会话里的身份记忆就是脏数据。
+  // 清掉该 Agent 在所有会话/任务上的 cliSessionId，让下一次执行起全新 CLI 会话。
+  if (identityChanged) {
+    try {
+      await invalidateAgentCliSessions(id)
+    } catch (err) {
+      console.warn(
+        `[agents/:id] 身份变更后清理 cliSessionId 失败: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+
   return NextResponse.json(updated)
 }
 

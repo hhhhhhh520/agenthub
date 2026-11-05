@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useState, useEffect } from 'react'
+import { Suspense, useState } from 'react'
 import { SessionSidebar } from '@/components/session-sidebar'
 import { ChatArea } from '@/components/chat-area'
 import { AgentPanel } from '@/components/agent-panel'
@@ -7,7 +7,7 @@ import { CreateGroupDialog } from '@/components/create-group-dialog'
 import { useSessions } from '@/lib/hooks/use-sessions'
 
 function ChatContent() {
-  const { sessions, activeId, setActiveId, create, remove, refresh, isLoading } = useSessions()
+  const { sessions, activeId, setActiveId, create, remove, removeMany, rename, archiveMany, refresh, isLoading } = useSessions()
   const [showCreateGroup, setShowCreateGroup] = useState(false)
 
   return (
@@ -24,6 +24,9 @@ function ChatContent() {
           setActiveId(session.id)
         }}
         onDelete={remove}
+        onDeleteMany={removeMany}
+        onArchiveMany={archiveMany}
+        onRename={rename}
       />
       <CreateGroupDialog
         open={showCreateGroup}
