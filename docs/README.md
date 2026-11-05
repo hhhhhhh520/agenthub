@@ -2,7 +2,7 @@
 
 ## 设计文档
 
-- [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项架构决策，当前有效的设计权威文档
+- [v2 设计决策](design/agenthub-v2-design-decisions.md) — 22 项历史架构决策；#12「Orchestrator 固定 LLM API」已被 CLI-first 取代（见 CLAUDE.md）
 - [卓越路线图](design/roadmap-to-excellence.md) — 对标 Codeg 的工程质量路线图（v59：CI 门禁/coverage、架构守卫、SSE 重放/取消安全、锁队列/取消、批次审计、双维度权限、MCP 最新消息分页、v2 migration 回填、P5 路径隔离、parser CRLF/行号/metadata；Round 7 三项补修待复核）
 - [修复待办总表](design/repair-backlog-2026-10-20.md) — **review**：P3 27 项均已修复；Round 7 重开 #14/#21/#24 已补修，待独立复核；仅 #3 为已接受风险
 - [写入点清单](design/phase2-3.2-write-points.md) — 全部状态写点的条件写语义与竞态窗口分析（§3.2 拍板）
@@ -23,6 +23,12 @@
 - [Round 7 复核补修记录](design/handoff-2026-10-21-round7.md) — **当前待复核入口**：#21 旧会话异步状态、#24 手动草稿连接测试、#14 实际请求体上限
 - [P3 剩余 7 项一次性修复交接](design/handoff-2026-10-21-remaining.md) — 历史任务说明（已完成，保留根因与验收口径）
 - [2026-10-19 Batch 0 交接](design/handoff-2026-10-19-batch0.md) — 历史交接：锁队列/取消/审计/权限/发布门禁；当前任务以修复待办总表为准
+
+## UX 改造（2026-11）
+
+- [UX TODO](TODO-ux.md) — **2026-11-04 状态**：U1–U13 已完成（Markdown/协议标记、会话 Header、系统事件抽屉、Task 面板、OpenCode 权限、角色身份、会话管理、视觉层级、Agent 状态、耗时/等待态、首次引导、历史消息卫生、Golden path 回归）；U14–U15 为 P2 架构遗留
+- [3 分钟 Demo 脚本](demo-3min.md) — 固定用例、时间轴、旁白、点击路径与应急
+- [架构拆解图](diagrams/agenthub-architecture.html) — 可编辑 HTML；[PNG](diagrams/agenthub-architecture.png) 2880×2200（2x）
 
 ## 参考资料
 

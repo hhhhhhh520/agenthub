@@ -1,6 +1,7 @@
 # AgentHub v2 设计决策记录
 
 > 讨论时间: 2026-05-20 | 状态: 22项决策全部确认，阶段1-6已实现
+> 2026-11 补注：决策 #12 的「Orchestrator 固定 LLM API」已被 CLI-first 取代（Orchestrator 也是 CLI Agent）；其余决策保留为历史参考。
 
 ---
 

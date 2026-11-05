@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>AgentHub 架构拆解</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #E9E3D7; }
+  body { -webkit-font-smoothing: antialiased; }
+
+  .stage {
+    position: relative;
+    width: 1440px;
+    height: 1100px;
+    overflow: hidden;
+    color: #2A2621;
+    font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background:
+      radial-gradient(1100px 680px at 48% 30%, #FDFAF4 0%, #FAF6EE 58%, #F6F1E6 100%);
+  }
+  /* 纸面颗粒 */
+  .stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+    opacity: .22;
+    background-image: radial-gradient(rgba(110, 90, 60, .10) .55px, transparent .55px);
+    background-size: 3px 3px;
+  }
+
+  .links { position: absolute; inset: 0; z-index: 1; }
+
+  /* ── 顶部闭环 ─────────────────────────── */
+  .banner {
+    position: absolute;
+    left: 452px; top: 22px;
+    width: 556px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    gap: 9px;
+    background: #FFFDF8;
+    border: 1.4px solid #E4612F;
+    border-radius: 23px;
+    box-shadow: 0 2px 0 rgba(228, 97, 47, .06), 0 8px 18px rgba(120, 80, 45, .06);
+    color: #C9481C;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    z-index: 4;
+  }
+  .banner .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #E4612F;
+    box-shadow: 0 0 0 3px rgba(228, 97, 47, .12);
+  }
+  .banner .sep { color: #D9A28A; font-weight: 400; }
+
+  /* ── 通用虚线面板 ─────────────────────── */
+  .panel {
+    position: absolute;
+    background: rgba(255, 253, 247, .74);
+    border: 1.2px dashed #C2BCAC;
+    border-radius: 18px;
+    padding: 18px 16px;
+    box-shadow: 0 6px 18px rgba(95, 75, 45, .035);
+    z-index: 3;
+  }
+  .p-head { padding: 0 2px; }
+  .p-title {
+    font-size: 19px; font-weight: 800; letter-spacing: .3px;
+    color: #26221E;
+  }
+  .p-sub {
+    margin-top: 4px;
+    font-size: 10.5px; color: #8C8578; letter-spacing: .2px;
+  }
+
+  .p-item {
+    height: 52px;
+    padding: 8px 12px;
+    background: #FFFDF8;
+    border: 1px solid #E3DED2;
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .03);
+  }
+  .p-item + .p-item { margin-top: 8px; }
+  .p-item .t {
+    font-size: 12.5px; font-weight: 700; color: #33302A;
+    letter-spacing: .2px;
+    white-space: nowrap;
+  }
+  .p-item .s {
+    margin-top: 2px;
+    font-size: 9.8px; color: #948D7F; line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .p-ghost {
+    margin-top: 9px;
+    height: 30px;
+    border: 1.2px dashed #D6D0C1;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: #A9A293;
+    font-size: 14px; letter-spacing: 6px;
+  }
+  .p-note {
+    margin-top: 11px;
+    font-size: 9.8px;
+    line-height: 1.55;
+    color: #9B9486;
+    text-align: center;
+  }
+
+  /* ── 左：事件入口 ─────────────────────── */
+  .left { left: 30px; top: 112px; width: 286px; height: 500px; }
+
+  /* ── 右：Agent 适配器 ─────────────────── */
+  .right { left: 1124px; top: 112px; width: 286px; height: 500px; }
+
+  /* ── 内核 ─────────────────────────────── */
+  .core {
+    position: absolute;
+    left: 410px; top: 92px;
+    width: 620px; height: 620px;
+    padding: 20px 22px;
+    border-radius: 22px;
+    border: 1.5px solid #E4582A;
+    background: linear-gradient(158deg, #272321 0%, #201D1A 48%, #1B1815 100%);
+    box-shadow:
+      0 0 0 1px rgba(228, 88, 42, .12),
+      0 22px 48px rgba(64, 42, 24, .20),
+      inset 0 1px 0 rgba(255, 255, 255, .055);
+    z-index: 4;
+  }
+  .core::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 22px;
+    pointer-events: none;
+    background: radial-gradient(360px 190px at 88% 102%, rgba(228, 88, 42, .17), transparent 72%);
+  }
+  .core-head {
+    position: relative;
+    display: flex; align-items: flex-start; justify-content: space-between;
+  }
+  .core-title {
+    font-size: 27px; font-weight: 800; letter-spacing: .6px;
+    color: #FFF9F1;
+    line-height: 1.15;
+  }
+  .core-meta {
+    text-align: right;
+    font-size: 10px;
+    line-height: 1.65;
+    color: #A49C8F;
+    letter-spacing: .3px;
+    padding-top: 3px;
+  }
+  .core-meta b { color: #D8CFC1; font-weight: 600; }
+
+  .core-top {
+    position: relative;
+    margin-top: 14px;
+    padding: 11px 14px 12px;
+    background: #2C2824;
+    border: 1px solid #3D3730;
+    border-radius: 11px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+  }
+  .core-top .t {
+    color: #F3ECE1; font-size: 13px; font-weight: 700; letter-spacing: .3px;
+  }
+  .core-top .s {
+    margin-top: 4px;
+    color: #B9B1A4; font-size: 10.6px; letter-spacing: .15px;
+  }
+
+  .row {
+    position: relative;
+    margin-top: 9px;
+    height: 62px;
+    padding: 0 13px;
+    display: flex; align-items: center; gap: 12px;
+    background: #292522;
+    border: 1px solid #3A342D;
+    border-radius: 10px;
+  }
+  .row .lab {
+    flex: 0 0 98px;
+    height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(228, 88, 42, .62);
+    border-radius: 7px;
+    background: rgba(228, 88, 42, .085);
+    color: #F28A61;
+    font-size: 10.8px;
+    font-weight: 700;
+    letter-spacing: .4px;
+    white-space: nowrap;
+  }
+  .row .desc {
+    color: #D2CABD;
+    font-size: 10.9px;
+    line-height: 1.58;
+    letter-spacing: .1px;
+  }
+
+  .core-foot {
+    position: absolute;
+    left: 24px; right: 22px; bottom: 22px;
+    display: flex; justify-content: space-between;
+    font-size: 9.2px; color: #8C8376; letter-spacing: .3px;
+  }
+  .core-foot .accent { color: #C98B6E; }
+
+  /* ── 你 ───────────────────────────────── */
+  .user {
+    position: absolute;
+    left: 62px; top: 692px;
+    width: 256px; height: 164px;
+    border: 2px solid #E4612F;
+    border-radius: 26px;
+    background: #FFFCF5;
+    box-shadow: 0 10px 26px rgba(150, 85, 45, .10), inset 0 1px 0 #fff;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 5;
+  }
+  .user .big {
+    font-size: 27px; font-weight: 800; color: #D24E1F; letter-spacing: 2px;
+    line-height: 1;
+  }
+  .user .mid {
+    margin-top: 10px;
+    font-size: 11.3px; font-weight: 600; color: #4A433A;
+    letter-spacing: .2px;
+  }
+  .user .small {
+    margin-top: 5px;
+    font-size: 9.8px; color: #9A9283;
+  }
+  .user-note {
+    position: absolute;
+    left: 62px; top: 874px;
+    width: 256px;
+    text-align: center;
+    font-size: 9.5px;
+    line-height: 1.65;
+    color: #9B9486;
+    z-index: 5;
+  }
+  .user-note::before {
+    content: "";
+    display: block;
+    width: 26px; height: 2px;
+    margin: 0 auto 8px;
+    background: #E9B49E;
+    border-radius: 1px;
+  }
+
+  /* ── 回放通道 ─────────────────────────── */
+  .channel { left: 410px; top: 762px; width: 620px; height: 158px; padding: 16px 20px; }
+  .channel .p-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .channel .p-title { font-size: 17.5px; }
+  .channel .head-note { font-size: 9.4px; color: #A39B8C; letter-spacing: .2px; }
+  .chips {
+    margin-top: 12px;
+    display: flex; gap: 8px;
+  }
+  .chip {
+    flex: 1;
+    height: 47px;
+    border: 1px solid #E3DED2;
+    border-radius: 10px;
+    background: #FFFDF8;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .03);
+  }
+  .chip .ct { font-size: 10.8px; font-weight: 700; color: #3A352E; letter-spacing: .2px; white-space: nowrap; }
+  .chip .cs { margin-top: 2px; font-size: 8.8px; color: #9B9486; white-space: nowrap; }
+  .ch-note {
+    margin-top: 10px;
+    font-size: 9.4px; color: #9B9486; letter-spacing: .2px;
+  }
+
+  /* ── 工作区 ───────────────────────────── */
+  .workspace { left: 1124px; top: 656px; width: 286px; height: 264px; padding: 16px; }
+  .workspace .p-title { font-size: 17.5px; }
+  .ws-row {
+    margin-top: 7px;
+    height: 44px;
+    padding: 6px 10px;
+    background: #FFFDF8;
+    border: 1px solid #E3DED2;
+    border-radius: 9px;
+  }
+  .ws-row .path {
+    font-family: Consolas, "Cascadia Mono", monospace;
+    font-size: 10.2px; font-weight: 700; color: #3C372F;
+    white-space: nowrap;
+  }
+  .ws-row .note {
+    margin-top: 2px;
+    font-size: 9.1px; color: #988F80; white-space: nowrap;
+  }
+  .ws-foot {
+    margin-top: 9px;
+    font-size: 9.2px; color: #9B9486; line-height: 1.5;
+  }
+
+  /* ── 底部流水线 ───────────────────────── */
+  .pipeline {
+    position: absolute;
+    left: 30px; top: 958px;
+    width: 1380px; height: 112px;
+    border: 1.2px dashed #C2BCAC;
+    border-radius: 16px;
+    background: rgba(255, 253, 247, .66);
+    display: flex; align-items: center;
+    padding: 14px 20px;
+    z-index: 3;
+  }
+  .pl-title { width: 300px; flex: 0 0 300px; }
+  .pl-title .t { font-size: 17px; font-weight: 800; color: #26221E; letter-spacing: .3px; }
+  .pl-title .s { margin-top: 5px; font-size: 9.6px; color: #918A7C; line-height: 1.45; width: 280px; }
+  .pl-nodes { display: flex; align-items: center; margin-left: 22px; }
+  .node {
+    width: 135px; height: 48px;
+    border: 1px solid #DED7C9;
+    border-radius: 10px;
+    background: #FFFDF8;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    box-shadow: 0 1px 2px rgba(90, 70, 50, .035);
+  }
+  .node .nt { font-size: 10.8px; font-weight: 700; color: #3A352E; white-space: nowrap; }
+  .node .ns { margin-top: 2px; font-size: 8.5px; color: #9C9485; white-space: nowrap; }
+  .p-arrow {
+    position: relative;
+    width: 38px; height: 48px; flex: 0 0 38px;
+  }
+  .p-arrow::before {
+    content: ""; position: absolute; left: 2px; right: 8px; top: 23px;
+    height: 1.2px; background: #D7A48D;
+  }
+  .p-arrow::after {
+    content: ""; position: absolute; right: 7px; top: 18.5px;
+    border-left: 7px solid #D7A48D;
+    border-top: 4.5px solid transparent;
+    border-bottom: 4.5px solid transparent;
+  }
+
+  /* ── 编号与标签 ───────────────────────── */
+  .flow {
+    position: absolute;
+    width: 25px; height: 25px;
+    margin-left: -12.5px; margin-top: -12.5px;
+    border-radius: 50%;
+    background: #E4582A;
+    color: #FFF8F1;
+    font-size: 11px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 3px #FAF6EE, 0 2px 5px rgba(160, 70, 35, .22);
+    z-index: 8;
+  }
+  .flabel {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    padding: 0 5px;
+    color: #D24E1F;
+    font-size: 10.8px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    white-space: nowrap;
+    text-shadow:
+      0 1px 0 rgba(250, 246, 238, .95),
+      0 0 6px rgba(250, 246, 238, 1),
+      0 0 6px rgba(250, 246, 238, 1);
+    z-index: 7;
+  }
+  .flabel.plain { color: #A16E55; font-weight: 600; font-size: 10px; }
+
+  .sig {
+    position: absolute;
+    right: 32px; bottom: 10px;
+    font-size: 9px; color: #AAA293; letter-spacing: .8px;
+    z-index: 6;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- 连线层 -->
+  <svg class="links" width="1440" height="1100" viewBox="0 0 1440 1100" fill="none">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#E4582A"/>
+      </marker>
+      <marker id="ar-soft" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#C99B82"/>
+      </marker>
+    </defs>
+
+    <!-- 顶部闭环 -->
+    <path d="M730 68 V88" stroke="#E4582A" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#ar)"/>
+
+    <!-- ① 新事件 -->
+    <path d="M316 300 H404" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- ② 派活 -->
+    <path d="M1030 286 H1118" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- ③ 交结果 -->
+    <path d="M1124 366 H1036" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- ④ 过程 / 卡片往下 -->
+    <path d="M560 712 V756" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- 通道 -> 你 -->
+    <path d="M410 820 H324" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+    <!-- ⑤ 你 -> 内核 -->
+    <path d="M318 706 H404" stroke="#E4582A" stroke-width="1.6" marker-end="url(#ar)"/>
+
+    <!-- 软连接：适配器 -> 工作区 -->
+    <path d="M1267 612 V650" stroke="#C99B82" stroke-width="1.3" stroke-dasharray="4 4" marker-end="url(#ar-soft)"/>
+    <!-- 软连接：工作区 -> 通道 -->
+    <path d="M1124 830 H1036" stroke="#C99B82" stroke-width="1.3" stroke-dasharray="4 4" marker-end="url(#ar-soft)"/>
+  </svg>
+
+  <!-- 顶部 -->
+  <div class="banner">
+    <span class="dot"></span>
+    执行闭环
+    <span class="sep">·</span>
+    跑完一批 → 影子 git 审计 → 监控纠偏 → 下一批
+  </div>
+
+  <!-- 左 -->
+  <section class="panel left">
+    <div class="p-head">
+      <div class="p-title">事件入口</div>
+      <div class="p-sub">一句话，怎么变成一件任务</div>
+    </div>
+
+    <div style="margin-top:13px">
+      <div class="p-item">
+        <div class="t">聊天消息</div>
+        <div class="s">一句话就是需求，Orchestrator 先判场景</div>
+      </div>
+      <div class="p-item">
+        <div class="t">@ 提及 · 1v1</div>
+        <div class="s">点名让某个 Agent 接，绕开自动选人</div>
+      </div>
+      <div class="p-item">
+        <div class="t">任务 redo</div>
+        <div class="s">改完描述重跑，下游一起级联重做</div>
+      </div>
+      <div class="p-item">
+        <div class="t">图片 · 文件附件</div>
+        <div class="s">附件随消息进 prompt，不丢上下文</div>
+      </div>
+      <div class="p-item">
+        <div class="t">MCP 频道消息</div>
+        <div class="s">Agent 之间旁路对话，不占交付通道</div>
+      </div>
+      <div class="p-ghost">……</div>
+      <div class="p-note">没有 cron，也不需要排队系统<br/>一句话、一个 @、一次 redo 都算事件</div>
+    </div>
+  </section>
+
+  <!-- 内核 -->
+  <section class="core">
+    <div class="core-head">
+      <div class="core-title">Orchestrator 内核</div>
+      <div class="core-meta">
+        <b>9.9k 行</b> · 67 模块<br/>
+        <b>1,562</b> 个测试 · SQLite
+      </div>
+    </div>
+
+    <div class="core-top">
+      <div class="t">按 DAG 分派任务</div>
+      <div class="s">拓扑分批 · 同批并行 · 文件重叠自动串行 · 上游 result 注下游</div>
+    </div>
+
+    <div class="row">
+      <div class="lab">会话串行锁</div>
+      <div class="desc">同一会话只跑一条执行流；抢锁 60s 就回 429，phase 不被并发覆盖</div>
+    </div>
+    <div class="row">
+      <div class="lab">对齐三拍</div>
+      <div class="desc">产品确认 → 架构师拆解 → Agent 提问；连续 3 次拆空就硬停转人工</div>
+    </div>
+    <div class="row">
+      <div class="lab">契约交付</div>
+      <div class="desc">task.result 落库，declaredFiles + outputSchema 随任务走，注入前转义</div>
+    </div>
+    <div class="row">
+      <div class="lab">影子 git 审计</div>
+      <div class="desc">每批 diff 归责：敏感路径越界整批 failed，普通越界只告警</div>
+    </div>
+    <div class="row">
+      <div class="lab">纠偏熔断</div>
+      <div class="desc">审查不过最多重做 3 次；单任务 15 分钟硬超时，进程真退才算完</div>
+    </div>
+    <div class="row">
+      <div class="lab">事件溯源</div>
+      <div class="desc">decisionTrace 记每次转移，过程事件按 seq 落库，刷新可补发</div>
+    </div>
+
+    <div class="core-foot">
+      <span>LLM 只能提议 9 种 action</span>
+      <span class="accent">转移表校验 · 非法 fail-closed</span>
+    </div>
+  </section>
+
+  <!-- 右 -->
+  <section class="panel right">
+    <div class="p-head">
+      <div class="p-title">Agent 适配器</div>
+      <div class="p-sub">真正下场干活的 CLI</div>
+    </div>
+
+    <div style="margin-top:13px">
+      <div class="p-item">
+        <div class="t">Claude Code CLI</div>
+        <div class="s">NDJSON 流 · --resume 接着上下文</div>
+      </div>
+      <div class="p-item">
+        <div class="t">OpenCode CLI</div>
+        <div class="s">agent 配置控工具与权限</div>
+      </div>
+      <div class="p-item">
+        <div class="t">Orchestrator</div>
+        <div class="s">也跑 CLI：判、派、审查都归它</div>
+      </div>
+      <div class="p-item">
+        <div class="t">7 个预设角色</div>
+        <div class="s">产品·架构·前端·后端·测试·UI</div>
+      </div>
+      <div class="p-item">
+        <div class="t">进程池</div>
+        <div class="s">最多 10 个，空闲 10 分钟回收</div>
+      </div>
+      <div class="p-ghost">……</div>
+      <div class="p-note">每个 Agent 绑自己的模型与服务商<br/>工具白名单 · default / auto 两种权限</div>
+    </div>
+  </section>
+
+  <!-- 你 -->
+  <section class="user">
+    <div class="big">你</div>
+    <div class="mid">确认需求 · 批权限 · 看 Diff</div>
+    <div class="small">不盯过程，只拍关键板</div>
+  </section>
+  <div class="user-note">你只在三个点出现<br/>对齐确认 · 权限审批 · Diff 验收</div>
+
+  <!-- 通道 -->
+  <section class="panel channel">
+    <div class="p-head">
+      <div class="p-title">回放通道</div>
+      <div class="head-note">状态全在 DB，断线不丢</div>
+    </div>
+    <div class="p-sub" style="margin-top:3px">过程事件和成品消息，分两条路送回你手边</div>
+
+    <div class="chips">
+      <div class="chip"><div class="ct">SSE 实时流</div><div class="cs">边跑边看</div></div>
+      <div class="chip"><div class="ct">seq 补发</div><div class="cs">刷新不丢</div></div>
+      <div class="chip"><div class="ct">任务板</div><div class="cs">状态一眼清</div></div>
+      <div class="chip"><div class="ct">Diff / 预览</div><div class="cs">产物内联</div></div>
+      <div class="chip"><div class="ct">流程挖掘</div><div class="cs">DFG 一致性</div></div>
+    </div>
+    <div class="ch-note">过程事件每会话封顶 500 条；成品消息走 Message 表，重放不重复。</div>
+  </section>
+
+  <!-- 工作区 -->
+  <section class="panel workspace">
+    <div class="p-head">
+      <div class="p-title">工作区</div>
+      <div class="p-sub">Agent 的真实落点，不在沙箱里</div>
+    </div>
+
+    <div class="ws-row">
+      <div class="path">projectDir/</div>
+      <div class="note">你的仓库，读写与命令都在这</div>
+    </div>
+    <div class="ws-row">
+      <div class="path">.agenthub/shadow-git/</div>
+      <div class="note">影子快照，不碰你的 .git</div>
+    </div>
+    <div class="ws-row">
+      <div class="path">workspaces/{session}/</div>
+      <div class="note">附件与隔离副本（预留）</div>
+    </div>
+    <div class="ws-foot">越界与 Diff 卡片，都从这份快照里长出来。</div>
+  </section>
+
+  <!-- 流水线 -->
+  <section class="pipeline">
+    <div class="pl-title">
+      <div class="t">一次任务的交付流水线</div>
+      <div class="s">事件入口 × 编排内核 × Agent 适配器，串成一条可回放的链</div>
+    </div>
+    <div class="pl-nodes">
+      <div class="node"><div class="nt">对齐确认</div><div class="ns">PM → 架构 → Q&amp;A</div></div>
+      <div class="p-arrow"></div>
+      <div class="node"><div class="nt">DAG 拆解</div><div class="ns">拓扑分批</div></div>
+      <div class="p-arrow"></div>
+      <div class="node"><div class="nt">分批执行</div><div class="ns">同批并行</div></div>
+      <div class="p-arrow"></div>
+      <div class="node"><div class="nt">影子 git 审计</div><div class="ns">diff 归责</div></div>
+      <div class="p-arrow"></div>
+      <div class="node"><div class="nt">监控纠偏</div><div class="ns">≤3 次</div></div>
+      <div class="p-arrow"></div>
+      <div class="node"><div class="nt">落库 · 交付</div><div class="ns">result + seq</div></div>
+    </div>
+  </section>
+
+  <!-- 编号 -->
+  <div class="flow" style="left:363px; top:300px">1</div>
+  <div class="flabel" style="left:363px; top:325px">新事件</div>
+
+  <div class="flow" style="left:1077px; top:286px">2</div>
+  <div class="flabel" style="left:1077px; top:311px">派活</div>
+
+  <div class="flow" style="left:1077px; top:366px">3</div>
+  <div class="flabel" style="left:1077px; top:391px">交结果</div>
+
+  <div class="flow" style="left:560px; top:735px">4</div>
+  <div class="flabel" style="left:684px; top:735px">要拍板 / 有结果，都往这送</div>
+
+  <div class="flow" style="left:361px; top:706px">5</div>
+  <div class="flabel" style="left:361px; top:684px">点一下，接着跑</div>
+
+  <!-- 细标签 -->
+  <div class="flabel plain" style="left:367px; top:806px">卡片到手</div>
+  <div class="flabel plain" style="left:1077px; top:814px">Diff 证据</div>
+  <div class="flabel plain" style="left:1292px; top:634px">读写文件</div>
+
+  <div class="sig">AGENTHUB · v0.1.0</div>
+</div>
+</body>
+</html>

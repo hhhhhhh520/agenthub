@@ -9,7 +9,7 @@ English | [简体中文](README.md)
 [![CI](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml/badge.svg)](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1562%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1689%20passing-brightgreen)](tests/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
 
@@ -38,6 +38,10 @@ It is not a model and not an IDE. It is the **orchestration and boundary layer a
 - **Contract v1** — `<authoritative_input>`, `declaredFiles`, and `outputSchema` make agent-to-agent handoffs explicit instead of prompt-only.
 - **File-boundary audits** — a shadow-git diff after each batch. Undeclared sensitive paths fail the whole batch; ordinary out-of-scope changes are warnings, and shared files are never auto-deleted.
 - **Two CLI adapters** — Claude Code and OpenCode behind one interface, with tool allowlists, `default`/`auto` permission modes, process pooling, and config fingerprinting.
+- **Role identity & permission guardrails** — agents speak as their role instead of the CLI; OpenCode sessions use auto mode, and identity/platform changes reset stale CLI sessions.
+- **Session management** — search, project/time grouping, rename, auto-title from the first request, and bulk archive/delete.
+- **Readable tasks & system events** — batched task progress with system checks separated, warnings consolidated into a system-event drawer, and downloadable traces. Legacy system copy is marked as historical while the raw record stays intact.
+- **Guided onboarding** — a setup checklist, example prompts in an empty workspace, alignment-flow explanation, and a first-deliverable hint.
 - **Stop and recover** — one session runs serially; stop/delete cancels work and waits for real process exit; failed or blocked tasks can be edited, retried, and cascaded downstream.
 - **Streaming and replay** — SSE output with persisted process events and sequence-based replay after reconnect.
 - **Inline artifacts** — code blocks, web preview, file cards, diffs with accept/reject, and a Monaco editor.
@@ -63,7 +67,7 @@ Open http://localhost:3000. The first run opens a Setup Wizard for the CLI and a
 ## Security model
 
 - **No API authentication by design.** The app is single-user and local. `npm run dev` binds to `127.0.0.1`; do not expose it with `npm start`, a LAN address, or a tunnel before adding authentication.
-- **Agents have real file and command access.** They read and write files and run commands in the project directory you select. Start with the `default` permission mode and only use trusted repositories.
+- **Agents have real file and command access.** They read and write files and run commands in the project directory you select. Claude Code can start in `default` mode; OpenCode is headless and cannot prompt per action, so OpenCode sessions are forced to `auto` with an explicit warning. Only use trusted repositories.
 - **Do not post secrets.** Report vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue with API keys or exploit details. See the [threat model](docs/security/threat-model.md) for trust boundaries and accepted risks.
 
 ## How it works
@@ -88,7 +92,7 @@ npm test          # Vitest + coverage
 npm run test:e2e  # Playwright UI E2E
 ```
 
-Current baseline: **144 test files, 1,562 passed / 3 skipped**. CI runs on `windows-latest`: full Vitest, `next build`, ESLint 0-error on changed files, and architecture guards on every push and pull request.
+Baseline (2026-11-04): **161 test files, 1,689 passed / 3 skipped**. CI runs on `windows-latest`: full Vitest, `next build`, ESLint 0-error on changed files, and architecture guards on every push and pull request.
 
 ## Status and roadmap
 
@@ -100,6 +104,7 @@ Current baseline: **144 test files, 1,562 passed / 3 skipped**. CI runs on `wind
 ## Docs
 
 - [Contract v1](docs/discussions/agenthub-contract-v1.md)
+- [3-minute demo script](docs/demo-3min.md)
 - [v2 design decisions](docs/design/agenthub-v2-design-decisions.md)
 - [Workspace and permissions](docs/design/workspace-and-permissions.md)
 - [Issue log](issues/)

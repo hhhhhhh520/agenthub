@@ -26,7 +26,16 @@ src/
 ├── components/
 │   ├── ui/                    # shadcn/ui 组件（含 sonner Toast）
 │   ├── chat-area.tsx          # 聊天区 + SSE 流式 + MessageErrorBoundary
-│   ├── session-sidebar.tsx    # 会话侧边栏
+│   ├── session-sidebar.tsx    # 会话侧边栏（搜索/分组/批量/重命名）
+│   ├── session-actions-menu.tsx # 会话操作菜单（重命名/详情/归档/删除）
+│   ├── session-rename-dialog.tsx # 会话重命名确认
+│   ├── session-confirm-dialog.tsx # 会话删除/批量删除确认
+│   ├── session-header.tsx     # 会话 Header（阶段/目录/权限/任务/耗时）
+│   ├── system-event-notice.tsx # 系统事件合并行
+│   ├── system-event-drawer.tsx # 系统事件详情抽屉
+│   ├── task-card.tsx          # 任务卡（折叠/展开/trace）
+│   ├── task-trace-dialog.tsx  # 任务轨迹 Dialog
+│   ├── empty-state.tsx        # 统一空状态（现状 + 下一步）
 │   ├── agent-panel.tsx        # Agent 面板 + 任务看板
 │   ├── chat-fab.tsx           # 右下角浮窗聊天卡片
 │   ├── code-diff.tsx          # Monaco DiffEditor
@@ -35,18 +44,31 @@ src/
 ├── lib/
 │   ├── adapter/               # 适配器层（Claude Code CLI / LLM / OpenCode）
 │   ├── orchestrator/          # 编排器（prompt + 调度 + 执行 + 超时控制）
+│   │   └── agent-identity.ts  # 角色身份 prompt 构造
 │   ├── services/              # 业务服务层（从 chat route 拆分）
 │   │   ├── chat-router.ts     # Orchestrator 决策路由 + validateDecision + handleMentionAllDiscussion + handleDirectAgentChat
 │   │   ├── alignment.ts       # 对齐流程（PM确认→架构师拆解→Q&A）
 │   │   ├── execution.ts       # 任务执行引擎
 │   │   ├── review.ts          # 结果审查 + 纠偏 + delegate/discuss
 │   │   ├── agent-factory.ts   # Agent 创建
+│   │   ├── session-title.ts   # 首条用户消息自动命名（仅占位标题）
 │   │   ├── context-builder.ts # 历史上下文构建
 │   │   ├── shadow-git.ts       # 影子 git 追踪 workDir 变更(不污染 workDir)
 │   │   ├── sensitive-paths.ts  # 敏感路径黑名单(declaredFiles 硬失败判定)
 │   │   └── schema-validator.ts # outputSchema 软校验(提取 JSON 块 + 字段名比对)
 │   ├── cancellation.ts        # 会话取消源（stop/delete；HTTP 断开不触发）
 │   ├── session-lock.ts        # 会话锁（显式 waiter 队列 + 统一释放）
+│   ├── agent-identity.ts      # 展示层 CLI 自我介绍归一
+│   ├── session-list.ts        # 会话标题/搜索/时间·项目分组
+│   ├── agent-presence.ts      # 智能体当前会话/工作状态聚合
+│   ├── onboarding.ts          # 首次引导文案/示例需求/提示 key
+│   ├── elapsed.ts             # 会话/任务耗时格式化
+│   ├── task-timing.ts         # 从 trace 推导任务开始时间
+│   ├── waiting-state.ts       # 等待原因推导
+│   ├── message-time.ts        # 消息时钟/完整时间格式化
+│   ├── system-events.ts       # 系统事件分类/分组/轨迹聚合
+│   ├── task-board.ts          # 任务分批/进度统计
+│   ├── permission-mode.ts     # 权限类型 + OpenCode→auto
 │   ├── hooks/                 # use-sessions, use-chat, use-chat-fab, use-mounted
 │   ├── attachment-cleanup.ts  # 附件文件清理（unlinkSync + 孤儿清理）
 │   ├── db.ts                  # Prisma 单例（WAL 模式）
@@ -66,6 +88,20 @@ prisma/
 - **架构守卫**（tests/architecture-phase-guard.test.ts，随 vitest 进 CI）：`phase:` 字面量只允许出现在 state-machine.ts 的 prisma 写入 + `STATE_PHASE` 不得被外部引用——绕过守卫写 phase 会被 CI 拦
 - **test job 跑 windows-latest**（测试套件是 Windows 平台假设：opencode 虚拟路径/信号语义/元字符目录名），runner 已配 git identity
 - workflow：`.github/workflows/ci.yml`（npm ci → prisma generate → db push → vitest run → next build）
+
+### UX 身份与权限不变量（2026-11）
+
+- Agent 的 systemPrompt 必须经 `buildAgentSystemPrompt()`（identity → behavior → 角色 prompt）；不要直接拼 `AGENT_BEHAVIOR_RULES`。
+- 直接调用 adapter 的路径（尤其 `runDiscussion`）必须传 `systemPrompt`；漏传会让 OpenCode agent 文件为空、Agent 自称 opencode。
+- 含 OpenCode Agent 的会话必须 auto：创建走 `resolveSessionPermissionMode()`，已有会话用顶部风险条切换；不要恢复 default 静默失败。
+- Agent 名字/systemPrompt/platform 变更走 `invalidateAgentCliSessions()`；`cliSessionId: null` 只允许出现在 `src/lib/services/cli-session.ts`。
+- 改聊天/任务面板/会话列表/智能体状态/等待态/引导前读 `docs/TODO-ux.md`；U1–U13 已完成，避免回归。
+
+### 历史系统消息文案（2026-11）
+
+- 协议/系统提示文案变更时，必须同步考虑历史消息展示：在 `src/lib/system-events.ts` 增加展示层改写或历史标记，禁止改 `Message.rawContent`。
+- 当前覆盖：旧「已自动清理」→「历史记录，规则已更新」，并补充当前规则「共享项目目录不自动删除，请人工确认」。
+- 系统事件抽屉保留原始内容，聊天分组显示「含历史记录」。
 
 ### Prisma v7（踩坑高发）
 
@@ -147,7 +183,8 @@ prisma/
     `OPENCODE_CONFIG` / `OPENCODE_PERMISSION` 在 v2.0.27 实测不生效，已删除
   - **权限模式**：`--auto`（auto；自动批准 ask、仍尊重 deny）；default 不传。headless 下
     `ask` 会被 CLI 自动拒绝，因此 OpenCode default = 只读（写/执行需切 auto）
-  - **工作目录**：三重锚定（`--dir` + `cmd.Dir` + `PWD` 环境变量），确保正确发现 `.opencode/` 目录
+  - **工作目录**：`spawn.cwd` + `PWD` 环境变量锚定（opencode v2.2.5 已移除 `run --dir`，不要再加），确保正确发现 `.opencode/` 目录
+  - **动态 agent**：每次调用写入 `.opencode/agents/agenthub-*.md`；必须带 `--standalone`，否则后台服务缓存 agent 列表会报 `Agent not found`（v2.2.5 实测）
   - **环境变量**：`ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`（非 OPENAI_*）
   - **模型名格式**：`provider/model`（如 `mimo/mimo-v2.5-pro`），通过 `opencode models` 命令动态发现
   - **错误路径**：opencode error 事件结构为 `event.error?.data?.message`，不是 `event.data?.message`
@@ -295,7 +332,7 @@ Orchestrator 自主决定流程，支持 9 种 action：
   - **协作规范**：任务完成必须汇报、里程碑进度汇报、阻塞立即上报、依赖明确说明、代码修改后测试
   - **安全边界**：不越界、不破坏、修改前确认可回滚
   - **汇报模板**：任务完成时必须包含（完成内容、产出位置、验证方式、遗留问题、影响范围）
-- **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界自动清理(保留其他批次文件) → LLM 监督审查(越界已清空不触发纠偏) → 任务 completed
+- **流程**:检测越界 → 敏感路径硬失败(下游 blocked)/ 普通越界只发批次级告警(共享 projectDir 不删除文件) → LLM 监督审查 → 任务 completed
 
 ### 审查修复关键不变量(勿破坏)
 

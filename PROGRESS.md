@@ -1,5 +1,5 @@
 # AgentHub 项目进度
-> 创建时间: 2026-05-22 | 最后更新: 2026-10-21
+> 创建时间: 2026-05-22 | 最后更新: 2026-11-04
 
 ## 项目概述
 **项目地址**: <repo> | **技术选型**: Next.js 16 + Prisma 7 + SQLite + Claude Code CLI + OpenCode CLI | **目标**: IM 风格多 Agent 协作平台
@@ -193,7 +193,7 @@
 6. **auto模式需确认**：process-registry添加auto模式自动批准+getOrchestratorDecision补传permissionMode
 7. **详情页白屏**：session.messages添加空值保护
 8. **迁移缺失**：创建SessionMember.cliSessionId迁移文件
-| 越界清理逻辑 | execution.ts边界检测阶段增加非敏感越界文件自动清理，保留其他批次声明的文件，清理后清空undeclared避免监控审查触发纠偏重试。新增8测试+更新2测试，74相关测试全通过 | 2026-06-26 |
+| 越界清理逻辑 | execution.ts边界检测阶段增加非敏感越界文件自动清理，保留其他批次声明的文件，清理后清空undeclared避免监控审查触发纠偏重试。新增8测试+更新2测试，74相关测试全通过。**2026-10-19 契约修订后已废弃：共享 projectDir 不自动删除文件，普通越界只告警** | 2026-06-26 |
 | 5维度并行审查 | 5个Agent并行审查(安全/架构/代码质量/测试/性能)，逐项代码验证后确认6个真问题+5个理论风险(本地工具不适用)+2个过度泛化。详见下方审查结论 | 2026-06-26 |
 | 虚假测试修复+catch日志 | #1:提取cleanupUndeclared+normalizePath为export函数，测试改为import源码(原测副本)。#2:review.ts重试失败catch加console.warn。879测试全绿 | 2026-06-26 |
 | 5角度Review修复(3项) | 5个Agent并行审查(架构/安全/测试/前端/性能)产出70项发现。逐项代码验证后确认3个真Critical。**Fix1**:MessageErrorBoundary包裹MessageContent防畸形消息白屏(chat-area.tsx +17行)。**Fix2**:AGENT_COLORS加dark:变体+动态HSL亮度85%→18%适配暗色模式(agent-colors.ts)。**Fix3**:mentionAll/targetAgent/private路径提取到chat-router.ts(handleMentionAllDiscussion+handleDirectAgentChat)，route层-80行只做调度，消除与review.ts重复。879测试全绿 | 2026-06-26 |
@@ -312,6 +312,32 @@
 | Round 7 / #21：旧会话异步回调（commit 8c2b4c3） | 根因：loadMessages 无取消/世代校验，迟到 A 响应覆盖 B；send finally 无条件清 loading/abortRef，旧请求清新请求状态。修复：独立 load abort + RequestEpoch；事件/节流核 sessionId；finally 只允许当前 controller 收尾。真实浏览器两场景通过；全量 144 files / 1561 passed / 3 skipped | 2026-10-21 |
 | Round 7 / #24：手动草稿连接测试（commit 84056cd） | 根因：向导测试按钮只发无 body POST，后端只 detectCLIPlatform()。修复：发送 apiKey/model/baseUrl；后端有草稿时走 AI SDK 最小生成，无草稿回退 CLI；不落库、错误脱敏。本地回环 OpenAI HTTP 回归通过 | 2026-10-21 |
 | Round 7 / #14：实际请求体上限（commit 0a6aacd） | 根因：上限只信 Content-Length，随后 formData 全量解析。修复：readFormDataWithLimit 按实际读取字节计数，超限 cancel 源流并 413；保留文件校验/回滚/事务。无长度头 54MB 路由回归通过 | 2026-10-21 |
+
+| UX U1：聊天 Markdown + 协议标记过滤 | 新增 `MarkdownMessage`（react-markdown + remark-gfm）与 `stripProtocolMarkers`；消息正文渲染粗体/列表/代码，任务卡过滤 `[系统验证任务]` 等前缀；用户消息保持纯文本，rawContent 不变；工具调用原始输出不渲染。新增 15 测试；全量 145 files / 1577 passed / 3 skipped，build ✓，改动文件 eslint 0 error | 2026-11-04 |
+
+| UX U2：会话 Header 上下文 + 阶段 stepper | 新增 `SessionHeader`：projectDir 复制、权限模式/待批、四步 stepper、当前任务/Agent、耗时、停止；活跃阶段 5s 轮询任务（no-store、页签隐藏暂停）；刷新用会话快照兜底 phase/phaseStep；审计作为执行期「每批审计」标记（无独立 phase）；移除底部重复 phase 条。新增 6 测试；全量 146 files / 1583 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 img warning） | 2026-11-04 |
+
+| UX U3：系统事件抽屉 + 严重级别 | 新增 `system-events` 分类/分组/任务轨迹聚合；连续告警合并为一行，详情进右侧 Sheet（时间/类型/严重级别/Agent/task/证据/原始内容）；Header 增加「系统事件 N」入口；审计证据不丢，主聊天降噪。新增 16 测试；全量 148 files / 1599 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 img warning） | 2026-11-04 |
+
+| UX U4：Task 面板批次/进度/详情分层 | 新增 `task-board`（系统任务识别、依赖拓扑分批、用户/系统拆分、进度统计）、`TaskCard`、`TaskTraceDialog`；默认 Tasks tab；任务卡折叠标题 + 展开详情/声明文件/依赖；trace 改 Dialog 最多 120 条 + 下载 JSON；系统校验独立区且不计入用户进度，Header 显示 `任务 1/2 · 系统校验 1`。新增 13 测试；全量 150 files / 1612 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 img warning） | 2026-11-04 |
+
+| UX U5：OpenCode 权限默认修正 | `permission-mode` 增加 OpenCode 平台判定与强制 auto；创建群聊显示 `OpenCode · 自动` badge、禁用默认模式、风险 banner、创建按钮显示实际模式；已有会话「默认 + OpenCode」顶部风险条 + 一键切换 auto；新增/编辑/导入 Agent 派发 `agenthub:members-changed` 即时刷新提示。新增 6 测试；全量 151 files / 1618 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 img warning） | 2026-11-04 |
+
+| UX U6：角色身份约束 | 新增 `buildAgentSystemPrompt`（identity → behavior → 角色 prompt）与展示层 `normalizeAgentSelfIntro`；`executeTaskBatch`/`executeSingleAgent` 使用统一 builder；`runDiscussion` 补传 systemPrompt（修复 OpenCode 空提示根因）；Agent 名字/systemPrompt/platform 变更经 `invalidateAgentCliSessions` 统一清 SessionMember + Task 的 cliSessionId（通过架构守卫）。新增 14 测试；全量 154 files / 1632 passed / 3 skipped，build ✓，改动文件 eslint 0 error（4 条既有 warning：2 img + 2 unused） | 2026-11-04 |
+
+| UX U7：会话管理 + 信息架构 | 新增 `session-list`（首条消息确定性标题、时间/项目分组、搜索、置顶组）与 `session-title` 服务；聊天 POST 首条消息自动命名，仅覆盖占位标题；标题 PUT 校验非空/≤120/UTF-8；修正 `?archived=true` 只返回归档会话；侧栏与首页支持重命名、批量归档/删除（逐条复用安全 DELETE）、管理态多选、项目/时间切换、卡片进聊天 + 菜单详情；删除统一 Dialog 二次确认。新增 20 测试；全量 156 files / 1652 passed / 3 skipped，build ✓，改动文件 eslint 0 error；Playwright 实测首页 13 项 + 侧栏 10 项通过，自动标题 DB 冒烟通过，临时会话已清理 | 2026-11-04 |
+
+| UX U8：视觉层级与文案统一 | 新增 `EmptyState` 与 `message-time`；用户气泡桌面 60% / 移动 85%、低饱和蓝灰，Agent 气泡 86% + 时间戳 + 细分隔；正文 14px，清除组件内 9/10/11px；Tasks/Agents → 任务/智能体，trace → 轨迹，Pin → 置顶；无会话/无任务/无消息/无系统事件统一空状态；聊天区放宽到 max-w-4xl。新增 6 测试；全量 157 files / 1658 passed / 3 skipped，build ✓，改动文件 eslint 0 error（3 条既有 warning）；1440×1000 截图与 DOM 时间戳验收通过，临时空会话已清理 | 2026-11-04 |
+
+| UX U9：Agent 状态一致性 | 新增 `agent-presence` 聚合 SessionMember.status；智能体页「状态」改为「当前会话」，工作中优先并显示会话标题，空闲显示最近会话；`/api/agents`、`/api/agents/[id]`、POST、recommend-agents 停止返回 deprecated Agent.status；AgentPanel 全局 fallback 不再伪造状态圆点。新增 6 测试；全量 158 files / 1664 passed / 3 skipped，build ✓，改动文件 eslint 0 error；临时会话 Set working 实测智能体页与右侧面板一致，已清理 | 2026-11-04 |
+
+| UX U10：耗时 / 等待状态可见 | 新增 `elapsed` / `waiting-state` / `task-timing`；Header 增加会话 elapsed 与等待原因+等待时长 chip；等待原因覆盖权限/用户/重试/工具/思考/流式/CLI；TaskCard 用 trace start 计算耗时，执行中每秒刷新；token 成本因 CLI usage 不稳定未伪造。新增 11 测试；全量 160 files / 1675 passed / 3 skipped，build ✓，改动文件 eslint 0 error（2 条既有 img warning）；Playwright 拦截 POST 实测「等待 CLI 输出 0:01」，任务耗时 0:32/0:22，未跑真实 Agent | 2026-11-04 |
+
+| UX U11：首次使用引导 | 新增 `onboarding` 常量；Setup Wizard 完成页改为 3 步 checklist + 手动「开始使用」（不再 1.5s 自动关）；空工作区展示 3 个示例需求，点击预填创建群聊；首次建群显示「对齐三拍」与确认节点说明（localStorage 只提示一次）；首次任务完成显示 Diff/产物位置提示（localStorage 一次）。新增 5 测试；全量 161 files / 1680 passed / 3 skipped，build ✓，改动文件 eslint 0 error；Playwright 拦截 API 实测 4 个引导场景，无 DB 写入/console error | 2026-11-04 |
+
+| UX U12：历史消息卫生 | `system-events` 新增 `rewriteHistoricalSystemCopy`：旧「已自动清理」在展示层改写为「历史记录，规则已更新」+ 当前规则「共享项目目录不自动删除，请人工确认」；消息与 trace 同口径，`raw` 保留原文；抽屉加「历史记录 · 规则已更新」badge，聊天分组显示「含历史记录」；约定写入 AGENTS/CLAUDE。新增 4 测试；全量 161 files / 1684 passed / 3 skipped，build ✓，改动文件 eslint 0 error；真实旧会话抽屉验证通过，未改 rawContent | 2026-11-04 |
+
+| UX U13：Golden path 回归 + demo 脚本 | 三次连续 golden path（run1/run2/run3）均完成 3 个代码任务 + 系统校验；run2 17.6 min、run3 16.6 min；生成页面实测新增/勾选/刷新持久化/删除通过；敏感路径真实失败（未声明 `.env` → `[敏感路径越界]`，安全 redo 成功）；权限拒绝 banner 实测；恢复弹窗 UI 实测（in_progress 超 5 分钟 → 继续执行/跳过）；3 分钟脚本 `docs/demo-3min.md`；新增 `issues/ISSUE-030-opencode-v2.2.5-cli-compat.md`。修复 OpenCode v2.2.5 `--dir` 移除、动态 agent `--standalone`、决策 `id`/`rawSystemPrompt`、JSON-only 决策 prompt、provider 前缀不落 CC-Switch、决策临时目录、outputSchema 提示。全量 161 files / 1689 passed / 3 skipped，build ✓，改动文件 eslint 0 error（16 warning）；未改 schema/rawContent。已知边界：Agent 未输出 `artifact:diff`，Diff Accept 留给 U14 | 2026-11-04 |
 
 ### ⏳ 进行中
 

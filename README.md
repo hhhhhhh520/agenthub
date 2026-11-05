@@ -9,7 +9,7 @@
 [![CI](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml/badge.svg)](https://github.com/hhhhhhh520/agenthub/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](package.json)
-[![Tests](https://img.shields.io/badge/tests-1562%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-1689%20passing-brightgreen)](tests/)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)](https://www.typescriptlang.org)
 
@@ -36,6 +36,10 @@ AgentHub 是一个本地优先的多 Agent 工作区。你用聊天描述任务�
 - **Contract v1** — `<authoritative_input>`、`declaredFiles`、`outputSchema` 把 Agent 间的数据流和产物写成契约，而不是靠 prompt 自觉。
 - **文件边界审计** — 每批任务后做影子 git diff；未声明的敏感路径让整批失败，普通越界只告警，共享目录文件不自动删除。
 - **双 CLI 适配** — Claude Code + OpenCode 统一抽象；工具白名单、default/auto 权限模式、进程池与配置指纹隔离。
+- **角色身份与权限护栏** — Agent 以角色名发言，不复述 CLI 身份；含 OpenCode 的会话强制自动模式，身份/平台变更会清旧 CLI 会话。
+- **会话管理** — 搜索、按项目/时间分组、重命名、首条消息自动标题、批量归档/删除。
+- **可读的任务与系统事件** — 任务按批次/进度/系统校验分层，告警合并进右侧系统事件抽屉，trace 可下载；旧规则文案会标记为历史记录，原始内容保留。
+- **新手引导** — Setup Wizard 完成后的 3 步 checklist、空工作区示例需求、对齐三拍说明和首次产物提示。
 - **可停止、可恢复** — 同会话串行执行；stop/delete 会取消执行并等待进程真实退出；失败/阻塞任务可编辑后重做并级联下游。
 - **流式与回放** — SSE 推送输出；过程事件落库，断线/刷新后按 seq 补发。
 - **内联产物** — 代码块、Web 预览、文件卡片、Diff（Accept/Reject）、Monaco 编辑器。
@@ -61,7 +65,7 @@ npm run dev
 ## 安全模型
 
 - **无认证，按本机单用户设计。** `npm run dev` 绑定 `127.0.0.1`；不要用 `npm start` 把服务暴露到局域网/公网，除非先补认证。
-- **Agent 有真实文件/命令权限。** 它会在你指定的项目目录里读写文件并执行命令；请从 `default` 权限模式开始，只对可信仓库使用。
+- **Agent 有真实文件/命令权限。** 它会在你指定的项目目录里读写文件并执行命令；Claude Code 可从 `default` 模式开始；OpenCode headless 无法逐次确认，创建群聊会强制 `auto` 并明确提示风险。只对可信仓库使用。
 - **不要公开贴密钥。** 请通过 [SECURITY.md](SECURITY.md) 的私密渠道报告，不要公开贴 API Key 或可直接利用的细节。完整威胁模型见 [docs/security/threat-model.md](docs/security/threat-model.md)。
 
 ## 架构
@@ -86,7 +90,7 @@ npm test          # Vitest 全量 + 覆盖率
 npm run test:e2e  # Playwright UI E2E
 ```
 
-当前基线：**144 个测试文件，1,562 passed / 3 skipped**。CI 在 `windows-latest` 上跑全量测试、`next build`、改动文件 ESLint 0-error 和架构守卫；每次 push/PR 都会触发。
+基线（2026-11-04）：**161 个测试文件，1,689 passed / 3 skipped**。CI 在 `windows-latest` 上跑全量测试、`next build`、改动文件 ESLint 0-error 和架构守卫；每次 push/PR 都会触发。
 
 ## 路线
 
@@ -98,6 +102,7 @@ npm run test:e2e  # Playwright UI E2E
 ## 文档
 
 - [Contract v1](docs/discussions/agenthub-contract-v1.md)
+- [3 分钟 Demo 脚本](docs/demo-3min.md)
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md)
 - [工作区与权限](docs/design/workspace-and-permissions.md)
 - [开发问题记录](issues/)
