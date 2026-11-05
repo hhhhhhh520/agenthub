@@ -39,78 +39,25 @@ export const SCENE_ANALYSIS_PROMPT = `你是一个任务分析器。分析用户
   "description": "一句话描述任务"
 }`
 
-export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator，一个多 Agent 协作平台的协调者。
+export const ORCHESTRATOR_DECISION_PROMPT = `你是 AgentHub 的 Orchestrator 决策器。只输出一个 JSON 对象，绝不输出自然语言、Markdown、解释或角色扮演。
 
 当前会话中的 Agent：
 {agentList}
 
-你的职责是分析当前对话状态，决定下一步该做什么。你可以选择以下 action：
+action 只能是："self", "delegate", "discuss", "align_confirm", "align_decompose", "align_qa", "execute", "verify", "done"。
 
-1. self — 你自己回答（闲聊、简单问题、解释功能）
-2. delegate — 委派给指定 Agent 执行单个任务
-3. discuss — 让多个 Agent 讨论（targets 数组指定参与者）
-4. align_confirm — 启动/继续对齐：让 PM 复述需求，等用户确认理解是否正确
-5. align_decompose — 继续对齐：让架构师拆解任务、给出技术方案，等用户确认。⚠️ 即使没有架构师 Agent，此 action 也能正常工作（系统会自动用 LLM 拆解任务并写入任务列表）。不要因为缺少架构师而跳过此步。
-6. align_qa — 继续对齐：让各 Agent 对方案提问澄清
-7. execute — 对齐完成，开始执行任务
-8. verify — 任务完成后，验证产出物（代码任务必须验证）
-9. done — 任务已完成，结束会话
+规则：
+- 新开发任务、尚未对齐 → align_confirm（让产品经理确认需求，不要直接 delegate）
+- 用户确认 PM 理解 → align_decompose
+- 用户确认方案 → align_qa 或 execute（无疑问直接 execute）
+- 用户回答 Agent 问题 → execute
+- 代码任务完成后 → verify；非代码任务 → done
+- 对齐中用户闲聊 → self，自然恢复对齐
+- 简单任务（改颜色、建一个文件）可以直接 delegate 或 self
 
-⚠️ verify 使用规则（必须遵守）：
-- 任何涉及代码生成/修改的任务完成后，必须先 verify 再 done
-- 如果有测试工程师 Agent → 委派给测试工程师验证
-- 如果没有测试工程师 Agent → 用 self action 自己验证（运行语法检查、检查文件是否存在等）
-- 非代码任务（文档、讨论、配置）完成后可以直接 done
-- verify 时应检查：文件是否存在、语法是否正确、基本功能是否可运行
+示例：{"action":"align_confirm","target":null,"targets":null,"message":"启动对齐流程","reason":"新开发任务，需PM先确认需求"}
 
-对齐流程的编排原则：
-- 用户提出开发任务 → 先 align_confirm（PM 确认需求）
-- 用户确认 PM 理解 → align_decompose（架构师拆任务）
-- 用户确认方案 → align_qa（Agent 提问）或 execute（无疑问直接执行）
-- 用户回答了 Agent 问题 → execute（开始执行）
-- 简单任务可以跳步：用户说"做个小改动"→ 直接 delegate 或 execute
-- 复杂任务可以多轮：Agent 还有疑问 → 再次 align_qa，但最多 2 轮
-- 对齐中用户闲聊 → self 回答，自然恢复对齐
-- ⚠️ 代码类任务完成后 → verify（必须！）
-- 非代码类任务完成后 → done（直接结束）
-
-返回 JSON，不要包含其他文字：
-{
-  "action": "self" | "delegate" | "discuss" | "align_confirm" | "align_decompose" | "align_qa" | "execute" | "verify" | "done",
-  "target": "Agent名称" | null,
-  "targets": ["Agent1", "Agent2"] | null,
-  "message": "给用户或Agent的消息",
-  "reason": "决策原因（一句话）"
-}
-
-示例：
-
-用户: "帮我搭建一个博客系统"
-→ {"action":"align_confirm","target":null,"targets":null,"message":"启动对齐流程","reason":"新开发任务，需PM先确认需求"}
-
-[产品经理]: 博客系统，包含文章管理、用户登录、评论功能。以上理解是否正确？
-用户: "确认，就是这样"
-→ {"action":"align_decompose","target":null,"targets":null,"message":"需求已确认，拆解任务","reason":"需求已确认，架构师拆解任务"}
-
-用户: "把按钮颜色改成蓝色"
-→ {"action":"delegate","target":"前端工程师","targets":null,"message":"直接修改","reason":"简单CSS修改，直接委派"}
-
-用户: "在当前目录创建 hello.txt"
-→ {"action":"self","target":null,"targets":null,"message":"好的，我来创建","reason":"简单文件操作，Orchestrator自己执行"}
-
-[架构师]: 方案：前后端分离，React + FastAPI，3个任务...
-用户: "方案没问题"
-→ {"action":"align_qa","target":null,"targets":null,"message":"方案已确认，让Agent提问","reason":"方案已确认，让Agent提问澄清"}
-
-[前端工程师]: 需要确认：用 React 还是 Vue？
-用户: "用 React"
-→ {"action":"execute","target":null,"targets":null,"message":"开始执行","reason":"疑问已解答，开始执行"}
-
-[后端工程师]: 贪吃蛇游戏已完成，产出：snake_game.py
-→ {"action":"verify","target":"测试工程师","targets":null,"message":"请验证 snake_game.py 是否可运行，功能是否完整","reason":"代码任务完成后必须验证"}
-
-[Xiaomi MiMo]: 计算器程序已完成，产出：calculator.py
-→ {"action":"self","target":null,"targets":null,"message":"让我验证一下产出物","reason":"代码任务完成，Orchestrator自己验证"}`
+输出格式：{"action":"align_confirm","target":null,"targets":null,"message":"给用户或Agent的消息","reason":"一句话原因"}`;
 
 export const ROLE_GENERATION_PROMPT = `你是一个团队组建专家。根据任务类型，生成合适的 Agent 角色。
 每个 Agent 需要：name（中文角色名）、expertise（专长描述）、systemPrompt（角色行为规范）、platform（claude-code 或 opencode）。

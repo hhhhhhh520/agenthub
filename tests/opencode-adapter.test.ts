@@ -32,10 +32,12 @@ describe('OpenCodeAdapter', () => {
     expect(config.command).toBe('opencode')
     expect(config.format).toBe('ndjson')
     expect(config.args).toContain('run')
+    expect(config.args).toContain('--standalone')
     expect(config.args).toContain('--format')
     expect(config.args).toContain('json')
-    expect(config.args).toContain('--dir')
-    expect(config.args).toContain('/project')
+    // opencode v2.2.5 移除了 run --dir；工作目录由 spawn.cwd + PWD 保证
+    expect(config.args).not.toContain('--dir')
+    expect(config.workDir).toBe('/project')
     // prompt 不应该在 args 里（通过 stdin 传递）
     expect(config.args).not.toContain('--prompt')
   })
@@ -87,14 +89,15 @@ describe('OpenCodeAdapter', () => {
     for await (const _ of gen) { /* consume */ }
     const config = mockSend.mock.calls[0][2]
     expect(config.args).toContain('run')
+    expect(config.args).toContain('--standalone')
     expect(config.args).toContain('--format')
     expect(config.args).toContain('json')
     expect(config.args).toContain('--model')
     expect(config.args).toContain('mimo/mimo-v2.5-pro')
     expect(config.args).toContain('--session')
     expect(config.args).toContain('s1')
-    expect(config.args).toContain('--dir')
-    expect(config.args).toContain('/dir')
+    expect(config.args).not.toContain('--dir')
+    expect(config.workDir).toBe('/dir')
     // prompt 不在 args 里
     expect(config.args).not.toContain('--prompt')
     expect(config.args).not.toContain('hi')
@@ -221,6 +224,7 @@ describe('OpenCodeAdapter', () => {
     const config = mockSend.mock.calls[0][2]
     // --file 参数由 existsSync 控制，这里只验证 args 结构
     expect(config.args).toContain('run')
+    expect(config.args).toContain('--standalone')
     expect(config.args).toContain('--format')
     expect(config.args).toContain('json')
   })

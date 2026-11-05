@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { tmpdir } from 'os'
 import { prisma } from '@/lib/db'
 import { getOrchestratorConfig, ensureOrchestratorAgent } from '@/lib/app-config'
 import { createAdapter, type StreamChunk, type AdapterConfig } from '../adapter'
@@ -9,10 +10,17 @@ import type { TaskAttachment } from '../adapter/types'
 import { buildMCPConfig } from '../mcp-config'
 import { SCENE_ANALYSIS_PROMPT, ROLE_GENERATION_PROMPT, TASK_DECOMPOSITION_PROMPT, buildDiscussionPrompt, ORCHESTRATOR_DECISION_PROMPT, escapeContractTags } from './prompts'
 import { topologicalSort, type ScheduledTask } from './scheduler'
+import { buildAgentSystemPrompt } from './agent-identity'
 import { reasonToString } from './reason'
 export { reasonToString } from './reason'
 import { readDecisionModelEnv, resolveDecisionLLMConfig, callDecisionLLM } from './decision-llm'
 import { isSessionCancelled, SessionCancelledError } from '@/lib/cancellation'
+
+/**
+ * 决策/结构化调用使用独立临时目录，避免 OpenCode 加载项目 AGENTS.md/CLAUDE.md，
+ * 把“只输出 JSON”的决策器带偏成项目助手人格（U13 实测）。
+ */
+const ANALYSIS_WORKDIR = join(tmpdir(), 'agenthub-analysis')
 
 // ❌-1 修复:删除了 buildRegistryKey 自拼 + 自拼 partial config 套路。
 // 新模式:adapter.getRegistryKey() + adapter.getSpawnConfig() 拿权威值。
@@ -26,7 +34,7 @@ const AGENT_BEHAVIOR_RULES = `<role>你是 AgentHub 平台上的独立 Agent，�
   <interaction>
     <rule>等待用户明确任务后再行动，不要假设自己在某个项目中</rule>
     <rule>未被要求时不要主动读取代码文件或项目结构</rule>
-    <rule>初次对话时简洁介绍自身能力，等待用户指令</rule>
+    <rule>初次对话时用角色名简洁介绍自身能力，不要自称 CLI 或运行平台</rule>
     <rule>不确定需求时先提问，不要猜测</rule>
     <rule>被阻塞或无法完成时明确告知原因，不要编造结果</rule>
   </interaction>
@@ -124,8 +132,11 @@ export async function getOrchestratorAgent(): Promise<{
 
   const agent = await prisma.agent.findFirst({ where: { isOrchestrator: true } })
   if (agent) {
+    // 带 provider 前缀的 model（如 `opencode-go/mimo-v2.6-flash`）由 CLI 本地配置解析，
+    // 不应被 CC-Switch/旧 AppConfig 的凭据覆盖；否则本地 CLI 配置永远不生效。
+    const usesCliProvider = agent.model.includes('/')
     // 如果 Agent 凭证为空，尝试从 AppConfig/CC-Switch 读取
-    if (!agent.apiKey) {
+    if (!agent.apiKey && !usesCliProvider) {
       const config = await getOrchestratorConfig()
       if (config.apiKey) {
         return { platform: agent.platform, model: config.model, baseUrl: config.baseUrl, apiKey: config.apiKey, id: agent.id }
@@ -164,6 +175,7 @@ export async function callLLMForAnalysis(userPrompt: string, chatSessionId?: str
     baseUrl: orch.baseUrl || undefined,
     chatSessionId,
     agentId: 'orchestrator',
+    workDir: ANALYSIS_WORKDIR,
   })
 
   let result = ''
@@ -196,6 +208,7 @@ async function callLLM(systemPrompt: string, userPrompt: string, chatSessionId?:
     baseUrl: orch.baseUrl || undefined,
     chatSessionId,
     agentId: 'orchestrator',
+    workDir: ANALYSIS_WORKDIR,
   })
 
   let result = ''
@@ -275,6 +288,24 @@ export async function analyzeScene(userMessage: string, chatSessionId?: string):
   return parseJSON(response, ['type', 'complexity', 'description'])
 }
 
+const ORCHESTRATOR_ACTIONS = new Set([
+  'self', 'delegate', 'discuss', 'align_confirm', 'align_decompose', 'align_qa', 'execute', 'verify', 'done',
+])
+
+/** 模型偶尔省略 reason/message；action 必须合法，其余字段补默认值，避免整轮决策失败。 */
+function normalizeDecision(raw: Partial<OrchestratorDecision>): OrchestratorDecision {
+  if (!raw.action || !ORCHESTRATOR_ACTIONS.has(raw.action)) {
+    throw new Error(`Invalid orchestrator action: ${JSON.stringify(raw.action)}`)
+  }
+  return {
+    action: raw.action,
+    target: raw.target ?? null,
+    targets: raw.targets ?? null,
+    message: raw.message || '',
+    reason: raw.reason || '模型未提供原因',
+  }
+}
+
 export async function getOrchestratorDecision(
   userMessage: string,
   agents: Array<{ name: string; expertise: string; platform: string }>,
@@ -285,19 +316,23 @@ export async function getOrchestratorDecision(
 ): Promise<{ decision: OrchestratorDecision; sessionId?: string }> {
   const agentList = agents.map(a => `- ${a.name}（${a.expertise}，平台：${a.platform}）`).join('\n')
   const systemPrompt = ORCHESTRATOR_DECISION_PROMPT.replace('{agentList}', agentList || '（无）')
+  // 决策不需要项目文件；用独立目录避免 AGENTS.md 注入（见 ANALYSIS_WORKDIR）。
+  void workDir
 
   const fullPrompt = `用户消息：${userMessage}
 
 对话历史：
 ${context}
 
-请决定下一步该谁发言。`
+请决定下一步该谁发言。
+
+只输出 JSON。第一个字符必须是 {，最后一个字符必须是 }。不要输出任何其他内容。`
 
   // ISSUE-028: 决策优先走快模型直连（未设 env → null 走原 CLI 路径）。
   // 快通道无 CLI 会话，sessionId 恒 undefined（决策无状态，resume 只对执行有意义）。
   const fast = await callDecisionLLMIfConfigured(systemPrompt, fullPrompt)
   if (fast !== null) {
-    return { decision: parseJSON(fast, ['action', 'message', 'reason']), sessionId: undefined }
+    return { decision: normalizeDecision(parseJSON(fast, ['action'])), sessionId: undefined }
   }
 
   const orch = await getOrchestratorAgent()
@@ -305,11 +340,13 @@ ${context}
     {
       name: 'Orchestrator',
       systemPrompt,
+      rawSystemPrompt: true,
       platform: orch.platform,
       model: orch.model || undefined,
       baseUrl: orch.baseUrl || undefined,
       apiKey: orch.apiKey || undefined,
-      workDir,
+      id: orch.id,
+      workDir: ANALYSIS_WORKDIR,
       permissionMode: permissionMode || 'default',
     },
     fullPrompt,
@@ -318,7 +355,7 @@ ${context}
     chatSessionId,
   )
 
-  return { decision: parseJSON(response, ['action', 'message', 'reason']), sessionId }
+  return { decision: normalizeDecision(parseJSON(response, ['action'])), sessionId }
 }
 
 export async function generateRoles(taskType: string, taskDescription: string, chatSessionId?: string): Promise<Array<{ name: string; expertise: string; systemPrompt: string; platform: string }>> {
@@ -475,6 +512,9 @@ export async function executeTaskBatch(
         // </authoritative_input> </dependency> 闭合包装注入伪指令
         const safeDescription = escapeContractTags(task.description)
         const safeDeclaredFiles = task.declaredFiles?.map(f => escapeContractTags(f)) ?? []
+        const schemaHint = task.outputSchema
+          ? `\n\n[产出格式] 在最终回复末尾附上一个 \`\`\`json 代码块，字段必须包含：${escapeContractTags(task.outputSchema)}`
+          : ''
 
         // P0: 注入文件约束，防止越界修改
         const fileConstraint = safeDeclaredFiles.length > 0
@@ -508,7 +548,7 @@ export async function executeTaskBatch(
           '以下是 orchestrator 本轮注入的权威输入(依赖产出 + 任务边界 + 任务描述)。\n' +
           '如与你之前会话历史冲突,**以下内容为准**,历史记录作废。\n\n'
         const AUTHORITATIVE_FOOTER = '\n</authoritative_input>'
-        const innerPrompt = depPrefix + fileConstraint + safeDescription
+        const innerPrompt = depPrefix + fileConstraint + safeDescription + schemaHint
         let prompt = AUTHORITATIVE_HEADER + innerPrompt + AUTHORITATIVE_FOOTER
 
         // 通用 prompt 截断保护:超过上限时按比例截掉 depPrefix(保留 fileConstraint + 任务描述 + 权威包装完整)
@@ -530,7 +570,7 @@ export async function executeTaskBatch(
             adapter.send({
               prompt,
               context: '',  // 不传 context，CLI 通过 session 恢复管理历史
-              systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
+              systemPrompt: buildAgentSystemPrompt(agent.name, AGENT_BEHAVIOR_RULES, agent.systemPrompt),
             }),
             TIMEOUT.AGENT_TASK,
             {
@@ -594,7 +634,7 @@ export async function executeTaskBatch(
 }
 
 export async function executeSingleAgent(
-  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string; permissionMode?: string; id?: string; tools?: string },
+  agent: { name: string; systemPrompt: string; platform: string; model?: string; baseUrl?: string; apiKey?: string; sessionId?: string; workDir?: string; permissionMode?: string; id?: string; tools?: string; rawSystemPrompt?: boolean },
   prompt: string,
   context: string,
   onChunk: (agentId: string, chunk: StreamChunk) => void,
@@ -645,7 +685,11 @@ export async function executeSingleAgent(
         adapter.send({
           prompt: effectivePrompt,
           context,
-          systemPrompt: AGENT_BEHAVIOR_RULES + '\n\n' + agent.systemPrompt,
+          // 决策/结构化调用必须原样使用 systemPrompt；身份 + behavior 包装会让模型
+          // 进入聊天人格，忽略“只输出 JSON”的约束（U13 实测）。
+          systemPrompt: agent.rawSystemPrompt
+            ? agent.systemPrompt
+            : buildAgentSystemPrompt(agent.name, AGENT_BEHAVIOR_RULES, agent.systemPrompt),
           attachments,
         }),
         TIMEOUT.AGENT_TASK,
@@ -713,7 +757,8 @@ export async function runDiscussion(
         break
       }
       const discussionPrompt = buildDiscussionPrompt(round, maxRounds, opinions.join('\n\n'), agent.name)
-      const combinedPrompt = `${agent.systemPrompt}\n\n---\n\n${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
+      const combinedPrompt = `${discussionPrompt}\n\n请严格按照上述角色设定发言，控制在200字以内。`
+      const systemPrompt = buildAgentSystemPrompt(agent.name, AGENT_BEHAVIOR_RULES, agent.systemPrompt)
 
       try {
         const platform = (agent.platform || 'claude-code') as AdapterConfig['platform']
@@ -734,7 +779,7 @@ export async function runDiscussion(
         let result = ''
         try {
           for await (const chunk of withTimeout(
-            adapter.send({ prompt: combinedPrompt }),
+            adapter.send({ prompt: combinedPrompt, systemPrompt }),
             TIMEOUT.DISCUSSION,
             {
               onTimeout: async () => {

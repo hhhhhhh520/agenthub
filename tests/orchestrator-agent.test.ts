@@ -78,4 +78,35 @@ describe('getOrchestratorAgent', () => {
     expect(result.platform).toBe('claude-code')
     expect(result.model).toBe('claude-sonnet-4-20250514')
   })
+
+  it('provider-qualified model uses local CLI config instead of CC-Switch fallback', async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      ...mockAgent,
+      model: 'opencode-go/mimo-v2.6-flash',
+      baseUrl: '',
+      apiKey: '',
+    })
+    const { getOrchestratorConfig } = await import('@/lib/app-config')
+
+    const result = await getOrchestratorAgent()
+
+    expect(result.model).toBe('opencode-go/mimo-v2.6-flash')
+    expect(result.apiKey).toBe('')
+    expect(result.baseUrl).toBe('')
+    expect(getOrchestratorConfig).not.toHaveBeenCalled()
+  })
+
+  it('unqualified model with empty key still falls back to AppConfig/CC-Switch', async () => {
+    mockFindFirst.mockResolvedValueOnce({
+      ...mockAgent,
+      model: 'mimo-v2.6-flash',
+      baseUrl: '',
+      apiKey: '',
+    })
+
+    const result = await getOrchestratorAgent()
+
+    expect(result.model).toBe('gpt-4')
+    expect(result.apiKey).toBe('config-key')
+  })
 })

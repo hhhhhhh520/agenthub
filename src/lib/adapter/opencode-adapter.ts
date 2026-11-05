@@ -359,8 +359,10 @@ export class OpenCodeAdapter implements AgentAdapter {
     // 只传用户消息（systemPrompt 已通过 agent 配置文件注入）
     const fullPrompt = task.prompt
 
-    // 构建 CLI 参数；--agent 必须与 ensureAgentConfig 写入的隔离文件名一致
-    const args = ['run', '--format', 'json']
+    // 构建 CLI 参数；--agent 必须与 ensureAgentConfig 写入的隔离文件名一致。
+    // --standalone：agent 文件是每次调用动态生成的，OpenCode 后台服务会缓存
+    // agent 列表，导致新文件报 Agent not found（v2.2.5 实测）；私有 server 每次重读配置。
+    const args = ['run', '--standalone', '--format', 'json']
     const agentName = this.agentName()
     if (agentName) args.push('--agent', agentName)
     if (this.sessionId) args.push('--session', this.sessionId)
@@ -374,7 +376,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (this.config.model) {
       args.push('--model', providerCfg ? `anthropic/${cleanModel(this.config.model)}` : this.config.model)
     }
-    if (this.workDir) args.push('--dir', this.workDir)
+    // 工作目录只靠 spawn.cwd + PWD 锚定：opencode v2.2.5 已移除 `run --dir`，
+    // 继续传会被 CLI 判定为 Unrecognized flag 并直接退出（U13 回归发现）。
     // v2.0.27：--auto 自动批准 ask、但仍尊重 deny；旧的 dangerously-skip-permissions
     // 是隐藏别名且语义更宽，改用文档化 flag。default 模式不传，ask 会被 CLI 拒绝。
     if (this.permissionMode === 'auto') args.push('--auto')

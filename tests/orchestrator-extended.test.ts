@@ -167,6 +167,21 @@ describe('getOrchestratorDecision', () => {
     expect(result.decision.action).toBe('self')
     expect(result.decision.reason).toBe('greeting')
   })
+
+  it('tolerates missing reason/message but rejects unknown action', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: JSON.stringify({ action: 'align_confirm' }) }
+    })
+    const result = await getOrchestratorDecision('hello', [{ name: 'PM', expertise: 'product', platform: 'claude-code' }], 'context')
+    expect(result.decision.action).toBe('align_confirm')
+    expect(result.decision.reason).toBe('模型未提供原因')
+    expect(result.decision.message).toBe('')
+
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: JSON.stringify({ action: 'not-an-action' }) }
+    })
+    await expect(getOrchestratorDecision('hello', [], 'context')).rejects.toThrow('Invalid orchestrator action')
+  })
 })
 
 describe('generateRoles', () => {
@@ -290,6 +305,22 @@ describe('executeTaskBatch', () => {
 
     const connectCall = mockAdapterConnect.mock.calls[0][0]
     expect(connectCall.allowedTools).toBeUndefined()
+  })
+
+  it('injects output schema requirement into task prompt', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: '{"page_title":"待办"}' }
+    })
+    const tasks = [{
+      id: 't1', description: 'build page', assignedAgent: 'PM', dependencies: [], declaredFiles: ['index.html'], batch: 0,
+      outputSchema: '["page_title:string - 页面标题"]',
+    }]
+    const agents = [{ name: 'PM', systemPrompt: 'sp', platform: 'claude-code' }]
+    await executeTaskBatch(tasks, agents, vi.fn())
+
+    const sent = mockAdapterSend.mock.calls[0][0]
+    expect(sent.prompt).toContain('[产出格式]')
+    expect(sent.prompt).toContain('page_title')
   })
 
   it('records failed task ids when adapter throws', async () => {
@@ -420,6 +451,36 @@ describe('runDiscussion', () => {
     const opinions = await runDiscussion('topic', agents, 2, vi.fn())
     expect(opinions).toHaveLength(4) // 2 agents * 2 rounds
     expect(opinions[0]).toContain('PM（第1轮）')
+  })
+
+  it('U6: passes role identity systemPrompt to adapter, not just user prompt', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: 'opinion' }
+    })
+    await runDiscussion('topic', [
+      { name: '前端工程师', systemPrompt: '你负责 UI', platform: 'opencode' },
+    ], 1, vi.fn())
+
+    const sent = mockAdapterSend.mock.calls[0][0]
+    expect(sent.systemPrompt).toContain('你的角色名是「前端工程师」')
+    expect(sent.systemPrompt).toContain('你负责 UI')
+    expect(sent.prompt).not.toContain('你负责 UI')
+  })
+
+  it('rawSystemPrompt bypasses identity/behavior wrapper for structured calls', async () => {
+    mockAdapterSend.mockImplementation(async function* () {
+      yield { type: 'text', content: '{}' }
+    })
+    await executeSingleAgent(
+      { name: 'Orchestrator', systemPrompt: 'ONLY JSON', platform: 'claude-code', rawSystemPrompt: true },
+      'prompt',
+      '',
+      () => {},
+    )
+
+    const sent = mockAdapterSend.mock.calls[0][0]
+    expect(sent.systemPrompt).toBe('ONLY JSON')
+    expect(sent.systemPrompt).not.toContain('你的角色名是')
   })
 
   it('skips agent on error and continues', async () => {
