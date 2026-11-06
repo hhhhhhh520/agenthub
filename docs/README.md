@@ -28,6 +28,7 @@
 
 - [UX TODO](TODO-ux.md) — **2026-11-04 状态**：U1–U13 已完成（Markdown/协议标记、会话 Header、系统事件抽屉、Task 面板、OpenCode 权限、角色身份、会话管理、视觉层级、Agent 状态、耗时/等待态、首次引导、历史消息卫生、Golden path 回归）；U14–U15 为 P2 架构遗留
 - [3 分钟 Demo 脚本](demo-3min.md) — 固定用例、时间轴、旁白、点击路径与应急
+- [3 分钟演示视频](demo/agenthub-demo-3min.mp4) — 2:03，中文旁白；封面 [poster.jpg](demo/poster.jpg)
 - [架构拆解图](diagrams/agenthub-architecture.html) — 可编辑 HTML；[PNG](diagrams/agenthub-architecture.png) 2880×2200（2x）
 
 ## 参考资料

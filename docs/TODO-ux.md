@@ -532,7 +532,7 @@ warning / audit / schema / correction 和用户任务、Agent 交付物是同样
 - 未改 Prisma schema；未改任何 `Message.rawContent`
 - 本机 Agent 配置切换为本地 CLI：opencode 用 `opencode-go/mimo-v2.6-flash`，claude-code 用本机 `~/.claude`；原 tokenrhythm 凭据余额不足，未保留备份，恢复时从 CC-Switch/原 provider 重新取
 
-**Demo 脚本**：`docs/demo-3min.md`
+**Demo 脚本**：`docs/demo-3min.md`；**成片**：`docs/demo/agenthub-demo-3min.mp4`（2:03，中文旁白，封面 `docs/demo/poster.jpg`）
 
 **验收**：3 次连续跑均完成 3/3；演示使用已完成会话，不需要现场解释 `schema`、`declaredFiles`、`rawContent` 等内部字段。
 

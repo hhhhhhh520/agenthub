@@ -337,7 +337,7 @@
 
 | UX U12：历史消息卫生 | `system-events` 新增 `rewriteHistoricalSystemCopy`：旧「已自动清理」在展示层改写为「历史记录，规则已更新」+ 当前规则「共享项目目录不自动删除，请人工确认」；消息与 trace 同口径，`raw` 保留原文；抽屉加「历史记录 · 规则已更新」badge，聊天分组显示「含历史记录」；约定写入 AGENTS/CLAUDE。新增 4 测试；全量 161 files / 1684 passed / 3 skipped，build ✓，改动文件 eslint 0 error；真实旧会话抽屉验证通过，未改 rawContent | 2026-11-04 |
 
-| UX U13：Golden path 回归 + demo 脚本 | 三次连续 golden path（run1/run2/run3）均完成 3 个代码任务 + 系统校验；run2 17.6 min、run3 16.6 min；生成页面实测新增/勾选/刷新持久化/删除通过；敏感路径真实失败（未声明 `.env` → `[敏感路径越界]`，安全 redo 成功）；权限拒绝 banner 实测；恢复弹窗 UI 实测（in_progress 超 5 分钟 → 继续执行/跳过）；3 分钟脚本 `docs/demo-3min.md`；新增 `issues/ISSUE-030-opencode-v2.2.5-cli-compat.md`。修复 OpenCode v2.2.5 `--dir` 移除、动态 agent `--standalone`、决策 `id`/`rawSystemPrompt`、JSON-only 决策 prompt、provider 前缀不落 CC-Switch、决策临时目录、outputSchema 提示。全量 161 files / 1689 passed / 3 skipped，build ✓，改动文件 eslint 0 error（16 warning）；未改 schema/rawContent。已知边界：Agent 未输出 `artifact:diff`，Diff Accept 留给 U14 | 2026-11-04 |
+| UX U13：Golden path 回归 + demo 脚本 | 三次连续 golden path（run1/run2/run3）均完成 3 个代码任务 + 系统校验；run2 17.6 min、run3 16.6 min；生成页面实测新增/勾选/刷新持久化/删除通过；敏感路径真实失败（未声明 `.env` → `[敏感路径越界]`，安全 redo 成功）；权限拒绝 banner 实测；恢复弹窗 UI 实测（in_progress 超 5 分钟 → 继续执行/跳过）；3 分钟脚本 `docs/demo-3min.md`；成片 `docs/demo/agenthub-demo-3min.mp4`（2:03，中文旁白，Breeze TTS `physics-young-female-a`）；新增 `issues/ISSUE-030-opencode-v2.2.5-cli-compat.md`。修复 OpenCode v2.2.5 `--dir` 移除、动态 agent `--standalone`、决策 `id`/`rawSystemPrompt`、JSON-only 决策 prompt、provider 前缀不落 CC-Switch、决策临时目录、outputSchema 提示。全量 161 files / 1689 passed / 3 skipped，build ✓，改动文件 eslint 0 error（16 warning）；未改 schema/rawContent。已知边界：Agent 未输出 `artifact:diff`，Diff Accept 留给 U14 | 2026-11-04 |
 
 ### ⏳ 进行中
 

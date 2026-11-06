@@ -19,6 +19,10 @@
 
 </div>
 
+## 演示
+
+[![AgentHub 3 分钟演示](docs/demo/poster.jpg)](docs/demo/agenthub-demo-3min.mp4)
+
 ## 这是什么
 
 AgentHub 是一个本地优先的多 Agent 工作区。你用聊天描述任务，Orchestrator 把任务拆给 PM、架构师、前端、后端、测试等角色；每个 Agent 通过 Claude Code 或 OpenCode CLI 在真实项目目录里读写代码。
@@ -102,6 +106,7 @@ npm run test:e2e  # Playwright UI E2E
 ## 文档
 
 - [Contract v1](docs/discussions/agenthub-contract-v1.md)
+- [3 分钟演示视频](docs/demo/agenthub-demo-3min.mp4)（2:03，中文旁白）
 - [3 分钟 Demo 脚本](docs/demo-3min.md)
 - [v2 设计决策](docs/design/agenthub-v2-design-decisions.md)
 - [工作区与权限](docs/design/workspace-and-permissions.md)

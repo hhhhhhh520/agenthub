@@ -19,6 +19,10 @@ English | [简体中文](README.md)
 
 </div>
 
+## Demo
+
+[![AgentHub 3-minute demo](docs/demo/poster.jpg)](docs/demo/agenthub-demo-3min.mp4)
+
 ## What it is
 
 AgentHub is a local-first workspace where you describe a task in chat and an Orchestrator assembles a team of role agents — PM, architect, frontend, backend, test, and design — to work on a real repository. Each agent runs through the Claude Code CLI or the OpenCode CLI.
@@ -104,6 +108,7 @@ Baseline (2026-11-04): **161 test files, 1,689 passed / 3 skipped**. CI runs on 
 ## Docs
 
 - [Contract v1](docs/discussions/agenthub-contract-v1.md)
+- [3-minute demo video](docs/demo/agenthub-demo-3min.mp4) (2:03, Chinese narration)
 - [3-minute demo script](docs/demo-3min.md)
 - [v2 design decisions](docs/design/agenthub-v2-design-decisions.md)
 - [Workspace and permissions](docs/design/workspace-and-permissions.md)
